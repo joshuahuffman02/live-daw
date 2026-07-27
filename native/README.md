@@ -44,6 +44,32 @@ The built app lands under Xcode DerivedData, for example:
 ~/Library/Developer/Xcode/DerivedData/AutoMixNative-*/Build/Products/Debug/AutoMix Native.app
 ```
 
+## Production release
+
+Release builds enable Hardened Runtime and the CoreAudio input entitlement. A
+production artifact must use a valid Developer ID Application identity, Apple
+notarization, and a stapled ticket:
+
+```bash
+DEVELOPER_ID_APPLICATION="Developer ID Application: ORGANIZATION (TEAMID)" \
+NOTARY_KEYCHAIN_PROFILE="automix-notary" \
+./scripts/build-notarized-release.sh
+```
+
+The release builder refuses dirty source, unsigned output, failed notarization, and
+Gatekeeper rejection. It writes the notarized app, ZIP, SHA-256 digest, build
+metadata, and notary result under `native/build/release/`. Install the app at its
+permanent path, then enable crash relaunch:
+
+```bash
+sudo ditto "/exact/release/path/AutoMix Native.app" "/Applications/AutoMix Native.app"
+./scripts/install-automix-launch-agent.sh "/Applications/AutoMix Native.app"
+```
+
+The LaunchAgent installer also fails closed on an invalid signature, missing
+notarization ticket, or Gatekeeper rejection. `ALLOW_UNNOTARIZED_AUTOMIX=1` is
+available only for deliberate local rehearsal with a non-production build.
+
 Headless launch/device-enumeration smoke test:
 
 ```bash

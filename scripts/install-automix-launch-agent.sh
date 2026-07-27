@@ -16,6 +16,23 @@ if [[ ! -x "${app_binary}" ]]; then
   exit 2
 fi
 
+if [[ "${ALLOW_UNNOTARIZED_AUTOMIX:-0}" != "1" ]]; then
+  if ! /usr/bin/codesign --verify --deep --strict --verbose=2 "${app_path}"; then
+    print -u2 "Refusing to install relaunch for an invalid or unsigned app."
+    exit 3
+  fi
+  if ! /usr/bin/xcrun stapler validate "${app_path}"; then
+    print -u2 "Refusing to install relaunch for an app without a valid notarization ticket."
+    exit 3
+  fi
+  if ! /usr/sbin/spctl --assess --type execute --verbose=4 "${app_path}"; then
+    print -u2 "Refusing to install relaunch for an app rejected by Gatekeeper."
+    exit 3
+  fi
+else
+  print -u2 "WARNING: allowing an unnotarized AutoMix build for local rehearsal only."
+fi
+
 staging_dir="$(mktemp -d)"
 trap 'rm -rf "${staging_dir}"' EXIT
 staged_plist="${staging_dir}/${label}.plist"

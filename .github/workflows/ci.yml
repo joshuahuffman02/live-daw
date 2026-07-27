@@ -69,3 +69,10 @@ jobs:
             -configuration Debug \
             -destination 'platform=macOS,arch=arm64' \
             CODE_SIGNING_ALLOWED=NO
+          plutil -lint native/AutoMixNative/AutoMixNative.entitlements
+          xcodebuild build \
+            -project native/AutoMixNative.xcodeproj \
+            -scheme AutoMixNative \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGNING_ALLOWED=NO

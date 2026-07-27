@@ -25,12 +25,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.livedaw.automixnative
         PRODUCT_NAME: AutoMix Native
         INFOPLIST_FILE: AutoMixNative/Info.plist
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_ENTITLEMENTS: AutoMixNative/AutoMixNative.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: AutoMixNative/Audio/AutoMixNative-Bridging-Header.h
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         CLANG_CXX_LIBRARY: libc++
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/../appliance/dsp"
           - "$(SRCROOT)/../appliance/src"
+      configs:
+        Release:
+          ENABLE_HARDENED_RUNTIME: YES
     dependencies:
       - sdk: CoreAudio.framework
       - sdk: AudioToolbox.framework
