@@ -122,6 +122,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var recordingSaveInProgress = false
     @Published private(set) var recordedFrameCount: UInt = 0
     @Published private(set) var recordingTargetFrameCount: UInt = 0
+    @Published private(set) var continuousRecordingActive = false
+    @Published private(set) var continuousRecordingFrameCount: UInt = 0
+    @Published private(set) var continuousRecordingDroppedFrameCount: UInt = 0
+    @Published private(set) var continuousRecordingSegmentCount: UInt = 0
+    @Published private(set) var continuousRecordingDirectoryURL: URL?
     @Published var stabilityMonitorDurationSeconds = 300.0 {
         didSet {
             let clamped = min(max(stabilityMonitorDurationSeconds, 30.0), 1_800.0)
@@ -353,6 +358,7 @@ final class AppModel: ObservableObject {
     var canStartSoundcheck: Bool {
         isRunning &&
             !isRecording &&
+            !continuousRecordingActive &&
             !recordingSaveInProgress &&
             !soundcheckReportInProgress &&
             !stabilityMonitorActive
@@ -504,6 +510,11 @@ final class AppModel: ObservableObject {
             statusText = lastError ?? statusText
             return
         }
+        guard !continuousRecordingActive else {
+            lastError = "Stop continuous recording before starting a soundcheck."
+            statusText = lastError ?? statusText
+            return
+        }
         guard !recordingSaveInProgress && !soundcheckReportInProgress else {
             lastError = "Wait for the current soundcheck recording/report to finish before starting another soundcheck."
             statusText = lastError ?? statusText
@@ -535,6 +546,35 @@ final class AppModel: ObservableObject {
             lastError = error.localizedDescription
             statusText = error.localizedDescription
         }
+    }
+
+    func startContinuousRecording() {
+        guard engine.running else {
+            lastError = "Start the audio engine before continuous recording."
+            statusText = lastError ?? statusText
+            return
+        }
+        guard !engine.recording && !engine.recordingSaveInProgress && !soundcheckReportInProgress else {
+            lastError = "Wait for the soundcheck recording/report to finish before starting continuous recording."
+            statusText = lastError ?? statusText
+            return
+        }
+
+        do {
+            let directory = try nextContinuousRecordingDirectory()
+            try engine.startContinuousRecording(atDirectoryURL: directory)
+            continuousRecordingDirectoryURL = directory
+            lastError = nil
+            pollEngine()
+        } catch {
+            lastError = error.localizedDescription
+            statusText = error.localizedDescription
+        }
+    }
+
+    func stopContinuousRecording() {
+        engine.stopContinuousRecording()
+        pollEngine()
     }
 
     func channelDidChange(_ channel: ChannelMapping) {
@@ -782,6 +822,10 @@ final class AppModel: ObservableObject {
         update(\.recordingSaveInProgress, engine.recordingSaveInProgress)
         update(\.recordedFrameCount, engine.recordedFrameCount)
         update(\.recordingTargetFrameCount, engine.recordingTargetFrameCount)
+        update(\.continuousRecordingActive, engine.continuousRecording)
+        update(\.continuousRecordingFrameCount, engine.continuousRecordingFrameCount)
+        update(\.continuousRecordingDroppedFrameCount, engine.continuousRecordingDroppedFrameCount)
+        update(\.continuousRecordingSegmentCount, engine.continuousRecordingSegmentCount)
         update(\.statusText, runningRouteHealthStatus(baseStatus: engineStatus))
 
         var levels = engine.inputLevelsDb().map { $0.doubleValue }
@@ -920,6 +964,22 @@ final class AppModel: ObservableObject {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let name = "automix-dante-test-\(formatter.string(from: Date())).wav"
         return directory.appendingPathComponent(name)
+    }
+
+    private func nextContinuousRecordingDirectory() throws -> URL {
+        let root = try appSupportDirectory()
+            .appendingPathComponent("Continuous Recordings", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let suffix = UUID().uuidString.prefix(8)
+        let directory = root.appendingPathComponent(
+            "automix-live-\(formatter.string(from: Date()))-\(suffix)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        return directory
     }
 
     private func nextStabilityReportURL() throws -> URL {

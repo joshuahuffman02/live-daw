@@ -36,6 +36,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL recordingSaveInProgress;
 @property (nonatomic, readonly) NSUInteger recordedFrameCount;
 @property (nonatomic, readonly) NSUInteger recordingTargetFrameCount;
+@property (nonatomic, readonly) BOOL continuousRecording;
+@property (nonatomic, readonly) NSUInteger continuousRecordingFrameCount;
+@property (nonatomic, readonly) NSUInteger continuousRecordingDroppedFrameCount;
+@property (nonatomic, readonly) NSUInteger continuousRecordingSegmentCount;
 @property (nonatomic, readonly) double sampleRate;
 @property (nonatomic, readonly) NSInteger inputChannelCount;
 @property (nonatomic, readonly) NSInteger bufferFrameSize;
@@ -153,6 +157,12 @@ NS_ASSUME_NONNULL_BEGIN
                         seconds:(double)seconds
                           error:(NSError * _Nullable * _Nullable)error;
 - (nullable NSURL *)consumeFinishedRecordingURL;
+- (BOOL)startContinuousRecordingAtDirectoryURL:(NSURL *)directoryURL
+                                          error:(NSError * _Nullable * _Nullable)error;
+- (void)stopContinuousRecording;
+#if DEBUG
+- (void)debugSetContinuousRecordingSegmentFrameLimit:(NSUInteger)frames;
+#endif
 @end
 
 NS_ASSUME_NONNULL_END

@@ -271,7 +271,11 @@ Solves cold-start.
   Never silence on the stream.
 - Automation conservative when live: rate-limit moves, confidence-gate uncertain
   decisions, hold last-good values, and let FREEZE stop control-thread changes.
-- Always record raw multitracks + output (safety, forensics, training).
+- Always record raw multitracks + output (safety, forensics, training). The native
+  milestone implements operator-started, checkpointed 60-second float-WAV segments
+  through a preallocated two-second SPSC ring and dedicated file queue. Recorder
+  overflow is explicit telemetry and never blocks the audio callback. Automatic
+  start, free-space gating, retention, and archival policy remain to be added.
 
 ## Supervisory UI
 Per-channel: label + confidence, EQ moves, level rides. Dual metering pre/post.

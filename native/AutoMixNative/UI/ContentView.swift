@@ -293,6 +293,62 @@ private struct DeviceControlPanel: View {
                     .padding(.vertical, 4)
                 }
 
+                GroupBox("Continuous Capture") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if model.continuousRecordingActive {
+                            Button(role: .cancel) {
+                                model.stopContinuousRecording()
+                            } label: {
+                                Label("Stop Continuous Recording", systemImage: "stop.circle.fill")
+                            }
+                        } else {
+                            Button {
+                                model.startContinuousRecording()
+                            } label: {
+                                Label("Start Continuous Recording", systemImage: "record.circle.fill")
+                            }
+                            .disabled(
+                                !model.isRunning ||
+                                    model.isRecording ||
+                                    model.recordingSaveInProgress ||
+                                    model.soundcheckReportInProgress
+                            )
+                        }
+
+                        StatusRow(
+                            label: "State",
+                            value: model.continuousRecordingActive ? "recording" : "stopped"
+                        )
+                        StatusRow(
+                            label: "Captured",
+                            value: continuousRecordingDurationSummary
+                        )
+                        StatusRow(
+                            label: "Segments",
+                            value: "\(model.continuousRecordingSegmentCount)"
+                        )
+                        StatusRow(
+                            label: "Dropped Frames",
+                            value: "\(model.continuousRecordingDroppedFrameCount)",
+                            warning: model.continuousRecordingDroppedFrameCount > 0
+                        )
+
+                        if let directory = model.continuousRecordingDirectoryURL {
+                            Label(directory.path, systemImage: "folder")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                        } else {
+                            Text("Writes raw inputs in Dante channel order plus stream L/R to checkpointed 60-second float WAV segments. Disk I/O never runs on the audio callback.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 GroupBox("Stability Monitor") {
                     VStack(alignment: .leading, spacing: 12) {
                         Stepper(value: $model.stabilityMonitorDurationSeconds, in: 30...1_800, step: 30) {
@@ -520,6 +576,14 @@ private struct DeviceControlPanel: View {
     private var recordingFrameSummary: String {
         guard model.recordingTargetFrameCount > 0 else { return "starting" }
         return "\(model.recordedFrameCount) / \(model.recordingTargetFrameCount)"
+    }
+
+    private var continuousRecordingDurationSummary: String {
+        guard model.detectedSampleRate > 0 else {
+            return "\(model.continuousRecordingFrameCount) frames"
+        }
+        let seconds = Double(model.continuousRecordingFrameCount) / model.detectedSampleRate
+        return "\(formatDuration(seconds)) · \(model.continuousRecordingFrameCount) frames"
     }
 
     private var soundcheckButtonTitle: String {

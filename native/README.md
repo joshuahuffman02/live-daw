@@ -5,7 +5,8 @@ workflow. It keeps the browser app as a prototype/reference and moves the real a
 path into a macOS `.app`:
 
 - SwiftUI operator surface for device selection, status, channel mapping, meters,
-  scenes, manual fader/pan overrides, SAFE, FREEZE, SHADOW, and test recording.
+  scenes, manual fader/pan overrides, SAFE, FREEZE, SHADOW, soundcheck recording, and
+  segmented continuous multitrack/program capture.
 - Objective-C++ Core Audio bridge for Dante Virtual Soundcard / Dante hardware exposed
   as Core Audio devices.
 - Existing C++ `bdsp::Engine` and `app::BrainThread` as the mixer core.
@@ -157,6 +158,14 @@ Application Support, then runs the same semantic verifier before showing proof s
 Route, scene, expected channel count, and input-map changes clear stale proof evidence
 before another manifest can be saved.
 
+The **Continuous Capture** panel writes raw inputs in physical Core Audio/Dante order
+plus final stream L/R to unique, checkpointed 60-second float-WAV segments. Its
+two-second preallocated ring and dedicated file queue prevent disk I/O from blocking
+the audio callback; any recorder overflow is counted and shown as `Dropped Frames`.
+At 64 inputs and 96 kHz this is about 91.2 GB/hour, so use a proven local SSD and plan
+retention explicitly. See
+[`../docs/CONTINUOUS_RECORDING.md`](../docs/CONTINUOUS_RECORDING.md).
+
 The headless `--write-service-profile` command writes only an AutoMix Native profile:
 a one-to-one Dante input map plus starter service source roles. It does not change the
 HD96 console, Dante Controller, or DVS configuration. It uses `--output-uid` when
@@ -211,7 +220,10 @@ soundcheck recording and the oversized Core Audio input callback path through th
 guard, proving that capture stays allocation-free and the fail-closed overrun branch
 is silent and allocation-free. The headless guard is
 intentionally DEBUG-only because Release builds do not install the allocation-counting
-guard.
+guard. XCTest also forces rapid continuous-recording rotation, verifies every
+segment's float-WAV metadata and raw-input/program activity, checks exact aggregate
+frame accounting with zero recorder drops, and runs the Core Audio input allocation
+guard while continuous capture is armed.
 
 ## First-light rehearsal (Dante + 24 channels, rig not fully configured yet)
 
@@ -393,6 +405,10 @@ The app does not configure the Midas console. It expects Dante to already exist:
   limiter-gain-reduction, callback, dropout, callback-overrun,
   render-deadline-miss, output-underrun/overrun, watchdog, scene, and
   channel-map/manual-override/SAFE-bypass evidence.
+- Continuous recording uses a preallocated two-second SPSC ring and a dedicated file
+  queue, rotates 60-second raw-input-plus-program float WAVs, checkpoints the open
+  header about once per second, exposes segment/captured/drop counters, and sacrifices
+  recorder frames rather than stream continuity if storage falls behind.
 - The Soundcheck controls expose each phase explicitly: recording frames, saving the
   WAV file, then analyzing the saved payload for the report.
 - Stability Monitor runs a longer non-recording validation from the control side and

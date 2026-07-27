@@ -23,12 +23,14 @@
 #include <new>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 static NSString *const AMBridgeErrorDomain = @"AutoMixEngineBridge";
 static NSString *const AMSimulatedDeviceUID = @"com.livedaw.automix.simulated-hd96-dante";
 static app::Cls classForRole(NSString *role);
 static app::Scene sceneForName(NSString *name);
 static bool writeFloatWav(const char *path, const float *samples, uint64_t frames, int channels, uint32_t sampleRate);
+static bool writeFloatWavHeader(FILE *file, uint64_t frames, int channels, uint32_t sampleRate);
 static UInt32 framesInBufferList(const AudioBufferList *list);
 static void clearAudioBufferList(AudioBufferList *output);
 static void populateRawInputPointersFromBufferList(const AudioBufferList *input,
@@ -50,6 +52,7 @@ static NSString *audioFormatSummary(const AudioStreamBasicDescription& format);
 static NSString *const AMSupportedFloat32FormatSummary = @"32-bit little-endian float PCM";
 static char AMAudioQueueSpecificKey;
 static char AMOutputAudioQueueSpecificKey;
+static char AMContinuousFileQueueSpecificKey;
 
 #if DEBUG
 static std::atomic<uint32_t> AMRealtimeAllocationGuardDepth{0};
@@ -140,6 +143,7 @@ struct AMRealtimeAllocationGuard {
     dispatch_queue_t _audioQueue;
     dispatch_queue_t _outputAudioQueue;
     dispatch_queue_t _fileQueue;
+    dispatch_queue_t _continuousFileQueue;
     dispatch_source_t _simulationTimer;
     dispatch_source_t _simulationOutputTimer;
     uint64_t _simulationFrame;
@@ -182,6 +186,13 @@ struct AMRealtimeAllocationGuard {
     std::atomic<bool> _recordWriteInFlightAtomic;
     std::atomic<uint64_t> _recordFrameWriteAtomic;
     std::atomic<uint64_t> _recordFrameCapacityAtomic;
+    std::atomic<bool> _continuousRecordingAtomic;
+    std::atomic<bool> _continuousWriteFailedAtomic;
+    std::atomic<uint64_t> _continuousRingReadFrameAtomic;
+    std::atomic<uint64_t> _continuousRingWriteFrameAtomic;
+    std::atomic<uint64_t> _continuousCapturedFrameCountAtomic;
+    std::atomic<uint64_t> _continuousDroppedFrameCountAtomic;
+    std::atomic<uint64_t> _continuousSegmentCountAtomic;
     std::atomic<uint64_t> _dropoutCountAtomic;
     std::atomic<uint64_t> _callbackOverrunCountAtomic;
     std::atomic<uint64_t> _deadlineMissCountAtomic;
@@ -209,6 +220,18 @@ struct AMRealtimeAllocationGuard {
     NSURL *_recordURL;
     NSURL *_finishedRecordingURL;
 
+    std::vector<float> _continuousRing;
+    uint64_t _continuousRingFrameCapacity;
+    uint64_t _continuousSegmentFrameLimit;
+    uint64_t _continuousDebugSegmentFrameLimit;
+    uint64_t _continuousSegmentFramesWritten;
+    uint64_t _continuousSegmentCheckpointFrames;
+    int _continuousChannels;
+    uint32_t _continuousSampleRate;
+    FILE *_continuousFile;
+    NSURL *_continuousDirectoryURL;
+    NSString *_continuousBaseName;
+
     uint32_t _machTimeNumer;
     uint32_t _machTimeDenom;
     NSString *_baseStatus;
@@ -218,6 +241,11 @@ struct AMRealtimeAllocationGuard {
 - (void)clearOutputBufferList:(AudioBufferList *)output;
 - (NSInteger)latencyFramesForDevice:(AudioDeviceID)device
                                scope:(AudioObjectPropertyScope)scope;
+- (void)captureContinuousRecordingFrames:(UInt32)frames;
+- (void)runContinuousWriter;
+- (BOOL)openNextContinuousSegmentOnFileQueue;
+- (void)checkpointContinuousSegmentOnFileQueue:(BOOL)force;
+- (void)closeContinuousSegmentOnFileQueue;
 @end
 
 @implementation AutoMixEngineBridge
@@ -232,8 +260,13 @@ struct AMRealtimeAllocationGuard {
         _audioQueue = dispatch_queue_create("com.livedaw.automix.audio", DISPATCH_QUEUE_SERIAL);
         _outputAudioQueue = dispatch_queue_create("com.livedaw.automix.output", DISPATCH_QUEUE_SERIAL);
         _fileQueue = dispatch_queue_create("com.livedaw.automix.files", DISPATCH_QUEUE_SERIAL);
+        _continuousFileQueue = dispatch_queue_create("com.livedaw.automix.continuous-files", DISPATCH_QUEUE_SERIAL);
         dispatch_queue_set_specific(_audioQueue, &AMAudioQueueSpecificKey, &AMAudioQueueSpecificKey, nullptr);
         dispatch_queue_set_specific(_outputAudioQueue, &AMOutputAudioQueueSpecificKey, &AMOutputAudioQueueSpecificKey, nullptr);
+        dispatch_queue_set_specific(_continuousFileQueue,
+                                    &AMContinuousFileQueueSpecificKey,
+                                    &AMContinuousFileQueueSpecificKey,
+                                    nullptr);
         _simulationTimer = nullptr;
         _simulationOutputTimer = nullptr;
         _simulationFrame = 0;
@@ -262,6 +295,13 @@ struct AMRealtimeAllocationGuard {
         _recordWriteInFlightAtomic.store(false);
         _recordFrameWriteAtomic.store(0);
         _recordFrameCapacityAtomic.store(0);
+        _continuousRecordingAtomic.store(false);
+        _continuousWriteFailedAtomic.store(false);
+        _continuousRingReadFrameAtomic.store(0);
+        _continuousRingWriteFrameAtomic.store(0);
+        _continuousCapturedFrameCountAtomic.store(0);
+        _continuousDroppedFrameCountAtomic.store(0);
+        _continuousSegmentCountAtomic.store(0);
         _dropoutCountAtomic.store(0);
         _callbackOverrunCountAtomic.store(0);
         _deadlineMissCountAtomic.store(0);
@@ -284,6 +324,14 @@ struct AMRealtimeAllocationGuard {
         _recordFrameCapacity = 0;
         _recordFrameWrite = 0;
         _recordChannels = 0;
+        _continuousRingFrameCapacity = 0;
+        _continuousSegmentFrameLimit = 0;
+        _continuousDebugSegmentFrameLimit = 0;
+        _continuousSegmentFramesWritten = 0;
+        _continuousSegmentCheckpointFrames = 0;
+        _continuousChannels = 0;
+        _continuousSampleRate = 0;
+        _continuousFile = nullptr;
         mach_timebase_info_data_t timebase{};
         mach_timebase_info(&timebase);
         _machTimeNumer = timebase.numer ? timebase.numer : 1;
@@ -313,6 +361,16 @@ struct AMRealtimeAllocationGuard {
 }
 - (NSUInteger)recordedFrameCount { return (NSUInteger)_recordFrameWriteAtomic.load(std::memory_order_relaxed); }
 - (NSUInteger)recordingTargetFrameCount { return (NSUInteger)_recordFrameCapacityAtomic.load(std::memory_order_relaxed); }
+- (BOOL)continuousRecording { return _continuousRecordingAtomic.load(std::memory_order_acquire); }
+- (NSUInteger)continuousRecordingFrameCount {
+    return (NSUInteger)_continuousCapturedFrameCountAtomic.load(std::memory_order_relaxed);
+}
+- (NSUInteger)continuousRecordingDroppedFrameCount {
+    return (NSUInteger)_continuousDroppedFrameCountAtomic.load(std::memory_order_relaxed);
+}
+- (NSUInteger)continuousRecordingSegmentCount {
+    return (NSUInteger)_continuousSegmentCountAtomic.load(std::memory_order_relaxed);
+}
 - (double)sampleRate { return _sampleRate; }
 - (NSInteger)inputChannelCount { return _inputChannelCount; }
 - (NSInteger)bufferFrameSize { return _bufferFrameSize; }
@@ -1247,6 +1305,7 @@ struct AMRealtimeAllocationGuard {
 }
 
 - (void)stop {
+    [self stopContinuousRecording];
     _runningAtomic.store(false);
     _recordingAtomic.store(false);
     if (_simulationTimer) {
@@ -1383,6 +1442,10 @@ struct AMRealtimeAllocationGuard {
         [self fail:error message:@"A test recording is already running."];
         return NO;
     }
+    if (_continuousRecordingAtomic.load(std::memory_order_acquire)) {
+        [self fail:error message:@"Stop continuous recording before starting a Dante test recording."];
+        return NO;
+    }
     if (_recordWriteInFlightAtomic.load(std::memory_order_acquire) ||
         _recordWriteScheduledAtomic.load(std::memory_order_acquire) ||
         _recordReadyToWrite.load(std::memory_order_acquire)) {
@@ -1417,6 +1480,141 @@ struct AMRealtimeAllocationGuard {
     }
     return url;
 }
+
+- (BOOL)startContinuousRecordingAtDirectoryURL:(NSURL *)directoryURL
+                                          error:(NSError **)error {
+    if (!_runningAtomic.load(std::memory_order_acquire)) {
+        [self fail:error message:@"Start the audio engine before continuous recording."];
+        return NO;
+    }
+    if (_continuousRecordingAtomic.load(std::memory_order_acquire)) {
+        [self fail:error message:@"Continuous recording is already running."];
+        return NO;
+    }
+    if (_recordingAtomic.load(std::memory_order_acquire) ||
+        _recordReadyToWrite.load(std::memory_order_acquire) ||
+        _recordWriteScheduledAtomic.load(std::memory_order_acquire) ||
+        _recordWriteInFlightAtomic.load(std::memory_order_acquire)) {
+        [self fail:error message:@"Wait for the Dante test recording to finish before starting continuous recording."];
+        return NO;
+    }
+    if (!directoryURL.isFileURL) {
+        [self fail:error message:@"Choose a local folder for continuous recording."];
+        return NO;
+    }
+
+    NSError *directoryError = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtURL:directoryURL
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:&directoryError]) {
+        [self fail:error
+           message:[NSString stringWithFormat:@"Could not prepare the continuous recording folder: %@",
+                                              directoryError.localizedDescription]];
+        return NO;
+    }
+
+    // Quiesce any callback or failed writer from a previous session before changing
+    // the preallocated ring that the real-time path reads.
+    if (_audioQueue && dispatch_get_specific(&AMAudioQueueSpecificKey) == nullptr) {
+        dispatch_sync(_audioQueue, ^{});
+    }
+    if (_continuousFileQueue &&
+        dispatch_get_specific(&AMContinuousFileQueueSpecificKey) == nullptr) {
+        dispatch_sync(_continuousFileQueue, ^{});
+    }
+
+    const int channels = (int)_inputChannelCount + 2;
+    const uint32_t rate = (uint32_t)std::llround(_sampleRate);
+    if (channels < 3 || rate == 0) {
+        [self fail:error message:@"The running audio format is not valid for continuous recording."];
+        return NO;
+    }
+
+    const uint64_t ringFrames = std::max<uint64_t>(
+        (uint64_t)std::max<NSInteger>(_bufferFrameSize, 1) * 4u,
+        (uint64_t)rate * 2u
+    );
+    try {
+        _continuousRing.assign((size_t)ringFrames * (size_t)channels, 0.0f);
+    } catch (const std::exception &ex) {
+        [self fail:error
+           message:[NSString stringWithFormat:@"Could not allocate the continuous recording ring: %s", ex.what()]];
+        return NO;
+    }
+
+    const uint64_t blockAlign = (uint64_t)channels * sizeof(float);
+    const uint64_t riffSafeFrames = blockAlign > 0 ? (UINT32_MAX - 44u) / blockAlign : 0;
+    const uint64_t defaultSegmentFrames = (uint64_t)rate * 60u;
+    const uint64_t requestedSegmentFrames =
+        _continuousDebugSegmentFrameLimit > 0
+            ? _continuousDebugSegmentFrameLimit
+            : defaultSegmentFrames;
+    _continuousRingFrameCapacity = ringFrames;
+    _continuousSegmentFrameLimit =
+        std::max<uint64_t>(1, std::min(requestedSegmentFrames, riffSafeFrames));
+    _continuousSegmentFramesWritten = 0;
+    _continuousSegmentCheckpointFrames = 0;
+    _continuousChannels = channels;
+    _continuousSampleRate = rate;
+    _continuousDirectoryURL = [directoryURL copy];
+
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    formatter.dateFormat = @"yyyyMMdd-HHmmss";
+    NSString *nonce = [[[NSUUID UUID] UUIDString] substringToIndex:8];
+    _continuousBaseName =
+        [NSString stringWithFormat:@"automix-live-%@-%@", [formatter stringFromDate:[NSDate date]], nonce];
+
+    _continuousRingReadFrameAtomic.store(0, std::memory_order_relaxed);
+    _continuousRingWriteFrameAtomic.store(0, std::memory_order_relaxed);
+    _continuousCapturedFrameCountAtomic.store(0, std::memory_order_relaxed);
+    _continuousDroppedFrameCountAtomic.store(0, std::memory_order_relaxed);
+    _continuousSegmentCountAtomic.store(0, std::memory_order_relaxed);
+    _continuousWriteFailedAtomic.store(false, std::memory_order_release);
+
+    __block BOOL opened = NO;
+    dispatch_sync(_continuousFileQueue, ^{
+        opened = [self openNextContinuousSegmentOnFileQueue];
+    });
+    if (!opened) {
+        _continuousRing.clear();
+        _continuousRingFrameCapacity = 0;
+        [self fail:error message:@"Could not create the first continuous recording segment."];
+        return NO;
+    }
+
+    _continuousRecordingAtomic.store(true, std::memory_order_release);
+    __unsafe_unretained AutoMixEngineBridge *unsafeSelf = self;
+    dispatch_async(_continuousFileQueue, ^{
+        [unsafeSelf runContinuousWriter];
+    });
+    return YES;
+}
+
+- (void)stopContinuousRecording {
+    _continuousRecordingAtomic.store(false, std::memory_order_release);
+
+    // Wait until an in-flight callback has observed the stop before allowing the
+    // writer to drain and before a later start may resize the ring.
+    if (_audioQueue && dispatch_get_specific(&AMAudioQueueSpecificKey) == nullptr) {
+        dispatch_sync(_audioQueue, ^{});
+    }
+    if (_continuousFileQueue &&
+        dispatch_get_specific(&AMContinuousFileQueueSpecificKey) == nullptr) {
+        dispatch_sync(_continuousFileQueue, ^{});
+    } else if (_continuousFile &&
+               dispatch_get_specific(&AMContinuousFileQueueSpecificKey) != nullptr) {
+        [self closeContinuousSegmentOnFileQueue];
+    }
+}
+
+#if DEBUG
+- (void)debugSetContinuousRecordingSegmentFrameLimit:(NSUInteger)frames {
+    if (_continuousRecordingAtomic.load(std::memory_order_acquire)) return;
+    _continuousDebugSegmentFrameLimit = (uint64_t)frames;
+}
+#endif
 
 - (void)renderInput:(const AudioBufferList *)input output:(AudioBufferList *)output frames:(UInt32)frames {
     if (!_runningAtomic.load()) {
@@ -1511,6 +1709,9 @@ struct AMRealtimeAllocationGuard {
     [self updateOutputMetersForFrames:safeFrames];
     [self updateMasterTelemetry];
     if (_recordingAtomic.load()) [self captureRecordingFrames:safeFrames];
+    if (_continuousRecordingAtomic.load(std::memory_order_acquire)) {
+        [self captureContinuousRecordingFrames:safeFrames];
+    }
     if (_separateOutputMode) [self writeSeparateOutputRingFrames:safeFrames];
     [self writeOutputBufferList:output frames:safeFrames];
 }
@@ -1772,6 +1973,190 @@ struct AMRealtimeAllocationGuard {
     _limiterGainReductionDbAtomic.store(0.0f, std::memory_order_relaxed);
 }
 
+- (void)captureContinuousRecordingFrames:(UInt32)frames {
+    const uint64_t capacity = _continuousRingFrameCapacity;
+    const int channels = _continuousChannels;
+    if (frames == 0 || capacity == 0 || channels < 3 || _continuousRing.empty()) {
+        _continuousDroppedFrameCountAtomic.fetch_add(frames, std::memory_order_relaxed);
+        return;
+    }
+
+    const uint64_t writeFrame =
+        _continuousRingWriteFrameAtomic.load(std::memory_order_relaxed);
+    const uint64_t readFrame =
+        _continuousRingReadFrameAtomic.load(std::memory_order_acquire);
+    const uint64_t usedFrames = writeFrame >= readFrame ? writeFrame - readFrame : capacity;
+    if (usedFrames > capacity || (uint64_t)frames > capacity - usedFrames) {
+        // Disk pressure can lose recording frames, but it can never wait, allocate,
+        // overwrite unread data, or hold up the stream mix.
+        _continuousDroppedFrameCountAtomic.fetch_add(frames, std::memory_order_relaxed);
+        return;
+    }
+
+    const int inputChannels = channels - 2;
+    for (UInt32 frame = 0; frame < frames; ++frame) {
+        const uint64_t ringFrame = (writeFrame + frame) % capacity;
+        const size_t base = (size_t)ringFrame * (size_t)channels;
+        for (int channel = 0; channel < inputChannels; ++channel) {
+            const bool valid =
+                (size_t)channel < _rawInputPtrs.size() &&
+                _rawInputPtrs[(size_t)channel] != nullptr;
+            const float *source = valid ? _rawInputPtrs[(size_t)channel] : _silence.data();
+            _continuousRing[base + (size_t)channel] = source[frame];
+        }
+        _continuousRing[base + (size_t)inputChannels] = _outL[(size_t)frame];
+        _continuousRing[base + (size_t)inputChannels + 1u] = _outR[(size_t)frame];
+    }
+
+    _continuousCapturedFrameCountAtomic.fetch_add(frames, std::memory_order_relaxed);
+    _continuousRingWriteFrameAtomic.store(writeFrame + frames, std::memory_order_release);
+}
+
+- (void)runContinuousWriter {
+    while (!_continuousWriteFailedAtomic.load(std::memory_order_acquire)) {
+        const uint64_t readFrame =
+            _continuousRingReadFrameAtomic.load(std::memory_order_relaxed);
+        const uint64_t writeFrame =
+            _continuousRingWriteFrameAtomic.load(std::memory_order_acquire);
+        if (readFrame >= writeFrame) {
+            if (!_continuousRecordingAtomic.load(std::memory_order_acquire)) break;
+            usleep(2000);
+            continue;
+        }
+
+        if (!_continuousFile && ![self openNextContinuousSegmentOnFileQueue]) {
+            _continuousWriteFailedAtomic.store(true, std::memory_order_release);
+            _continuousRecordingAtomic.store(false, std::memory_order_release);
+            [self setStatus:@"Continuous recording stopped: could not create the next segment."];
+            break;
+        }
+
+        const uint64_t availableFrames = writeFrame - readFrame;
+        const uint64_t ringIndex = readFrame % _continuousRingFrameCapacity;
+        const uint64_t contiguousFrames =
+            std::min(availableFrames, _continuousRingFrameCapacity - ringIndex);
+        const uint64_t segmentRemaining =
+            _continuousSegmentFrameLimit - _continuousSegmentFramesWritten;
+        const uint64_t framesToWrite =
+            std::min<uint64_t>(std::min(contiguousFrames, segmentRemaining), 4096u);
+        const size_t frameBytes = (size_t)_continuousChannels * sizeof(float);
+        const float *samples =
+            _continuousRing.data() + (size_t)ringIndex * (size_t)_continuousChannels;
+        const size_t written =
+            std::fwrite(samples, frameBytes, (size_t)framesToWrite, _continuousFile);
+
+        if (written == 0) {
+            _continuousWriteFailedAtomic.store(true, std::memory_order_release);
+            _continuousRecordingAtomic.store(false, std::memory_order_release);
+            _continuousDroppedFrameCountAtomic.fetch_add(
+                writeFrame - readFrame,
+                std::memory_order_relaxed
+            );
+            _continuousRingReadFrameAtomic.store(writeFrame, std::memory_order_release);
+            [self setStatus:@"Continuous recording stopped: disk write failed."];
+            break;
+        }
+
+        _continuousSegmentFramesWritten += (uint64_t)written;
+        _continuousRingReadFrameAtomic.store(readFrame + (uint64_t)written,
+                                             std::memory_order_release);
+        [self checkpointContinuousSegmentOnFileQueue:NO];
+
+        if ((uint64_t)written < framesToWrite) {
+            const uint64_t latestWrite =
+                _continuousRingWriteFrameAtomic.load(std::memory_order_acquire);
+            const uint64_t latestRead =
+                _continuousRingReadFrameAtomic.load(std::memory_order_relaxed);
+            _continuousWriteFailedAtomic.store(true, std::memory_order_release);
+            _continuousRecordingAtomic.store(false, std::memory_order_release);
+            if (latestWrite > latestRead) {
+                _continuousDroppedFrameCountAtomic.fetch_add(
+                    latestWrite - latestRead,
+                    std::memory_order_relaxed
+                );
+                _continuousRingReadFrameAtomic.store(latestWrite, std::memory_order_release);
+            }
+            [self setStatus:@"Continuous recording stopped: incomplete disk write."];
+            break;
+        }
+
+        if (_continuousSegmentFramesWritten >= _continuousSegmentFrameLimit) {
+            [self closeContinuousSegmentOnFileQueue];
+        }
+    }
+
+    if (_continuousWriteFailedAtomic.load(std::memory_order_acquire)) {
+        const uint64_t latestWrite =
+            _continuousRingWriteFrameAtomic.load(std::memory_order_acquire);
+        const uint64_t latestRead =
+            _continuousRingReadFrameAtomic.load(std::memory_order_relaxed);
+        if (latestWrite > latestRead) {
+            _continuousDroppedFrameCountAtomic.fetch_add(
+                latestWrite - latestRead,
+                std::memory_order_relaxed
+            );
+            _continuousRingReadFrameAtomic.store(latestWrite, std::memory_order_release);
+        }
+    }
+    [self closeContinuousSegmentOnFileQueue];
+}
+
+- (BOOL)openNextContinuousSegmentOnFileQueue {
+    if (_continuousFile || !_continuousDirectoryURL || _continuousBaseName.length == 0 ||
+        _continuousChannels <= 0 || _continuousSampleRate == 0) {
+        return _continuousFile != nullptr;
+    }
+
+    const uint64_t segment =
+        _continuousSegmentCountAtomic.load(std::memory_order_relaxed) + 1u;
+    NSString *name =
+        [NSString stringWithFormat:@"%@-part-%04llu.wav",
+                                   _continuousBaseName,
+                                   (unsigned long long)segment];
+    NSURL *url = [_continuousDirectoryURL URLByAppendingPathComponent:name isDirectory:NO];
+    FILE *file = std::fopen(url.fileSystemRepresentation, "wb");
+    if (!file) return NO;
+    if (!writeFloatWavHeader(file, 0, _continuousChannels, _continuousSampleRate)) {
+        std::fclose(file);
+        return NO;
+    }
+
+    _continuousFile = file;
+    _continuousSegmentFramesWritten = 0;
+    _continuousSegmentCheckpointFrames = 0;
+    _continuousSegmentCountAtomic.store(segment, std::memory_order_release);
+    return YES;
+}
+
+- (void)checkpointContinuousSegmentOnFileQueue:(BOOL)force {
+    if (!_continuousFile) return;
+    const uint64_t checkpointInterval = std::max<uint64_t>(1, _continuousSampleRate);
+    if (!force &&
+        _continuousSegmentFramesWritten - _continuousSegmentCheckpointFrames <
+            checkpointInterval) {
+        return;
+    }
+    if (!writeFloatWavHeader(_continuousFile,
+                             _continuousSegmentFramesWritten,
+                             _continuousChannels,
+                             _continuousSampleRate)) {
+        _continuousWriteFailedAtomic.store(true, std::memory_order_release);
+        _continuousRecordingAtomic.store(false, std::memory_order_release);
+        [self setStatus:@"Continuous recording stopped: WAV checkpoint failed."];
+        return;
+    }
+    _continuousSegmentCheckpointFrames = _continuousSegmentFramesWritten;
+}
+
+- (void)closeContinuousSegmentOnFileQueue {
+    if (!_continuousFile) return;
+    [self checkpointContinuousSegmentOnFileQueue:YES];
+    std::fclose(_continuousFile);
+    _continuousFile = nullptr;
+    _continuousSegmentFramesWritten = 0;
+    _continuousSegmentCheckpointFrames = 0;
+}
+
 - (void)captureRecordingFrames:(UInt32)frames {
     const int channels = _recordChannels;
     if (channels < 2 || _recordBuffer.empty()) {
@@ -1940,31 +2325,46 @@ struct AMRealtimeAllocationGuard {
 static bool writeFloatWav(const char *path, const float *samples, uint64_t frames, int channels, uint32_t sampleRate) {
     FILE *f = std::fopen(path, "wb");
     if (!f) return false;
+    if (!writeFloatWavHeader(f, frames, channels, sampleRate)) {
+        std::fclose(f);
+        return false;
+    }
+    const uint64_t dataBytes64 = frames * (uint64_t)channels * sizeof(float);
+    const size_t dataBytes = (size_t)std::min<uint64_t>(dataBytes64, UINT32_MAX - 44u);
+    const bool wroteSamples = std::fwrite(samples, 1, dataBytes, f) == dataBytes;
+    const bool closed = std::fclose(f) == 0;
+    return wroteSamples && closed;
+}
+
+static bool writeFloatWavHeader(FILE *f, uint64_t frames, int channels, uint32_t sampleRate) {
+    if (!f || channels <= 0 || channels > UINT16_MAX || sampleRate == 0) return false;
     const uint16_t audioFormat = 3; // IEEE float
     const uint16_t bitsPerSample = 32;
     const uint16_t blockAlign = (uint16_t)(channels * sizeof(float));
     const uint32_t byteRate = sampleRate * blockAlign;
     const uint64_t dataBytes64 = frames * (uint64_t)blockAlign;
-    const uint32_t dataBytes = (uint32_t)std::min<uint64_t>(dataBytes64, UINT32_MAX - 44);
+    const uint32_t dataBytes = (uint32_t)std::min<uint64_t>(dataBytes64, UINT32_MAX - 44u);
     const uint32_t riffSize = 36 + dataBytes;
 
-    std::fwrite("RIFF", 1, 4, f);
-    std::fwrite(&riffSize, 4, 1, f);
-    std::fwrite("WAVEfmt ", 1, 8, f);
+    if (std::fseek(f, 0, SEEK_SET) != 0) return false;
+    bool ok = true;
+    ok = ok && std::fwrite("RIFF", 1, 4, f) == 4;
+    ok = ok && std::fwrite(&riffSize, 4, 1, f) == 1;
+    ok = ok && std::fwrite("WAVEfmt ", 1, 8, f) == 8;
     uint32_t fmtSize = 16;
-    std::fwrite(&fmtSize, 4, 1, f);
-    std::fwrite(&audioFormat, 2, 1, f);
+    ok = ok && std::fwrite(&fmtSize, 4, 1, f) == 1;
+    ok = ok && std::fwrite(&audioFormat, 2, 1, f) == 1;
     uint16_t channelCount = (uint16_t)channels;
-    std::fwrite(&channelCount, 2, 1, f);
-    std::fwrite(&sampleRate, 4, 1, f);
-    std::fwrite(&byteRate, 4, 1, f);
-    std::fwrite(&blockAlign, 2, 1, f);
-    std::fwrite(&bitsPerSample, 2, 1, f);
-    std::fwrite("data", 1, 4, f);
-    std::fwrite(&dataBytes, 4, 1, f);
-    std::fwrite(samples, 1, dataBytes, f);
-    std::fclose(f);
-    return true;
+    ok = ok && std::fwrite(&channelCount, 2, 1, f) == 1;
+    ok = ok && std::fwrite(&sampleRate, 4, 1, f) == 1;
+    ok = ok && std::fwrite(&byteRate, 4, 1, f) == 1;
+    ok = ok && std::fwrite(&blockAlign, 2, 1, f) == 1;
+    ok = ok && std::fwrite(&bitsPerSample, 2, 1, f) == 1;
+    ok = ok && std::fwrite("data", 1, 4, f) == 4;
+    ok = ok && std::fwrite(&dataBytes, 4, 1, f) == 1;
+    ok = ok && std::fflush(f) == 0;
+    ok = ok && std::fseek(f, 0, SEEK_END) == 0;
+    return ok;
 }
 
 - (std::vector<app::Cls>)classesFromRoles:(NSArray<NSString *> *)roles count:(int)count {

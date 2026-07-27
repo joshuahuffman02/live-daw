@@ -752,6 +752,39 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.05)
     }
 
+    func testContinuouslyRecordingBridgeCanDeallocateAndFinalizeItsSegment() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        weak var weakBridge: AutoMixEngineBridge?
+
+        do {
+            var localBridge: AutoMixEngineBridge? = AutoMixEngineBridge()
+            weakBridge = localBridge
+            try localBridge?.startSimulated(
+                withChannelCount: 4,
+                sampleRate: 48_000,
+                bufferFrameSize: 256,
+                channelRoles: simulatedRoles(count: 4),
+                inputChannelIndices: identityInputMap(count: 4)
+            )
+            try localBridge?.startContinuousRecording(atDirectoryURL: directory)
+            XCTAssertTrue(waitUntil(timeout: 2.0) {
+                (localBridge?.continuousRecordingFrameCount ?? 0) >= 1_024
+            })
+
+            localBridge = nil
+        }
+
+        XCTAssertNil(weakBridge)
+        let files = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension.lowercased() == "wav" }
+        XCTAssertEqual(files.count, 1)
+        XCTAssertGreaterThan(try WavMetadata.read(from: XCTUnwrap(files.first)).frameCount, 0)
+    }
+
     #if DEBUG
     func testSimulatedNativeRealtimeRenderDoesNotAllocateAfterPrepare() throws {
         try bridge.startSimulated(
@@ -841,6 +874,72 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(bridge.dropoutCount, 0)
         XCTAssertEqual(bridge.callbackOverrunCount, 0)
         XCTAssertEqual(bridge.renderDeadlineMissCount, 0)
+    }
+
+    func testContinuousRecordingSegmentsRawInputsAndProgramWithoutRealtimeAllocation() throws {
+        try bridge.startSimulated(
+            withChannelCount: 4,
+            sampleRate: 48_000,
+            bufferFrameSize: 256,
+            channelRoles: simulatedRoles(count: 4),
+            inputChannelIndices: identityInputMap(count: 4)
+        )
+        XCTAssertTrue(waitUntil(timeout: 2.0) {
+            self.bridge.lastCallbackFrameCount == 256
+        })
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        bridge.debugSetContinuousRecordingSegmentFrameLimit(1_024)
+        try bridge.startContinuousRecording(atDirectoryURL: directory)
+
+        let allocationCount = bridge.debugRunRealtimeCoreAudioInputNoAllocationProbe(
+            withFrameCount: 256,
+            blocks: 16,
+            channelsPerBuffer: 4
+        )
+        XCTAssertEqual(allocationCount, 0)
+        XCTAssertTrue(waitUntil(timeout: 2.0) {
+            self.bridge.continuousRecordingFrameCount >= 8_192 &&
+                self.bridge.continuousRecordingSegmentCount >= 4
+        })
+
+        bridge.stopContinuousRecording()
+        XCTAssertFalse(bridge.continuousRecording)
+        XCTAssertEqual(bridge.continuousRecordingDroppedFrameCount, 0)
+        XCTAssertGreaterThanOrEqual(bridge.continuousRecordingSegmentCount, 4)
+
+        let files = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )
+        .filter { $0.pathExtension.lowercased() == "wav" }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        XCTAssertEqual(files.count, Int(bridge.continuousRecordingSegmentCount))
+        let firstSignalSummary = try WavSignalSummary.read(
+            from: try XCTUnwrap(files.first),
+            inputChannelCount: 4
+        )
+        XCTAssertEqual(firstSignalSummary.activeInputChannelCount, 4)
+        XCTAssertEqual(firstSignalSummary.activeStreamOutputChannelCount, 2)
+
+        var totalFrames: UInt64 = 0
+        for file in files {
+            let header = try readWavHeader(from: file)
+            XCTAssertEqual(String(data: header.subdata(in: 0..<4), encoding: .ascii), "RIFF")
+            XCTAssertEqual(String(data: header.subdata(in: 8..<12), encoding: .ascii), "WAVE")
+            XCTAssertEqual(uint16LE(header, at: 20), 3)
+            XCTAssertEqual(uint16LE(header, at: 22), 6)
+            XCTAssertEqual(uint32LE(header, at: 24), 48_000)
+            XCTAssertEqual(uint16LE(header, at: 34), 32)
+
+            let metadata = try WavMetadata.read(from: file)
+            XCTAssertGreaterThan(metadata.frameCount, 0)
+            XCTAssertLessThanOrEqual(metadata.frameCount, 1_024)
+            totalFrames += UInt64(metadata.frameCount)
+        }
+        XCTAssertEqual(totalFrames, UInt64(bridge.continuousRecordingFrameCount))
     }
 
     func testRecordingCapturePreservesRawDanteOrderWhenMixerInputMapIsRemapped() throws {

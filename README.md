@@ -178,6 +178,13 @@ Current native milestone:
   non-clipping stream L/R levels, LUFS telemetry, and limiter gain reduction; proof
   reports preserve opened-route UID identity while re-reading running Core Audio
   sample-rate, channel-count, and format properties when the report is written;
+- continuously records raw Core Audio/Dante inputs plus final stream L/R into
+  checkpointed 60-second float-WAV segments on a dedicated file queue; a preallocated
+  two-second SPSC ring keeps all file I/O off the audio callback, recording pressure
+  drops and counts recorder frames instead of blocking the mix, and the operator UI
+  exposes captured frames, segment count, output folder, and drop telemetry; storage
+  sizing and recovery limits are documented in
+  [`docs/CONTINUOUS_RECORDING.md`](docs/CONTINUOUS_RECORDING.md);
 - enforces SAFE bypass directly from the audio callback so the next render enters the
   curated role-aware raw-input mix even while FREEZE is holding control-thread
   targets; the fallback gives speech priority, attenuates instruments/unknown patch
@@ -260,8 +267,10 @@ manual fader/pan override set/clear behavior in controlled Core Audio renders, v
 FREEZE and SAFE bypass still produce stereo stream output, verifies expected channel-count
 warning/profile behavior, exercises simulated separate-output routing, records a
 test WAV, runs debug no-allocation probes across the native simulated render path
-and the real Core Audio `AudioBufferList` input render path, verifies the WAV header,
-frame count, duration, and checks soundcheck report
+and the real Core Audio `AudioBufferList` input render path, forces rapid continuous
+recording rotation while that guard is active, verifies each segment's raw-input plus
+program payload and WAV metadata, verifies the soundcheck WAV header, frame count,
+duration, and checks soundcheck report
 readiness logic including per-channel recorded input peaks, recorded input/stream
 activity, recording channel count, and watchdog-forced SAFE state.
 
