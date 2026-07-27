@@ -7,7 +7,6 @@ const SCENE_LABELS = {
 };
 const sceneLabel = (s) => SCENE_LABELS[s] || (s ? s[0].toUpperCase() + s.slice(1) : s);
 
-let token = localStorage.getItem("amtoken") || "";
 let expanded = null;          // channel idx whose detail row is open
 let lastSnap = null;
 let activeCriticalIds = new Set();
@@ -233,15 +232,14 @@ function setConn(up) {
 }
 
 async function sendCommand(cmd) {
-  if (!token) { openPair(); return; }
   try {
     const res = await fetch("/command", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-AMToken": token },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cmd),
       credentials: "same-origin"
     });
-    if (res.status === 401) { token = ""; localStorage.removeItem("amtoken"); openPair(); }
+    if (res.status === 401) openPair();
   } catch (e) {}
 }
 
@@ -259,8 +257,7 @@ async function doPair() {
       credentials: "same-origin"
     });
     const data = await res.json();
-    if (data.ok && data.token) {
-      token = data.token; localStorage.setItem("amtoken", token);
+    if (data.ok) {
       $("pairMsg").textContent = "";
       closePair();
       if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();

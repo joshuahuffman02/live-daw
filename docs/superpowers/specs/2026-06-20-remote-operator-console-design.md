@@ -201,14 +201,19 @@ The phone escalates by severity: info = quiet badge; warning = amber banner; cri
 - On app launch `PairingStore` generates a per-launch random secret and a 6-digit
   code. The Mac UI shows the code, the `http://<host>.local:<port>` URL, and a QR
   encoding the URL.
-- `POST /pair {code}` with the right code returns a token = HMAC-SHA256(secret,
-  clientNonce+issuedAt), set as an `HttpOnly` cookie. `MonitorBridge` keeps the set of
-  valid tokens (paired clients) with a label + first-seen time.
+- `POST /pair {code}` with the right code mints a cryptographically random token and
+  sets it only as an `HttpOnly; SameSite=Strict` cookie. The response does not expose
+  the bearer token to JavaScript or persistent browser storage. `MonitorBridge` keeps
+  the set of valid tokens (paired clients) with a label + first-seen time.
 - `GET /events` and static assets are open (view-only). `POST /command` requires a
   valid token → 401 otherwise. The phone shows "Pair to control" until paired.
 - Mac UI lists paired/connected clients and has "Revoke all" (clears tokens; phones
   drop to view-only and must re-pair).
 - Tokens die on app restart (secret regenerates). Acceptable: a service is one launch.
+- The direct console transport is plain HTTP and must stay on an isolated, trusted
+  production/management LAN. It is not an internet- or guest-Wi-Fi-facing control
+  surface. Browsers that require HTTPS for service workers/notifications fall back to
+  the live browser console and in-page alarm.
 
 QR generation uses `CoreImage` `CIQRCodeGenerator` (system framework, no dependency).
 

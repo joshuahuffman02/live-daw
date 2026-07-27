@@ -308,14 +308,20 @@ same paths the desktop buttons use.
 - On the phone: open the URL, watch live stream meters, LUFS, limiter GR, per-channel
   input levels, scene, and health. Enter the pairing code once to unlock control:
   engage/release SAFE, mute or fader/pan-override individual channels, and change
-  scenes. Monitoring is view-open; control requires a paired token, so a stray device
-  on the network cannot act.
+  scenes. Monitoring is view-open; control requires a paired, HttpOnly browser cookie,
+  so a stray device on the network cannot act. The cookie is never exposed to
+  JavaScript or persistent browser storage.
 - Add to Home Screen to install the PWA; a critical fault (stream silent, watchdog
   SAFE, engine stopped, …) flashes the screen red, sounds an alarm, and fires a Web
   Notification. Alert conditions are computed authoritatively on the Mac
   (`AlertEvaluator`) and pushed in the telemetry; the phone only reacts.
 - "Mute" from the console is a fader override at the -80 dB floor (no DSP/bridge
   change), and unmute restores the prior fader state.
+- The embedded console intentionally uses HTTP for direct same-LAN access. Put it on
+  an isolated, trusted production/management network; it is not safe to expose to
+  guest Wi-Fi or the public internet. Service-worker installation and Web
+  Notifications may be unavailable when the browser requires a secure HTTPS context;
+  the live browser console and alarm remain the supported baseline.
 
 Headless end-to-end check (no phone, no rig): starts the server on an ephemeral
 loopback port with a canned snapshot and exercises static serving, `/health`, auth

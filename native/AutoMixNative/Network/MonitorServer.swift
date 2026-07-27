@@ -161,9 +161,13 @@ final class MonitorServer: @unchecked Sendable {
         }
         let label = body.label ?? "device"
         if let token = service.pair(code: body.code, clientLabel: label) {
-            let cookie = "amtoken=\(token); Path=/; HttpOnly; SameSite=Lax; Max-Age=86400"
-            sendJSON(conn, object: ["ok": true, "token": token], close: true,
-                     extraHeaders: ["Set-Cookie": cookie])
+            // Keep the bearer credential out of JavaScript and browser storage.
+            // The console is served over plain HTTP on a trusted management LAN, so
+            // Secure cannot be used; HttpOnly + strict same-site cookies still
+            // remove the avoidable script-readable copy.
+            let cookie = "amtoken=\(token); Path=/; HttpOnly; SameSite=Strict; Max-Age=86400"
+            sendJSON(conn, object: ["ok": true], close: true,
+                     extraHeaders: ["Set-Cookie": cookie, "Cache-Control": "no-store"])
         } else if service.isPairingLockedOut {
             sendJSON(conn, object: ["ok": false, "message": "too many attempts, locked out"],
                      status: 429, close: true)
@@ -173,13 +177,17 @@ final class MonitorServer: @unchecked Sendable {
     }
 
     private func handleCommand(_ request: HTTPRequest, _ conn: HTTPConnection) {
-        let token = request.cookie("amtoken") ?? request.header("x-amtoken") ?? ""
+        let token = request.cookie("amtoken") ?? ""
         guard service.isPaired(token: token) else {
-            sendJSON(conn, object: ["ok": false, "message": "pair to control"], status: 401, close: true)
+            sendJSON(conn, object: ["ok": false, "message": "pair to control"],
+                     status: 401, close: true,
+                     extraHeaders: ["Cache-Control": "no-store"])
             return
         }
         guard let command = try? JSONDecoder().decode(RemoteCommand.self, from: request.body) else {
-            sendJSON(conn, object: ["ok": false, "message": "bad command"], close: true)
+            sendJSON(conn, object: ["ok": false, "message": "bad command"],
+                     status: 400, close: true,
+                     extraHeaders: ["Cache-Control": "no-store"])
             return
         }
         let connectionID = conn.id
@@ -190,7 +198,8 @@ final class MonitorServer: @unchecked Sendable {
                 let data = (try? JSONEncoder().encode(result)) ?? Data(#"{"ok":false}"#.utf8)
                 conn.send(Self.response(status: result.ok ? 200 : 400,
                                         contentType: "application/json; charset=utf-8",
-                                        body: data), close: true)
+                                        body: data,
+                                        extraHeaders: ["Cache-Control": "no-store"]), close: true)
             }
         }
     }
@@ -240,6 +249,10 @@ final class MonitorServer: @unchecked Sendable {
         head += "Content-Type: \(contentType)\r\n"
         head += "Content-Length: \(body.count)\r\n"
         head += "Connection: close\r\n"
+        head += "Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\n"
+        head += "Referrer-Policy: no-referrer\r\n"
+        head += "X-Content-Type-Options: nosniff\r\n"
+        head += "X-Frame-Options: DENY\r\n"
         for (key, value) in extraHeaders {
             head += "\(key): \(value)\r\n"
         }

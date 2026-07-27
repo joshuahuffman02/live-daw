@@ -41,50 +41,73 @@ enum MonitorSmoke {
         }
 
         // 1) health
-        if let (status, body) = httpRequest(base + "/health") {
+        if let (status, body, _) = httpRequest(base + "/health") {
             check("health 200", status == 200, "status \(status)")
             check("health ok:true", String(data: body, encoding: .utf8)?.contains("\"ok\":true") == true)
         } else { check("health reachable", false) }
 
         // 2) static PWA shell
-        if let (status, body) = httpRequest(base + "/index.html") {
+        if let (status, body, headers) = httpRequest(base + "/index.html") {
             check("static index 200", status == 200, "status \(status)")
             check("static index is the dashboard", String(data: body, encoding: .utf8)?.contains("AutoMix Remote") == true)
+            check("static response blocks framing", headers["x-frame-options"] == "DENY")
+            check("static response has CSP",
+                  headers["content-security-policy"]?.contains("default-src 'self'") == true)
         } else { check("static index reachable", false) }
 
         // 3) command rejected without token
-        if let (status, _) = httpRequest(base + "/command", method: "POST",
-                                         body: Data(#"{"type":"setSafe","on":true}"#.utf8)) {
+        if let (status, _, _) = httpRequest(base + "/command", method: "POST",
+                                            body: Data(#"{"type":"setSafe","on":true}"#.utf8)) {
             check("command blocked without pairing", status == 401, "status \(status)")
         } else { check("command endpoint reachable", false) }
 
         // 4) pairing
-        var token = ""
-        if let (status, body) = httpRequest(base + "/pair", method: "POST",
-                                            body: Data(#"{"code":"424242","label":"smoke"}"#.utf8)) {
-            check("pair 200", status == 200, "status \(status)")
-            if let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-               let t = obj["token"] as? String {
-                token = t
-            }
-            check("pair returns token", !token.isEmpty)
+        var cookie = ""
+        var bearerToken = ""
+        if let response = httpRequest(base + "/pair", method: "POST",
+                                      body: Data(#"{"code":"424242","label":"smoke"}"#.utf8)) {
+            check("pair 200", response.status == 200, "status \(response.status)")
+            let object = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any]
+            check("pair keeps token out of JSON", object?["token"] == nil)
+            cookie = response.headers["set-cookie"]?
+                .split(separator: ";", maxSplits: 1)
+                .first
+                .map(String.init) ?? ""
+            bearerToken = cookie
+                .split(separator: "=", maxSplits: 1)
+                .last
+                .map(String.init) ?? ""
+            check("pair sets HttpOnly cookie",
+                  response.headers["set-cookie"]?.contains("HttpOnly") == true)
+            check("pair cookie is SameSite strict",
+                  response.headers["set-cookie"]?.contains("SameSite=Strict") == true)
+            check("pair response is not cacheable",
+                  response.headers["cache-control"] == "no-store")
+            check("pair returns cookie credential", !cookie.isEmpty)
         } else { check("pair reachable", false) }
 
         // 5) wrong code rejected
-        if let (status, _) = httpRequest(base + "/pair", method: "POST",
-                                         body: Data(#"{"code":"000000"}"#.utf8)) {
+        if let (status, _, _) = httpRequest(base + "/pair", method: "POST",
+                                            body: Data(#"{"code":"000000"}"#.utf8)) {
             check("wrong pairing code rejected", status == 401, "status \(status)")
         }
 
-        // 6) command accepted with token
-        if let (status, body) = httpRequest(base + "/command", method: "POST",
+        // 6) legacy script-readable header is rejected
+        if let (status, _, _) = httpRequest(base + "/command", method: "POST",
                                             body: Data(#"{"type":"setSafe","on":true}"#.utf8),
-                                            headers: ["X-AMToken": token]) {
-            check("command accepted with token", status == 200, "status \(status)")
-            check("command ok:true", String(data: body, encoding: .utf8)?.contains("\"ok\":true") == true)
-        } else { check("command with token reachable", false) }
+                                            headers: ["X-AMToken": bearerToken]) {
+            check("legacy token header rejected", status == 401, "status \(status)")
+        }
 
-        // 7) SSE stream delivers a snapshot frame
+        // 7) command accepted with the HttpOnly cookie
+        if let (status, body, _) = httpRequest(base + "/command", method: "POST",
+                                               body: Data(#"{"type":"setSafe","on":true}"#.utf8),
+                                               headers: ["Cookie": cookie]) {
+            check("command accepted with cookie", status == 200, "status \(status)")
+            check("command ok:true", String(data: body, encoding: .utf8)?.contains("\"ok\":true") == true)
+        } else { check("command with cookie reachable", false) }
+
+        // 8) SSE stream delivers a snapshot frame
         if let frame = readSSEFrame(base + "/events") {
             check("SSE frame is data: event", frame.hasPrefix("data: "))
             check("SSE frame carries snapshot", frame.contains("smoke-venue"))
@@ -111,7 +134,8 @@ enum MonitorSmoke {
                                     method: String = "GET",
                                     body: Data? = nil,
                                     headers: [String: String] = [:],
-                                    timeout: TimeInterval = 3) -> (status: Int, body: Data)? {
+                                    timeout: TimeInterval = 3)
+        -> (status: Int, body: Data, headers: [String: String])? {
         guard let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method
@@ -121,14 +145,25 @@ enum MonitorSmoke {
 
         let semaphore = DispatchSemaphore(value: 0)
         let result = HTTPResultBox()
-        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
+        // Keep every probe stateless so the test proves that only the explicitly
+        // supplied Cookie header authorizes a command.
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        let session = URLSession(configuration: configuration)
+        let task = session.dataTask(with: request) { data, response, _ in
             if let http = response as? HTTPURLResponse {
-                result.store(status: http.statusCode, body: data ?? Data())
+                var headers: [String: String] = [:]
+                for (key, value) in http.allHeaderFields {
+                    headers[String(describing: key).lowercased()] = String(describing: value)
+                }
+                result.store(status: http.statusCode, body: data ?? Data(), headers: headers)
             }
             semaphore.signal()
         }
         task.resume()
         _ = semaphore.wait(timeout: .now() + timeout + 1)
+        session.finishTasksAndInvalidate()
         return result.value
     }
 
@@ -141,17 +176,17 @@ enum MonitorSmoke {
 
 private final class HTTPResultBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var storedValue: (Int, Data)?
+    private var storedValue: (Int, Data, [String: String])?
 
-    var value: (Int, Data)? {
+    var value: (Int, Data, [String: String])? {
         lock.lock()
         defer { lock.unlock() }
         return storedValue
     }
 
-    func store(status: Int, body: Data) {
+    func store(status: Int, body: Data, headers: [String: String]) {
         lock.lock()
-        storedValue = (status, body)
+        storedValue = (status, body, headers)
         lock.unlock()
     }
 }
