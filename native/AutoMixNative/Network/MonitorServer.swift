@@ -182,10 +182,11 @@ final class MonitorServer: @unchecked Sendable {
             sendJSON(conn, object: ["ok": false, "message": "bad command"], close: true)
             return
         }
-        service.applyCommand(command) { [weak self, weak conn] result in
+        let connectionID = conn.id
+        service.applyCommand(command) { [weak self] result in
             // Hop back onto the monitor queue so HTTPConnection is only touched there.
-            self?.queue.async {
-                guard let conn else { return }
+            self?.queue.async { [weak self] in
+                guard let self, let conn = self.connections[connectionID] else { return }
                 let data = (try? JSONEncoder().encode(result)) ?? Data(#"{"ok":false}"#.utf8)
                 conn.send(Self.response(status: result.ok ? 200 : 400,
                                         contentType: "application/json; charset=utf-8",

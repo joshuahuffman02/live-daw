@@ -120,16 +120,16 @@ enum MonitorSmoke {
         for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
 
         let semaphore = DispatchSemaphore(value: 0)
-        var result: (Int, Data)?
+        let result = HTTPResultBox()
         let task = URLSession.shared.dataTask(with: request) { data, response, _ in
             if let http = response as? HTTPURLResponse {
-                result = (http.statusCode, data ?? Data())
+                result.store(status: http.statusCode, body: data ?? Data())
             }
             semaphore.signal()
         }
         task.resume()
         _ = semaphore.wait(timeout: .now() + timeout + 1)
-        return result
+        return result.value
     }
 
     private static func readSSEFrame(_ urlString: String, timeout: TimeInterval = 3) -> String? {
@@ -139,10 +139,29 @@ enum MonitorSmoke {
     }
 }
 
-private final class SSEProbe: NSObject, URLSessionDataDelegate {
+private final class HTTPResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: (Int, Data)?
+
+    var value: (Int, Data)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+
+    func store(status: Int, body: Data) {
+        lock.lock()
+        storedValue = (status, body)
+        lock.unlock()
+    }
+}
+
+private final class SSEProbe: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
     private var buffer = Data()
     private let semaphore = DispatchSemaphore(value: 0)
     private var captured: String?
+    private var didCapture = false
 
     func firstFrame(url: URL, timeout: TimeInterval) -> String? {
         let config = URLSessionConfiguration.default
@@ -153,14 +172,20 @@ private final class SSEProbe: NSObject, URLSessionDataDelegate {
         _ = semaphore.wait(timeout: .now() + timeout)
         task.cancel()
         session.invalidateAndCancel()
+        lock.lock()
+        defer { lock.unlock() }
         return captured
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !didCapture else { return }
         buffer.append(data)
         if let text = String(data: buffer, encoding: .utf8),
            let range = text.range(of: "\n\n") {
             captured = String(text[..<range.lowerBound])
+            didCapture = true
             semaphore.signal()
         }
     }

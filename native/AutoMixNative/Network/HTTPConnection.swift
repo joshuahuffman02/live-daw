@@ -85,7 +85,7 @@ final class HTTPConnection: @unchecked Sendable {
 
     // SSE push with a real completion so a failed write (dead/departed peer) can prune
     // the client instead of queuing frames forever.
-    func sendEvent(_ data: Data, onError: @escaping () -> Void) {
+    func sendEvent(_ data: Data, onError: @escaping @Sendable () -> Void) {
         connection.send(content: data, completion: .contentProcessed { error in
             if error != nil { onError() }
         })
