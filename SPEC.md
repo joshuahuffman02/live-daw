@@ -122,6 +122,12 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   `docs/EXTERNAL_FAILOVER.md`.
 - ML status: no ML is shipped in the native app. Any future classifier must stay
   off the realtime callback and only publish control-rate targets.
+- Offline validation: `appliance/tools/replay_eval.cpp` drives the production C++
+  engine and brain from PCM/float multichannel WAVs. Its control clock advances from
+  source frames rather than wall time. It writes the stereo candidate mix,
+  source/config/safety/reference metrics, and a 20 Hz JSONL trace of every channel
+  and master automation decision. The corpus comparison and shadow-mode promotion
+  contract is defined in `docs/REPLAY_EVALUATION.md`.
 
 Build and verification:
 

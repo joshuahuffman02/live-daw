@@ -431,6 +431,14 @@ public:
         if (th_.joinable()) th_.join();
     }
 
+    // Deterministic offline replay hook. It executes the exact same control tick as
+    // the live 20 Hz thread, but advances only when the replay driver asks it to.
+    // Calling it while the live brain owns the state is intentionally a no-op.
+    void runOneOfflineControlTick() {
+        if (running_.load(std::memory_order_acquire)) return;
+        performControlTick();
+    }
+
     // ---- called on the AUDIO thread, once per block. Never blocks. ----
     void applyTo(bdsp::Engine& e) {
         // failsafe watchdog: if the brain hasn't ticked recently, drop to SAFE mix
@@ -440,6 +448,19 @@ public:
             return;
         }
         watchdogBypass_.store(false, std::memory_order_relaxed);
+        applyPublishedSnapshotTo(e);
+    }
+
+    // Offline replay has no wall-clock failure mode: its control clock is advanced
+    // explicitly from source frames. Applying a replay snapshot therefore skips the
+    // live 600 ms watchdog and is deterministic even on a slow/loaded test host.
+    void applyOfflineTo(bdsp::Engine& e) {
+        if (running_.load(std::memory_order_acquire)) return;
+        applyPublishedSnapshotTo(e);
+    }
+
+private:
+    void applyPublishedSnapshotTo(bdsp::Engine& e) {
         const uint64_t seq = publishSeq_.load(std::memory_order_acquire);
         if ((seq & 1u) != 0 || seq == appliedSeq_) return;
 
@@ -451,7 +472,6 @@ public:
         appliedSeq_ = seq;
     }
 
-private:
     static int64_t nowMs() {
         using namespace std::chrono;
         return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
@@ -574,15 +594,19 @@ private:
                 continue;
             }
 #endif
-            updateTempo();   // track BPM regardless of FREEZE (informational)
-            if (!frozen_.load()) {
-                EngineSnapshot s;
-                computeTargets(s);
-                publishSnapshot(s);
-            }
-            lastTickMs_.store(nowMs());
+            performControlTick();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
+    }
+
+    void performControlTick() {
+        updateTempo();   // track BPM regardless of FREEZE (informational)
+        if (!frozen_.load()) {
+            EngineSnapshot s;
+            computeTargets(s);
+            publishSnapshot(s);
+        }
+        lastTickMs_.store(nowMs());
     }
 
     void updateTempo() {

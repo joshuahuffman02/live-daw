@@ -13,6 +13,7 @@ appliance/
   dsp/        Pure-C++17 DSP core — NO JUCE dependency. The audio-thread engine.
   src/        JUCE app layer: audio-device I/O + the control-rate BrainThread.
   tests/      Standalone correctness tests for the DSP core (no JUCE, no audio device).
+  tools/      Deterministic recorded-service replay/evaluation CLI + WAV I/O.
   CMakeLists.txt
 ```
 
@@ -61,6 +62,10 @@ cmake -B build -DBUILD_APP=OFF
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+The no-JUCE build also creates `automix_replay`; CTest runs its synthetic end-to-end
+self-test. Full usage and the decision-log contract are in
+[`../docs/REPLAY_EVALUATION.md`](../docs/REPLAY_EVALUATION.md).
 
 The full appliance pulls JUCE 8 via CMake FetchContent on first configure:
 

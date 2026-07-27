@@ -16,6 +16,12 @@ add_executable(dsp_tests tests/test_dsp.cpp)
 target_include_directories(dsp_tests PRIVATE dsp)
 add_test(NAME dsp_tests COMMAND dsp_tests)
 
+# Deterministic recorded-service replay/evaluation. This target has no JUCE or audio
+# device dependency and is exercised in CI through its synthetic self-test.
+add_executable(automix_replay tools/replay_eval.cpp)
+target_include_directories(automix_replay PRIVATE dsp src tools)
+add_test(NAME replay_eval_self_test COMMAND automix_replay --self-test)
+
 # ---------------------------------------------------------------------------
 # 2) The appliance: a headless standalone JUCE console app that opens the Dante
 #    audio device (via Dante Virtual Soundcard / RME Digiface), runs the

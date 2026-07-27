@@ -217,6 +217,23 @@ loudness normalization, manual override guards, and the no-heap-allocation
 invariant for `Engine::process`, measurement publication, and live channel config
 updates.
 
+Recorded-service replay uses the exact same C++ engine and brain with a
+frame-driven, deterministic 20 Hz control clock:
+
+```bash
+clang++ -std=c++17 -O2 \
+  -Iappliance/dsp -Iappliance/src -Iappliance/tools \
+  appliance/tools/replay_eval.cpp \
+  -o /tmp/automix-replay
+/tmp/automix-replay --self-test
+```
+
+The evaluator accepts PCM/float multichannel WAVs, optionally with a final stereo
+human/reference mix, and writes a rendered program WAV, safety/reference metrics
+JSON, and per-control-tick decision JSONL. See
+[`docs/REPLAY_EVALUATION.md`](docs/REPLAY_EVALUATION.md) for the input contract and
+shadow-mode promotion gate.
+
 Native XCTest coverage for the simulated Core Audio bridge:
 
 ```bash

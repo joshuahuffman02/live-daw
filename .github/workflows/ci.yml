@@ -26,6 +26,14 @@ jobs:
             -o "${RUNNER_TEMP}/live-daw-test-dsp"
           "${RUNNER_TEMP}/live-daw-test-dsp"
 
+      - name: Build and self-test deterministic replay evaluator
+        run: |
+          clang++ -std=c++17 -O2 \
+            -Iappliance/dsp -Iappliance/src -Iappliance/tools \
+            appliance/tools/replay_eval.cpp \
+            -o "${RUNNER_TEMP}/automix-replay"
+          "${RUNNER_TEMP}/automix-replay" --self-test
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
