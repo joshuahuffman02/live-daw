@@ -82,5 +82,86 @@ final class ChannelMappingMuteTests: XCTestCase {
         let legacy = #"{"index":0,"inputChannelIndex":0,"name":"Ch 1","role":"leadVocal","faderOverrideEnabled":false,"faderDb":-6,"panOverrideEnabled":false,"pan":0}"#
         let decoded = try JSONDecoder().decode(ChannelMapping.self, from: Data(legacy.utf8))
         XCTAssertFalse(decoded.muted)
+        XCTAssertFalse(decoded.stereoLinkedToNext)
+    }
+
+    func testStereoLinkRoundTripsInCodable() throws {
+        var ch = ChannelMapping(index: 0, name: "Keys L", role: .keys)
+        ch.stereoLinkedToNext = true
+        let data = try JSONEncoder().encode(ch)
+        let decoded = try JSONDecoder().decode(ChannelMapping.self, from: data)
+        XCTAssertTrue(decoded.stereoLinkedToNext)
+    }
+
+    func testServiceTemplateCoversWorshipSourcesAndStereoPairs() {
+        let channels = ChannelMapping.serviceRoleTemplate(count: 24)
+        XCTAssertEqual(channels.count, 24)
+        XCTAssertEqual(channels[14].role, .snare)
+        XCTAssertEqual(channels[15].role, .tom)
+        XCTAssertEqual(channels[17].role, .overhead)
+        XCTAssertEqual(channels[19].role, .percussion)
+        XCTAssertEqual(channels[20].role, .playback)
+        XCTAssertEqual(channels[10].name, "Keys L")
+        XCTAssertEqual(channels[11].name, "Keys R")
+
+        let coverage = StereoLinkCoverage.make(channelMappings: channels)
+        XCTAssertTrue(coverage.isReady)
+        XCTAssertEqual(
+            coverage.pairs,
+            [
+                StereoLinkPair(leftChannelIndex: 10, rightChannelIndex: 11),
+                StereoLinkPair(leftChannelIndex: 17, rightChannelIndex: 18),
+                StereoLinkPair(leftChannelIndex: 20, rightChannelIndex: 21)
+            ]
+        )
+    }
+
+    func testStereoCoverageRejectsDifferentRolesAndOverlappingPairs() {
+        let mismatched = [
+            ChannelMapping(
+                index: 0,
+                name: "Keys L",
+                role: .keys,
+                stereoLinkedToNext: true
+            ),
+            ChannelMapping(index: 1, name: "Tracks R", role: .playback)
+        ]
+        let mismatchCoverage = StereoLinkCoverage.make(channelMappings: mismatched)
+        XCTAssertFalse(mismatchCoverage.isReady)
+        XCTAssertEqual(mismatchCoverage.invalidChannels, [0, 1])
+
+        let overlapping = [
+            ChannelMapping(
+                index: 0,
+                name: "Keys 1",
+                role: .keys,
+                stereoLinkedToNext: true
+            ),
+            ChannelMapping(
+                index: 1,
+                name: "Keys 2",
+                role: .keys,
+                stereoLinkedToNext: true
+            ),
+            ChannelMapping(index: 2, name: "Keys 3", role: .keys)
+        ]
+        let overlapCoverage = StereoLinkCoverage.make(channelMappings: overlapping)
+        XCTAssertFalse(overlapCoverage.isReady)
+        XCTAssertEqual(overlapCoverage.invalidChannels, [0, 1, 2])
+    }
+
+    func testSpeechCannotBeStereoLinked() {
+        let speech = [
+            ChannelMapping(
+                index: 0,
+                name: "Pastor L",
+                role: .speech,
+                stereoLinkedToNext: true
+            ),
+            ChannelMapping(index: 1, name: "Pastor R", role: .speech)
+        ]
+        let coverage = StereoLinkCoverage.make(channelMappings: speech)
+        XCTAssertFalse(coverage.isReady)
+        XCTAssertEqual(coverage.invalidChannels, [0, 1])
     }
 }

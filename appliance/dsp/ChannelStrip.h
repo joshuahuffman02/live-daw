@@ -11,6 +11,8 @@
 #include "SVF.h"
 #include "Gate.h"
 #include "Compressor.h"
+#include <algorithm>
+#include <cmath>
 
 namespace bdsp {
 
@@ -45,26 +47,61 @@ public:
     }
 
     inline float process(float in) {
-        float x = in * trim_.next();
-        x = hpf_.process(x);
+        float x = processPreGate(in);
         x = gate_.process(x);
-        x = corr_[0].process(x);
-        x = corr_[1].process(x);
-        x = mask_[0].process(x);
-        x = mask_[1].process(x);
+        x = processPostGatePreComp(x);
         x = comp_.process(x);
-        x = voice_[0].process(x);
-        x = voice_[1].process(x);
-        x = voice_[2].process(x);
-        x = deEss_.process(x);
-        x *= fader_.next();
-        return x;
+        return processPostComp(x);
+    }
+
+    static inline void processStereoLinked(
+        ChannelStrip& left,
+        ChannelStrip& right,
+        float leftIn,
+        float rightIn,
+        float& leftOut,
+        float& rightOut
+    ) {
+        float l = left.processPreGate(leftIn);
+        float r = right.processPreGate(rightIn);
+        const float gateDetector = std::max(std::fabs(l), std::fabs(r));
+        l = left.gate_.processWithDetector(l, gateDetector);
+        r = right.gate_.processWithDetector(r, gateDetector);
+
+        l = left.processPostGatePreComp(l);
+        r = right.processPostGatePreComp(r);
+        const float compDetector = std::max(std::fabs(l), std::fabs(r));
+        l = left.comp_.processWithDetector(l, compDetector);
+        r = right.comp_.processWithDetector(r, compDetector);
+
+        leftOut = left.processPostComp(l);
+        rightOut = right.processPostComp(r);
     }
 
     float compGainReductionDb() const { return comp_.gainReductionDb(); }
     bool gateOpen() const { return gate_.isOpen(); }
 
 private:
+    inline float processPreGate(float in) {
+        return hpf_.process(in * trim_.next());
+    }
+
+    inline float processPostGatePreComp(float x) {
+        x = corr_[0].process(x);
+        x = corr_[1].process(x);
+        x = mask_[0].process(x);
+        x = mask_[1].process(x);
+        return x;
+    }
+
+    inline float processPostComp(float x) {
+        x = voice_[0].process(x);
+        x = voice_[1].process(x);
+        x = voice_[2].process(x);
+        x = deEss_.process(x);
+        return x * fader_.next();
+    }
+
     double fs_ = kDefaultSampleRate;
     Smoothed trim_, fader_;
     SVF hpf_;

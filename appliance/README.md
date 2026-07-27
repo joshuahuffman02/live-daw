@@ -43,11 +43,12 @@ Per-sample DSP, no allocation/locking/ML in the hot path, all params ramped:
   sequence mailbox** (the audio callback never blocks or takes the control mutex).
   It consumes atomically published input/post-strip levels for activity detection,
   idle-only noise-floor learning, bounded gain staging, adaptive gate thresholds,
-  and conservative per-scene level riding. A separate master measurement closes a
-  slow, limiter-aware loudness loop after a full short-term window. It includes the
-  watchdog that drops to the SAFE mix if the brain stalls. The class-profile/scene
-  tables here mirror the web brain; the **integration points** for any future
-  classifier, spectral auto-EQ, and cross-channel masking are marked in comments.
+  conservative per-scene level riding, expanded worship-source profiles, and
+  conservative shared targets for adjacent stereo pairs. A separate master
+  measurement closes a slow, limiter-aware loudness loop after a full short-term
+  window. It includes the watchdog that drops to the SAFE mix if the brain stalls.
+  The **integration points** for any future classifier, spectral auto-EQ, and
+  cross-channel masking are marked in comments.
 
 ## Build & test
 
@@ -77,7 +78,7 @@ cmake --build build --target BroadcastMixer
 
 ## Status — what's verified vs. scaffolded
 
-- **Verified here:** the entire `dsp/` core, via 94 assertions in `tests/test_dsp.cpp`
+- **Verified here:** the entire `dsp/` core, via 111 assertions in `tests/test_dsp.cpp`
   (filter response, +6 dB loudness scaling, the limiter never exceeding its ceiling,
   automixer gain sharing and 96 kHz acquisition/handoff timing, compressor/gate
   behavior, full-engine output under the ceiling, role-aware SAFE fallback behavior,
@@ -86,6 +87,7 @@ cmake --build build --target BroadcastMixer
   measurement-driven gain staging/activity/noise-floor behavior, bounded slow
   master loudness correction and limiter backoff, fixed limiter latency reporting
   and impulse verification, SHADOW candidate equivalence and non-application,
+  stereo-linked gate/compressor image preservation and shared BrainThread decisions,
   BrainThread manual override guards, and the no-allocation
   invariant for `Engine::process`, measurement publication, `BrainThread::applyTo`,
   and live channel config updates).

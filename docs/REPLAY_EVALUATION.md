@@ -23,15 +23,21 @@ clang++ -std=c++17 -O2 \
 - The WAV must contain exactly that many channels, or that many plus a final stereo
   human/reference mix.
 - Supported role names are `speech`, `leadVocal`, `bgv`, `acousticGuitar`,
-  `electricGuitar`, `bass`, `kick`, `keys`, and `unknown`.
-- Use the same role order and scene for every comparison of one service.
+  `electricGuitar`, `bass`, `kick`, `snare`, `tom`, `overhead`, `percussion`,
+  `keys`, `playback` (or `tracks`), and `unknown`.
+- `--stereo-pairs` is optional and uses 1-based adjacent channel pairs, for example
+  `11-12,18-19`. Each pair must have the same assigned non-speech role and pairs
+  cannot overlap.
+- Use the same role order, stereo pairs, and scene for every comparison of one
+  service.
 
 Example for a four-input file with a final stereo reference (six WAV channels total):
 
 ```bash
 /tmp/automix-replay \
   --input validation-artifacts/service-01.wav \
-  --roles speech,leadVocal,bass,keys \
+  --roles speech,leadVocal,keys,keys \
+  --stereo-pairs 3-4 \
   --scene worship \
   --block-size 256 \
   --output validation-artifacts/service-01-program.wav \
@@ -39,17 +45,18 @@ Example for a four-input file with a final stereo reference (six WAV channels to
   --decisions validation-artifacts/service-01-decisions.jsonl
 ```
 
-The output WAV is always stereo float32. The metrics JSON records source CRC32,
-render configuration, duration, output LUFS/sample peak, maximum limiter reduction,
-final loudness correction, activity/finite-output checks, reference LUFS delta when
-available, and an electrical `safetyPassed` result.
+The output WAV is always stereo float32. Metrics schema version 2 records source
+CRC32, role order, stereo pairs, render configuration, duration, output LUFS/sample
+peak, maximum limiter reduction, final loudness correction, activity/finite-output
+checks, reference LUFS delta when available, and an electrical `safetyPassed` result.
 
 The JSONL decision log has one record per 20 Hz control tick. Every record includes:
 
 - exact source frame/time and scene;
 - master loudness readiness/readings, limiter reduction, and automatic trim;
-- each channel's role, input RMS/peak, post-strip RMS, activity state, learned noise
-  floor, automatic trim, and automatic fader target.
+- each channel's role and 1-based stereo peer (or `null`), input RMS/peak, post-strip
+  RMS, activity state, learned noise floor, automatic trim, and automatic fader
+  target.
 
 `safetyPassed` means the renderer remained finite, did not exceed the -1 dBTP
 limiter's sample-peak tolerance, and did not turn active input into silence. It does

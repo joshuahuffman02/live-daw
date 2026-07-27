@@ -149,6 +149,9 @@ NS_ASSUME_NONNULL_BEGIN
                              role:(NSString *)role;
 - (BOOL)setInputChannelIndex:(NSInteger)inputChannelIndex
              forMixerChannel:(NSInteger)mixerChannel;
+- (BOOL)setStereoLinkForLeftChannel:(NSInteger)leftChannel
+                       rightChannel:(NSInteger)rightChannel;
+- (BOOL)clearStereoLinkForChannel:(NSInteger)channel;
 - (BOOL)setManualMixOverrideForChannel:(NSInteger)channel
                                faderDb:(double)faderDb
                                     pan:(double)pan

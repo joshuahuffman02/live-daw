@@ -18,6 +18,7 @@
 #include "Smoothed.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <vector>
 
@@ -49,6 +50,9 @@ public:
             pan_[i].setImmediate(0.0f);
             send_[i].reset(sampleRate, 0.05);
             send_[i].setImmediate(0.0f);
+        }
+        for (auto& peer : stereoPeer_) {
+            peer.store(-1, std::memory_order_relaxed);
         }
 
         reverbReturn_.reset(sampleRate, 0.08);
@@ -100,6 +104,30 @@ public:
         send_[i].setTarget(p.reverbSendDb <= -50.0f ? 0.0f : dbToGain(p.reverbSendDb));
     }
 
+    bool setStereoLink(int left, int right) {
+        if (left < 0 || right != left + 1 || right >= (int)strips_.size()) return false;
+        clearStereoLink(left);
+        clearStereoLink(right);
+        // The audio thread links a pair only after it observes both symmetric values.
+        stereoPeer_[(size_t)left].store(right, std::memory_order_release);
+        stereoPeer_[(size_t)right].store(left, std::memory_order_release);
+        return true;
+    }
+
+    bool clearStereoLink(int channel) {
+        if (channel < 0 || channel >= (int)strips_.size()) return false;
+        const int peer = stereoPeer_[(size_t)channel].exchange(-1, std::memory_order_acq_rel);
+        if (peer >= 0 && peer < (int)strips_.size()) {
+            int expected = channel;
+            stereoPeer_[(size_t)peer].compare_exchange_strong(
+                expected,
+                -1,
+                std::memory_order_acq_rel
+            );
+        }
+        return true;
+    }
+
     void setMasterParams(const MasterParams& m) {
         glueThresh_ = m.glueThreshDb;
         glueRatio_ = std::max(1.0f, m.glueRatio);
@@ -140,7 +168,47 @@ public:
         frames = std::min(frames, maxBlock_);
 
         // 1) per-channel strips into scratch buffers
-        for (int i = 0; i < (int)strips_.size(); ++i) {
+        for (int i = 0; i < (int)strips_.size();) {
+            const int peer = stereoPeer_[(size_t)i].load(std::memory_order_acquire);
+            const bool linked = peer == i + 1 &&
+                peer < numCh &&
+                stereoPeer_[(size_t)peer].load(std::memory_order_acquire) == i;
+            if (linked) {
+                float* leftBuffer = chBuf_[(size_t)i].data();
+                float* rightBuffer = chBuf_[(size_t)peer].data();
+                double leftSquares = 0.0;
+                double rightSquares = 0.0;
+                for (int s = 0; s < frames; ++s) {
+                    float leftSample = 0.0f;
+                    float rightSample = 0.0f;
+                    ChannelStrip::processStereoLinked(
+                        strips_[(size_t)i],
+                        strips_[(size_t)peer],
+                        inputs[i][s],
+                        inputs[peer][s],
+                        leftSample,
+                        rightSample
+                    );
+                    leftBuffer[s] = leftSample;
+                    rightBuffer[s] = rightSample;
+                    leftSquares += (double)leftSample * leftSample;
+                    rightSquares += (double)rightSample * rightSample;
+                }
+                const double denominator = frames > 0 ? (double)frames : 1.0;
+                const double leftRms = frames > 0 ? std::sqrt(leftSquares / denominator) : 0.0;
+                const double rightRms = frames > 0 ? std::sqrt(rightSquares / denominator) : 0.0;
+                channelPostRmsDb_[(size_t)i] = leftRms > 1e-7
+                    ? (float)(20.0 * std::log10(leftRms))
+                    : -100.0f;
+                channelPostRmsDb_[(size_t)peer] = rightRms > 1e-7
+                    ? (float)(20.0 * std::log10(rightRms))
+                    : -100.0f;
+                speechPtrs_[(size_t)i] = leftBuffer;
+                speechPtrs_[(size_t)peer] = rightBuffer;
+                i += 2;
+                continue;
+            }
+
             float* cb = chBuf_[i].data();
             double sumSquares = 0.0;
             if (i < numCh) {
@@ -157,7 +225,8 @@ public:
             channelPostRmsDb_[(size_t)i] = rms > 1e-7
                 ? (float)(20.0 * std::log10(rms))
                 : -100.0f;
-            speechPtrs_[i] = cb;
+            speechPtrs_[(size_t)i] = cb;
+            ++i;
         }
 
         // 2) speech automix
@@ -286,6 +355,7 @@ private:
     std::vector<Smoothed> pan_, send_;
     std::vector<BusId> bus_;
     std::vector<bool> speech_;
+    std::array<std::atomic<int>, 64> stereoPeer_{};
     std::vector<float> safeLeftGain_, safeRightGain_;
     std::vector<std::vector<float>> chBuf_;
     std::vector<float> channelPostRmsDb_;

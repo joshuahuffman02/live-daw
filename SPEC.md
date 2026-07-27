@@ -28,6 +28,13 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   rate-limited so scene changes settle over roughly 1–2 seconds; persisted manual
   fader/pan overrides still win. Unknown roles are measured but receive no automatic
   gain correction.
+- Worship/source coverage: native role profiles include speech, lead and background
+  vocals, acoustic/electric guitar, bass, kick, snare, toms, overheads, percussion,
+  keys, and playback/tracks. Adjacent same-role music channels can be persisted as
+  stereo pairs. Linked pairs share conservative trim/ride targets and max-of-pair
+  gate/compressor detectors, retain independent audio, and hard-pan L/R so a louder
+  side cannot steer the stereo image. Speech, unknown, overlapping, mismatched-role,
+  and non-adjacent links are rejected by preflight and proof reports.
 - Native master loudness control: after the BS.1770 meter has a complete three-second
   short-term window, the brain applies a maximum 1 dB/second correction bounded to
   ±6 dB before the final loudness meter and true-peak limiter. Silence/noise cannot
@@ -78,11 +85,12 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   autonomous mix is treated as ready.
   Native bridge tests drive controlled Core Audio buffers to prove the map is honored
   during render, not just persisted.
-  A native `Service Roles` command can seed a starter role layout without changing the
-  Dante input map or manual overrides, and a headless `--write-service-profile` mode
-  can generate the same starter profile for rack-side validation without touching the
-  HD96 console. Headless validation and service-profile commands never default the
-  output UID to the input UID; they require or auto-detect a livestream-safe output.
+  A native `Service Roles` command can seed a starter role layout, including linked
+  keys, overhead, and playback pairs, without changing the Dante input map or manual
+  overrides. A headless `--write-service-profile` mode can generate the same starter
+  profile for rack-side validation without touching the HD96 console. Headless
+  validation and service-profile commands never default the output UID to the input
+  UID; they require or auto-detect a livestream-safe output.
 - Manual overrides: per-channel fader/pan override values persist with the venue
   profile, expose the same -80 to +12 dB fader and full left/right pan range in
   SwiftUI that the bridge accepts, are pushed to the running control thread, and

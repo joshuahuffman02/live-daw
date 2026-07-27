@@ -133,7 +133,11 @@ Current native milestone:
 - blocks HD96 preflight and validation reports when the saved profile has no assigned
   source roles for the autonomous mixer;
 - includes a Channel Map `Service Roles` command to seed a starter church role layout
-  while preserving Dante input routing and manual overrides;
+  covering speech, vocals, guitars, bass, kick, snare, toms, overheads, percussion,
+  keys, and playback while preserving Dante input routing and manual overrides;
+- persists adjacent stereo pairs and validates that they are same-role,
+  non-overlapping music sources; the C++ engine links their gate/compressor detectors,
+  shares conservative automation targets, and keeps their audio hard-panned L/R;
 - shows live stream L/R output meters so silence or clipping is visible before the
   encoder is trusted;
 - shows master momentary/short-term/integrated LUFS and limiter gain reduction for
@@ -242,7 +246,8 @@ clang++ -std=c++17 -O2 -Iappliance/dsp -Iappliance/src \
 This covers DSP primitives, full-engine SAFE bypass, 96 kHz engine processing,
 bus/pan routing, block-timed speech automixing, live source-role reassignment,
 measurement-driven activity/noise-floor/gain decisions, bounded slow master
-loudness normalization, manual override guards, and the no-heap-allocation
+loudness normalization, stereo-linked dynamics/control behavior, manual override
+guards, and the no-heap-allocation
 invariant for `Engine::process`, measurement publication, and live channel config
 updates.
 

@@ -159,6 +159,7 @@ struct AMRealtimeAllocationGuard {
     std::vector<app::Cls> _classes;
     std::array<std::atomic<int>, app::EngineSnapshot::kMaxCh> _pendingClassCodes;
     std::array<std::atomic<int>, app::EngineSnapshot::kMaxCh> _inputChannelIndices;
+    std::array<std::atomic<int>, app::EngineSnapshot::kMaxCh> _stereoPeerCodes;
     std::atomic<bool> _roleConfigDirtyAtomic;
     std::vector<std::vector<float>> _inputScratch;
     std::vector<const float *> _rawInputPtrs;
@@ -290,6 +291,7 @@ struct AMRealtimeAllocationGuard {
         for (int i = 0; i < app::EngineSnapshot::kMaxCh; ++i) {
             _pendingClassCodes[(size_t)i].store((int)app::Cls::Unknown, std::memory_order_relaxed);
             _inputChannelIndices[(size_t)i].store(i, std::memory_order_relaxed);
+            _stereoPeerCodes[(size_t)i].store(-1, std::memory_order_relaxed);
         }
         _roleConfigDirtyAtomic.store(false, std::memory_order_relaxed);
         _outputMeterDbL.store(-100.0f, std::memory_order_relaxed);
@@ -1439,6 +1441,47 @@ struct AMRealtimeAllocationGuard {
     return YES;
 }
 
+- (BOOL)setStereoLinkForLeftChannel:(NSInteger)leftChannel
+                       rightChannel:(NSInteger)rightChannel {
+    if (leftChannel < 0 ||
+        rightChannel != leftChannel + 1 ||
+        rightChannel >= _inputChannelCount ||
+        rightChannel >= app::EngineSnapshot::kMaxCh) {
+        return NO;
+    }
+    [self clearStereoLinkForChannel:leftChannel];
+    [self clearStereoLinkForChannel:rightChannel];
+    _stereoPeerCodes[(size_t)leftChannel].store((int)rightChannel, std::memory_order_release);
+    _stereoPeerCodes[(size_t)rightChannel].store((int)leftChannel, std::memory_order_release);
+    const bool engineLinked = _engine.setStereoLink((int)leftChannel, (int)rightChannel);
+    const bool brainLinked = _brainStarted
+        ? _brain.setStereoLink((int)leftChannel, (int)rightChannel)
+        : true;
+    _roleConfigDirtyAtomic.store(true, std::memory_order_release);
+    return engineLinked && brainLinked;
+}
+
+- (BOOL)clearStereoLinkForChannel:(NSInteger)channel {
+    if (channel < 0 ||
+        channel >= _inputChannelCount ||
+        channel >= app::EngineSnapshot::kMaxCh) {
+        return NO;
+    }
+    const int peer = _stereoPeerCodes[(size_t)channel].exchange(-1, std::memory_order_acq_rel);
+    if (peer >= 0 && peer < _inputChannelCount) {
+        int expected = (int)channel;
+        _stereoPeerCodes[(size_t)peer].compare_exchange_strong(
+            expected,
+            -1,
+            std::memory_order_acq_rel
+        );
+    }
+    const bool engineCleared = _engine.clearStereoLink((int)channel);
+    const bool brainCleared = _brainStarted ? _brain.clearStereoLink((int)channel) : true;
+    _roleConfigDirtyAtomic.store(true, std::memory_order_release);
+    return engineCleared && brainCleared;
+}
+
 - (BOOL)setManualMixOverrideForChannel:(NSInteger)channel
                                faderDb:(double)faderDb
                                     pan:(double)pan
@@ -1970,12 +2013,16 @@ struct AMRealtimeAllocationGuard {
     for (int i = 0; i < count; ++i) {
         const auto assignedClass = (app::Cls)_pendingClassCodes[(size_t)i].load(std::memory_order_acquire);
         const auto profile = app::profileFor(assignedClass);
+        const int stereoPeer = _stereoPeerCodes[(size_t)i].load(std::memory_order_acquire);
+        const float safePan = stereoPeer == i + 1
+            ? -1.0f
+            : (stereoPeer == i - 1 ? 1.0f : app::safePanFor(assignedClass));
         _engine.setChannelConfig(
             i,
             profile.bus,
             profile.isSpeech,
             app::safeGainDbFor(assignedClass),
-            app::safePanFor(assignedClass)
+            safePan
         );
     }
 }
@@ -2391,6 +2438,7 @@ struct AMRealtimeAllocationGuard {
     for (int i = 0; i < app::EngineSnapshot::kMaxCh; ++i) {
         const app::Cls assignedClass = i < engineChannels ? _classes[(size_t)i] : app::Cls::Unknown;
         _pendingClassCodes[(size_t)i].store((int)assignedClass, std::memory_order_release);
+        _stereoPeerCodes[(size_t)i].store(-1, std::memory_order_release);
         const int defaultInput = std::min(i, std::max(engineChannels - 1, 0));
         int mappedInput = defaultInput;
         if (i < engineChannels && i < (int)inputChannelIndices.count) {
@@ -2501,7 +2549,12 @@ static app::Cls classForRole(NSString *role) {
     if ([r isEqualToString:@"electricguitar"]) return app::Cls::Electric;
     if ([r isEqualToString:@"bass"]) return app::Cls::Bass;
     if ([r isEqualToString:@"kick"]) return app::Cls::Kick;
+    if ([r isEqualToString:@"snare"]) return app::Cls::Snare;
+    if ([r isEqualToString:@"tom"]) return app::Cls::Tom;
+    if ([r isEqualToString:@"overhead"]) return app::Cls::Overhead;
+    if ([r isEqualToString:@"percussion"]) return app::Cls::Percussion;
     if ([r isEqualToString:@"keys"]) return app::Cls::Keys;
+    if ([r isEqualToString:@"playback"]) return app::Cls::Playback;
     return app::Cls::Unknown;
 }
 

@@ -1167,6 +1167,10 @@ final class AppModel: ObservableObject {
         )
     }
 
+    var stereoLinkCoverage: StereoLinkCoverage {
+        StereoLinkCoverage.make(channelMappings: channelMappings)
+    }
+
     var hd96Preflight: HD96PreflightReport {
         HD96PreflightReport.make(
             inputDevice: selectedInputDevice,
@@ -1365,6 +1369,7 @@ final class AppModel: ObservableObject {
             engine.setSafeBypass(safeBypass)
             engine.setFrozen(frozen)
             engine.setShadowMode(shadowMode)
+            applyAllStereoLinks()
             applyAllManualOverrides()
             statusText = engine.status
             nextStreamHealthProbeMs = 0
@@ -1521,9 +1526,13 @@ final class AppModel: ObservableObject {
     }
 
     func channelDidChange(_ channel: ChannelMapping) {
-        applyInputChannelMap(channel)
-        applyChannelRole(channel)
-        applyManualOverride(channel)
+        synchronizeStereoPairAfterEdit(channelIndex: channel.index)
+        for mappedChannel in channelMappings {
+            applyInputChannelMap(mappedChannel)
+            applyChannelRole(mappedChannel)
+        }
+        applyAllStereoLinks()
+        applyAllManualOverrides()
         saveProfile()
     }
 
@@ -1537,8 +1546,9 @@ final class AppModel: ObservableObject {
         for channel in channelMappings {
             applyInputChannelMap(channel)
             applyChannelRole(channel)
-            applyManualOverride(channel)
         }
+        applyAllStereoLinks()
+        applyAllManualOverrides()
         saveProfile()
     }
 
@@ -2257,6 +2267,7 @@ final class AppModel: ObservableObject {
             engine.setSafeBypass(safeBypass)
             engine.setFrozen(frozen)
             engine.setShadowMode(shadowMode)
+            applyAllStereoLinks()
             applyAllManualOverrides()
             runningRouteSnapshot = liveRouteSnapshot()
             runtimeRecoveryCoordinator.noteAttemptResult(success: true, nowMs: nowMs)
@@ -3020,6 +3031,82 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func synchronizeStereoPairAfterEdit(channelIndex: Int) {
+        guard let editedPosition = channelMappings.firstIndex(where: { $0.index == channelIndex }) else {
+            return
+        }
+
+        if channelMappings[editedPosition].stereoLinkedToNext {
+            guard let rightPosition = channelMappings.firstIndex(where: {
+                $0.index == channelIndex + 1
+            }),
+            channelMappings[editedPosition].role.supportsStereoLink
+            else {
+                channelMappings[editedPosition].stereoLinkedToNext = false
+                lastError = "Stereo links require an adjacent non-speech source pair."
+                return
+            }
+            if let priorPosition = channelMappings.firstIndex(where: {
+                $0.index == channelIndex - 1
+            }) {
+                channelMappings[priorPosition].stereoLinkedToNext = false
+            }
+            channelMappings[rightPosition].stereoLinkedToNext = false
+        }
+
+        let leftChannelIndex: Int?
+        if channelMappings[editedPosition].stereoLinkedToNext {
+            leftChannelIndex = channelIndex
+        } else if let priorPosition = channelMappings.firstIndex(where: {
+            $0.index == channelIndex - 1
+        }),
+        channelMappings[priorPosition].stereoLinkedToNext {
+            leftChannelIndex = channelIndex - 1
+        } else {
+            leftChannelIndex = nil
+        }
+        guard let leftChannelIndex,
+              let leftPosition = channelMappings.firstIndex(where: {
+                  $0.index == leftChannelIndex
+              })
+        else { return }
+
+        guard let rightPosition = channelMappings.firstIndex(where: {
+            $0.index == leftChannelIndex + 1
+        }) else {
+            channelMappings[leftPosition].stereoLinkedToNext = false
+            return
+        }
+        let source = channelMappings[editedPosition]
+        guard source.role.supportsStereoLink else {
+            channelMappings[leftPosition].stereoLinkedToNext = false
+            lastError = "Stereo link removed because \(source.role.label) is not a stereo source role."
+            return
+        }
+
+        let partnerPosition = editedPosition == leftPosition ? rightPosition : leftPosition
+        channelMappings[partnerPosition].role = source.role
+        channelMappings[partnerPosition].faderOverrideEnabled = source.faderOverrideEnabled
+        channelMappings[partnerPosition].faderDb = source.faderDb
+        channelMappings[partnerPosition].muted = source.muted
+        channelMappings[partnerPosition].preMuteFaderDb = source.preMuteFaderDb
+        channelMappings[partnerPosition].preMuteFaderOverrideEnabled =
+            source.preMuteFaderOverrideEnabled
+    }
+
+    private func applyAllStereoLinks() {
+        guard engine.running else { return }
+        for channel in channelMappings {
+            _ = engine.clearStereoLink(forChannel: channel.index)
+        }
+        for pair in stereoLinkCoverage.pairs {
+            _ = engine.setStereoLinkForLeftChannel(
+                pair.leftChannelIndex,
+                rightChannel: pair.rightChannelIndex
+            )
+        }
+    }
+
     private func channelInputIndexNumbers() -> [NSNumber] {
         let maxInputs = max(detectedInputChannels, channelMappings.count)
         return ChannelMapping.inputChannelIndexNumbers(
@@ -3134,6 +3221,8 @@ final class AppModel: ObservableObject {
         )
         runningInRehearsal = false
         runningRouteSnapshot = liveRouteSnapshot()
+        applyAllStereoLinks()
+        applyAllManualOverrides()
         armAutomaticRecoveryAfterSuccessfulStart(nowMs: nowMs)
         if automaticContinuousRecordingEnabled {
             continuousRecordingRequested = true
@@ -3470,6 +3559,9 @@ struct HD96PreflightReport: Codable, Equatable, Sendable {
             )
         }
         let sourceRoleCoverage = channelMappings.map(SourceRoleCoverage.make)
+        let stereoLinkCoverage = channelMappings.map {
+            StereoLinkCoverage.make(channelMappings: $0)
+        }
 
         var checks = [
             HD96PreflightCheck(
@@ -3535,6 +3627,18 @@ struct HD96PreflightReport: Codable, Equatable, Sendable {
                     expected: "1+ non-unknown source role",
                     observed: sourceRoleCoverage.summary,
                     passed: sourceRoleCoverage.isReady,
+                    blocking: true
+                )
+            )
+        }
+
+        if let stereoLinkCoverage {
+            checks.append(
+                HD96PreflightCheck(
+                    name: "Stereo Links",
+                    expected: "adjacent, same-role, non-overlapping pairs",
+                    observed: stereoLinkCoverage.summary,
+                    passed: stereoLinkCoverage.isReady,
                     blocking: true
                 )
             )

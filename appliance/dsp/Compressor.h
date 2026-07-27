@@ -26,8 +26,15 @@ public:
     float gainReductionDb() const { return -gr_; }
 
     inline float process(float x) {
+        return processWithDetector(x, std::fabs(x));
+    }
+
+    // Stereo-linked strips use one max-of-pair detector value for both sides. With
+    // matched parameters this produces identical gain reduction and prevents image
+    // steering toward whichever side happens to be quieter.
+    inline float processWithDetector(float x, float detectorMagnitude) {
         // detector: blend of peak and a short RMS-ish smoothing
-        const float rect = std::fabs(x);
+        const float rect = std::max(0.0f, detectorMagnitude);
         const float a = rect > env_ ? aAtk_ : aRel_;
         env_ = a * env_ + (1.0f - a) * rect;
         const float levelDb = env_ > 1e-7f ? 20.0f * std::log10(env_) : -140.0f;

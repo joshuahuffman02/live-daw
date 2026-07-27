@@ -30,8 +30,15 @@ public:
     float gain() const { return gain_; }
 
     inline float process(float x) {
+        return processWithDetector(x, std::fabs(x));
+    }
+
+    // Stereo-linked strips pass the same max-of-pair detector magnitude into both
+    // gate instances. Their state and gain therefore move together while each side's
+    // audio remains independent.
+    inline float processWithDetector(float x, float detectorMagnitude) {
         if (!enabled_) return x;
-        const float rect = std::fabs(x);
+        const float rect = std::max(0.0f, detectorMagnitude);
         const float a = rect > env_ ? detAtk_ : detRel_;
         env_ = a * env_ + (1.0f - a) * rect;
         const float openThr = dbToGain_(threshold_);

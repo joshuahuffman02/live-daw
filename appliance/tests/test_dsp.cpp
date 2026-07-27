@@ -244,6 +244,64 @@ static void testGate() {
     CHECK(rms(qOut, (int)(0.1 * FS)) < rms(qIn, (int)(0.1 * FS)) * 0.5, "attenuates quiet signal below threshold");
 }
 
+static void testStereoLinkedChannelStrips() {
+    std::printf("ChannelStrip (stereo-linked gate and compressor)\n");
+    ChannelStrip left;
+    ChannelStrip right;
+    left.reset(FS);
+    right.reset(FS);
+
+    ChannelParams params;
+    params.hpfHz = 20.0f;
+    params.gateEnabled = true;
+    params.gateThreshDb = -30.0f;
+    params.gateRatio = 4.0f;
+    params.gateRangeDb = 40.0f;
+    params.compThreshDb = -24.0f;
+    params.compRatio = 8.0f;
+    params.compAttack = 0.001f;
+    params.compRelease = 0.1f;
+    params.compKnee = 0.0f;
+    params.faderDb = 0.0f;
+    left.setParams(params);
+    right.setParams(params);
+
+    double leftSquares = 0.0;
+    double rightSquares = 0.0;
+    int measured = 0;
+    double phase = 0.0;
+    const double increment = 2.0 * M_PI * 1000.0 / FS;
+    for (int sample = 0; sample < (int)FS; ++sample) {
+        const float carrier = (float)std::sin(phase);
+        phase += increment;
+        float leftOut = 0.0f;
+        float rightOut = 0.0f;
+        ChannelStrip::processStereoLinked(
+            left,
+            right,
+            0.5f * carrier,
+            0.01f * carrier,
+            leftOut,
+            rightOut
+        );
+        if (sample >= (int)FS / 2) {
+            leftSquares += (double)leftOut * leftOut;
+            rightSquares += (double)rightOut * rightOut;
+            ++measured;
+        }
+    }
+
+    const double leftRms = std::sqrt(leftSquares / measured);
+    const double rightRms = std::sqrt(rightSquares / measured);
+    const double imageRatio = leftRms / std::max(rightRms, 1e-12);
+    CHECK(left.gateOpen() && right.gateOpen(),
+          "one active side opens both linked gates");
+    CHECK(std::fabs(left.compGainReductionDb() - right.compGainReductionDb()) < 0.01f,
+          "linked compressors apply identical gain reduction");
+    CHECK(imageRatio > 49.0 && imageRatio < 51.0,
+          "linked dynamics preserve the input stereo level relationship");
+}
+
 // ---- Engine smoke ----------------------------------------------------------
 static void testEngine() {
     std::printf("Engine (full chain + SAFE bypass)\n");
@@ -474,6 +532,9 @@ static void testBrainThreadControls() {
     CHECK(threw, "rejects channel counts beyond the 64-channel native/Dante guard");
     CHECK(app::profileFor(app::Cls::Speech).isSpeech, "speech role maps to speech bus behavior");
     CHECK(app::profileFor(app::Cls::Kick).bus == BusId::Drums, "kick role maps to drums bus");
+    CHECK(app::profileFor(app::Cls::Snare).bus == BusId::Drums, "snare role maps to drums bus");
+    CHECK(app::profileFor(app::Cls::Overhead).bus == BusId::Drums, "overhead role maps to drums bus");
+    CHECK(app::profileFor(app::Cls::Playback).bus == BusId::Band, "playback role maps to band bus");
 
     std::vector<app::Cls> roles{app::Cls::Speech, app::Cls::Bass, app::Cls::Kick};
     app::BrainThread brain;
@@ -518,6 +579,26 @@ static void testBrainThreadControls() {
     std::this_thread::sleep_for(std::chrono::milliseconds(650));
     brain.applyTo(eng);
     CHECK(brain.watchdogBypassActive(), "watchdog SAFE activates when the brain stops ticking");
+}
+
+static void testBrainStereoLinkControl() {
+    std::printf("BrainThread (stereo-pair control decisions)\n");
+    app::BrainThread brain;
+    brain.configure(2, 96000.0, {app::Cls::Keys, app::Cls::Keys});
+    CHECK(!brain.setStereoLink(0, 2), "rejects a non-adjacent stereo link");
+    CHECK(brain.setStereoLink(0, 1), "accepts an adjacent stereo link");
+
+    for (int tick = 0; tick < 30; ++tick) {
+        brain.pushChannelMeasurement(0, -22.0f, -10.0f, -30.0f);
+        brain.pushChannelMeasurement(1, -40.0f, -28.0f, -48.0f);
+        brain.runOneOfflineControlTick();
+    }
+
+    CHECK(std::fabs(brain.currentAutoTrimDb(0) - brain.currentAutoTrimDb(1)) < 0.001f,
+          "linked channels receive the same conservative auto-trim decision");
+    CHECK(std::fabs(brain.currentAutoFaderDb(0) - brain.currentAutoFaderDb(1)) < 0.001f,
+          "linked channels receive the same level-ride decision");
+    CHECK(brain.clearStereoLink(1), "clearing either member removes the stereo link");
 }
 
 static void testBrainMeasurementDrivenGainStaging() {
@@ -990,12 +1071,14 @@ int main() {
     testAutomix();
     testCompressor();
     testGate();
+    testStereoLinkedChannelStrips();
     testEngine();
     testEngine96kAndRouting();
     testEngineRoleAwareSafeMix();
     testEngineProcessNoAllocation();
     testEngineMasterLoudnessTrim();
     testBrainThreadControls();
+    testBrainStereoLinkControl();
     testBrainThreadManualOverrideBehavior();
     testBrainMeasurementDrivenGainStaging();
     testBrainMasterLoudnessControl();

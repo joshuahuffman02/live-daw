@@ -594,6 +594,7 @@ struct SoundcheckReport: Codable, Equatable, Sendable {
             inputChannelCount: detectedInputChannels
         )
         let sourceRoleCoverage = SourceRoleCoverage.make(channelMappings: channelMappings)
+        let stereoLinkCoverage = StereoLinkCoverage.make(channelMappings: channelMappings)
         let manualOverrideCoverage = ManualOverrideCoverage.make(channelMappings: channelMappings)
         let loudnessTelemetryPassed = latestMomentaryLufs.isFinite &&
             latestShortTermLufs.isFinite &&
@@ -632,6 +633,12 @@ struct SoundcheckReport: Codable, Equatable, Sendable {
                 expected: "1+ non-unknown source role",
                 observed: sourceRoleCoverage.summary,
                 passed: sourceRoleCoverage.isReady
+            ),
+            SoundcheckCheck(
+                name: "Stereo Links",
+                expected: "adjacent, same-role, non-overlapping pairs",
+                observed: stereoLinkCoverage.summary,
+                passed: stereoLinkCoverage.isReady
             ),
             SoundcheckCheck(
                 name: "Manual Overrides",
@@ -1045,6 +1052,7 @@ struct StabilityMonitorReport: Codable, Equatable, Sendable {
             inputChannelCount: detectedInputChannels
         )
         let sourceRoleCoverage = SourceRoleCoverage.make(channelMappings: channelMappings)
+        let stereoLinkCoverage = StereoLinkCoverage.make(channelMappings: channelMappings)
         let manualOverrideCoverage = ManualOverrideCoverage.make(channelMappings: channelMappings)
         let separateClockPath = inputDevice.uid != outputDevice.uid &&
             !inputDevice.uid.isEmpty &&
@@ -1111,6 +1119,12 @@ struct StabilityMonitorReport: Codable, Equatable, Sendable {
                 expected: "1+ non-unknown source role",
                 observed: sourceRoleCoverage.summary,
                 passed: sourceRoleCoverage.isReady
+            ),
+            SoundcheckCheck(
+                name: "Stereo Links",
+                expected: "adjacent, same-role, non-overlapping pairs",
+                observed: stereoLinkCoverage.summary,
+                passed: stereoLinkCoverage.isReady
             ),
             SoundcheckCheck(
                 name: "Manual Overrides",

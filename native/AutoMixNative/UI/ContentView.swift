@@ -1165,6 +1165,16 @@ private struct ChannelRow: View {
                 }
                 .labelsHidden()
                 .frame(width: 160)
+                Toggle(
+                    "Stereo → Ch \(channel.index + 2)",
+                    isOn: $channel.stereoLinkedToNext
+                )
+                .toggleStyle(.checkbox)
+                .disabled(
+                    channel.index + 1 >= inputChannelLimit ||
+                        !channel.role.supportsStereoLink
+                )
+                .help("Links adjacent channel dynamics and automation, with this channel hard left and the next hard right. Manual overrides remain authoritative.")
             }
             HStack(spacing: 12) {
                 Text(shadowMode ? "Candidate" : "Automation")

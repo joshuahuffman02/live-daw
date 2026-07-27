@@ -451,6 +451,7 @@ enum CoreAudioFullCheckVerifier {
                 inputChannelCount: expectedCount
             )
             let sourceRoleCoverage = SourceRoleCoverage.make(channelMappings: preflightMappings)
+            let stereoLinkCoverage = StereoLinkCoverage.make(channelMappings: preflightMappings)
             let manualOverrideCoverage = ManualOverrideCoverage.make(channelMappings: preflightMappings)
             let passed = countsMatch &&
                 mapsMatch &&
@@ -458,11 +459,12 @@ enum CoreAudioFullCheckVerifier {
                 soundcheckCoverage.isReady &&
                 stabilityCoverage.isReady &&
                 sourceRoleCoverage.isReady &&
+                stereoLinkCoverage.isReady &&
                 manualOverrideCoverage.isReady
 
             let summary: String
             if passed {
-                summary = "\(expectedCount) mapped inputs match preflight/soundcheck/stability; \(sourceRoleCoverage.summary); manual \(manualOverrideCoverage.summary)"
+                summary = "\(expectedCount) mapped inputs match preflight/soundcheck/stability; \(sourceRoleCoverage.summary); stereo \(stereoLinkCoverage.summary); manual \(manualOverrideCoverage.summary)"
             } else if !countsMatch {
                 summary = "channel-map counts do not match expected \(expectedCount) inputs"
             } else if !mapsMatch {
@@ -475,6 +477,8 @@ enum CoreAudioFullCheckVerifier {
                 summary = "stability channel map is not ready: \(stabilityCoverage.summary)"
             } else if !sourceRoleCoverage.isReady {
                 summary = "source roles are not ready: \(sourceRoleCoverage.summary)"
+            } else if !stereoLinkCoverage.isReady {
+                summary = "stereo links are invalid: \(stereoLinkCoverage.summary)"
             } else {
                 summary = "manual overrides are invalid: \(manualOverrideCoverage.summary)"
             }

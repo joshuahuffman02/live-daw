@@ -181,8 +181,11 @@ roles, and manual fader/pan overrides, then apply those overrides to the running
 before soundcheck or stability evidence is captured.
 
 Use the Channel Map `Service Roles` button to seed a starter church role layout. It
-updates names/source roles only; Dante input assignments, fader overrides, and pan
-overrides are preserved for each mixer row.
+updates names/source roles and seeds adjacent linked keys, overhead, and playback
+pairs; Dante input assignments, fader overrides, and pan overrides are preserved for
+each mixer row. A stereo link is valid only for adjacent, same-role music channels.
+Linked automation and gate/compressor detection follow the louder side without
+collapsing the independent L/R audio; manual overrides remain authoritative.
 
 Hardware-free simulated HD96/Dante validation:
 
@@ -467,7 +470,9 @@ Run this on the actual HD96/Dante rig before trusting it live:
 6. Start AutoMix Native with SAFE enabled.
 7. Speak/play into known HD96 channels and confirm each app meter moves on the matching
    channel-map row, with at least the active service channels assigned to source roles
-   such as Speech, Lead Vocal, BGV, instruments, or keys.
+   such as Speech, Lead Vocal, BGV, instruments, keys, drums, or playback. Confirm
+   intended stereo pairs are adjacent, same-role, and labeled L/R; preflight must show
+   `Stereo Links` passing.
 8. Confirm Stream Mix L/R meters are active and not pinned near 0 dBFS.
 9. Confirm LUFS telemetry is active and limiter gain reduction is not excessive.
 10. Record a 10-second test and verify the WAV has all expected raw input channels plus

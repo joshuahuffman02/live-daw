@@ -22,7 +22,22 @@
 
 namespace app {
 
-enum class Cls { Speech, LeadVocal, Bgv, Acoustic, Electric, Bass, Kick, Keys, Unknown };
+enum class Cls {
+    Speech,
+    LeadVocal,
+    Bgv,
+    Acoustic,
+    Electric,
+    Bass,
+    Kick,
+    Snare,
+    Tom,
+    Overhead,
+    Percussion,
+    Keys,
+    Playback,
+    Unknown
+};
 enum class Scene { PreService, Worship, Sermon, Prayer, PostService };
 
 // ---- integration point: channel classifier -------------------------------
@@ -54,7 +69,12 @@ inline SourceProfile profileFor(Cls c) {
         case Cls::Electric:  return {bdsp::BusId::Band, false, 100, true, 4, 14, 12, -20, 2.5f, .015f, .18f, 6, {{{T::Bell,400,1.2f,-2.0f},{T::Bell,1800,1.0f,1.0f},{T::LowPass,9000,0.7f,0}}}, 0.3f};
         case Cls::Bass:      return {bdsp::BusId::Band, false, 35, false, 2, 10, 10, -20, 3.5f, .020f, .12f, 6, {{{T::Bell,80,0.9f,1.5f},{T::Bell,700,1.0f,1.0f},{T::LowPass,6000,0.7f,0}}}, 0};
         case Cls::Kick:      return {bdsp::BusId::Drums, false, 30, true, 6, 18, 14, -18, 4.0f, .004f, .10f, 4, {{{T::Bell,60,1.0f,2.0f},{T::Bell,400,1.3f,-3.0f},{T::Bell,3500,1.0f,2.0f}}}, 0};
+        case Cls::Snare:     return {bdsp::BusId::Drums, false, 80, true, 5, 16, 12, -20, 4.0f, .004f, .12f, 5, {{{T::Bell,180,1.1f,-2.0f},{T::Bell,2200,1.0f,2.0f},{T::HighShelf,8000,0.7f,2.0f}}}, 0.15f};
+        case Cls::Tom:       return {bdsp::BusId::Drums, false, 45, true, 5, 16, 12, -20, 3.5f, .006f, .14f, 5, {{{T::Bell,100,1.0f,2.0f},{T::Bell,450,1.2f,-3.0f},{T::Bell,3500,1.0f,1.5f}}}, -0.2f};
+        case Cls::Overhead:  return {bdsp::BusId::Drums, false, 120, false, 2, 8, 10, -18, 2.5f, .018f, .22f, 8, {{{T::Bell,350,1.0f,-2.0f},{T::HighShelf,9000,0.7f,1.5f},{T::LowPass,18000,0.7f,0}}}, 0.45f};
+        case Cls::Percussion:return {bdsp::BusId::Drums, false, 80, true, 3, 12, 10, -22, 2.5f, .008f, .16f, 6, {{{T::Bell,250,1.0f,-2.0f},{T::Bell,3000,1.0f,1.5f},{T::HighShelf,10000,0.7f,1.0f}}}, 0.3f};
         case Cls::Keys:      return {bdsp::BusId::Band, false, 60, false, 2, 10, 10, -24, 2.5f, .020f, .25f, 10, {{{T::Bell,300,1.0f,-2.0f},{T::HighShelf,8000,0.7f,1.0f},{T::LowShelf,120,0.7f,-1.5f}}}, -0.2f};
+        case Cls::Playback:  return {bdsp::BusId::Band, false, 25, false, 2, 8, 10, -12, 1.5f, .030f, .30f, 8, {{{T::Bell,250,1.0f,0},{T::HighShelf,10000,0.7f,0},{T::LowShelf,80,0.7f,0}}}, 0};
         default:             return {bdsp::BusId::Band, false, 80, false, 2, 8, 12, -24, 2.0f, .020f, .20f, 10, {{{T::Bell,1000,1,0},{T::Bell,2000,1,0},{T::Bell,4000,1,0}}}, 0};
     }
 }
@@ -68,7 +88,12 @@ inline float safeGainDbFor(Cls c) {
         case Cls::LeadVocal: return -4.0f;
         case Cls::Bgv: return -9.0f;
         case Cls::Kick:
+        case Cls::Snare:
+        case Cls::Tom:
         case Cls::Bass: return -12.0f;
+        case Cls::Overhead:
+        case Cls::Percussion:
+        case Cls::Playback: return -14.0f;
         case Cls::Acoustic:
         case Cls::Keys: return -14.0f;
         case Cls::Electric: return -16.0f;
@@ -308,6 +333,7 @@ public:
             classes_[(size_t)i] = i < (int)assignedClasses.size() ? assignedClasses[(size_t)i] : Cls::Unknown;
         }
         overrideMask_.fill(0);
+        stereoPeer_.fill(-1);
         manualParams_.fill(bdsp::ChannelParams{});
         for (int i = 0; i < EngineSnapshot::kMaxCh; ++i) {
             measurements_[(size_t)i].inputRmsDb.store(-100.0f, std::memory_order_relaxed);
@@ -421,6 +447,21 @@ public:
         classes_[(size_t)channel] = assignedClass;
         return true;
     }
+    bool setStereoLink(int left, int right) {
+        if (left < 0 || right != left + 1 || right >= numCh_) return false;
+        std::lock_guard<std::mutex> lk(controlMutex_);
+        clearStereoLinkLocked(left);
+        clearStereoLinkLocked(right);
+        stereoPeer_[(size_t)left] = right;
+        stereoPeer_[(size_t)right] = left;
+        return true;
+    }
+    bool clearStereoLink(int channel) {
+        if (channel < 0 || channel >= numCh_) return false;
+        std::lock_guard<std::mutex> lk(controlMutex_);
+        clearStereoLinkLocked(channel);
+        return true;
+    }
 
     void start() {
         watchdogBypass_.store(false, std::memory_order_relaxed);
@@ -462,6 +503,14 @@ public:
     }
 
 private:
+    void clearStereoLinkLocked(int channel) {
+        const int peer = stereoPeer_[(size_t)channel];
+        stereoPeer_[(size_t)channel] = -1;
+        if (peer >= 0 && peer < numCh_ && stereoPeer_[(size_t)peer] == channel) {
+            stereoPeer_[(size_t)peer] = -1;
+        }
+    }
+
     void applyPublishedSnapshotTo(bdsp::Engine& e) {
         const uint64_t seq = publishSeq_.load(std::memory_order_acquire);
         if ((seq & 1u) != 0 || seq == appliedSeq_) return;
@@ -500,6 +549,11 @@ private:
             case Cls::Bgv: return -26.0f;
             case Cls::Bass: return -25.0f;
             case Cls::Kick: return -24.0f;
+            case Cls::Snare:
+            case Cls::Tom:
+            case Cls::Percussion: return -25.0f;
+            case Cls::Overhead:
+            case Cls::Playback: return -28.0f;
             case Cls::Acoustic:
             case Cls::Electric: return -27.0f;
             case Cls::Keys: return -28.0f;
@@ -672,21 +726,26 @@ private:
         std::array<Cls, EngineSnapshot::kMaxCh> classes{};
         std::array<bdsp::ChannelParams, EngineSnapshot::kMaxCh> manual{};
         std::array<OverrideMask, EngineSnapshot::kMaxCh> masks{};
+        std::array<int, EngineSnapshot::kMaxCh> stereoPeers{};
         {
             std::lock_guard<std::mutex> lk(controlMutex_);
             numCh = numCh_;
             classes = classes_;
             manual = manualParams_;
             masks = overrideMask_;
+            stereoPeers = stereoPeer_;
         }
         s.numCh = numCh;
+
+        for (int i = 0; i < numCh; ++i) {
+            updateMeasurementState(i, classes[(size_t)i]);
+        }
 
         for (int i = 0; i < numCh; ++i) {
             // INTEGRATION POINT: classifier label would arrive here (ONNX). For the
             // skeleton we use the soundcheck-assigned class.
             const Cls c = classes[(size_t)i];
             const SourceProfile p = profileFor(c);
-            updateMeasurementState(i, c);
             bdsp::ChannelParams cp;
             cp.trimDb = autoTrimDb_[(size_t)i];
             cp.isSpeech = p.isSpeech;
@@ -740,8 +799,50 @@ private:
                 );
                 applied.faderDb = std::max(-80.0f, std::min(12.0f, sceneFader));
             }
-            applyManual(applied, manual[(size_t)i], masks[(size_t)i]);
             s.ch[i] = applied;
+        }
+
+        // Stereo pairs share every automated target and a conservative max-channel
+        // detector strategy. The left role/profile is canonical, while hard L/R pans
+        // preserve the source image. Manual overrides are applied afterwards so the
+        // operator remains authoritative.
+        for (int left = 0; left < numCh; ++left) {
+            const int right = stereoPeers[(size_t)left];
+            if (right != left + 1 ||
+                right >= numCh ||
+                stereoPeers[(size_t)right] != left) {
+                continue;
+            }
+            const float sharedTrim = std::min(
+                autoTrimDb_[(size_t)left],
+                autoTrimDb_[(size_t)right]
+            );
+            const float sharedFader = std::min(
+                autoFaderDb_[(size_t)left],
+                autoFaderDb_[(size_t)right]
+            );
+            autoTrimDb_[(size_t)left] = sharedTrim;
+            autoTrimDb_[(size_t)right] = sharedTrim;
+            autoFaderDb_[(size_t)left] = sharedFader;
+            autoFaderDb_[(size_t)right] = sharedFader;
+
+            bdsp::ChannelParams shared = s.ch[left];
+            shared.trimDb = shadow ? 0.0f : sharedTrim;
+            shared.gateThreshDb = std::max(
+                s.ch[left].gateThreshDb,
+                s.ch[right].gateThreshDb
+            );
+            shared.faderDb = shadow ? s.ch[left].faderDb : sharedFader;
+            s.ch[left] = shared;
+            s.ch[right] = shared;
+            s.ch[left].pan = -1.0f;
+            s.ch[right].pan = 1.0f;
+            ++left;
+        }
+
+        for (int i = 0; i < numCh; ++i) {
+            applyManual(s.ch[i], manual[(size_t)i], masks[(size_t)i]);
+            autoTrimPublished_[(size_t)i].store(autoTrimDb_[(size_t)i], std::memory_order_relaxed);
             autoFaderPublished_[(size_t)i].store(autoFaderDb_[(size_t)i], std::memory_order_relaxed);
         }
     }
@@ -790,6 +891,7 @@ private:
     std::mutex controlMutex_;
     std::array<bdsp::ChannelParams, EngineSnapshot::kMaxCh> manualParams_{};
     std::array<OverrideMask, EngineSnapshot::kMaxCh> overrideMask_{};
+    std::array<int, EngineSnapshot::kMaxCh> stereoPeer_{};
     std::array<float, EngineSnapshot::kMaxCh> noiseFloorDb_{};
     std::array<float, EngineSnapshot::kMaxCh> slowInputRmsDb_{};
     std::array<float, EngineSnapshot::kMaxCh> slowPostRmsDb_{};

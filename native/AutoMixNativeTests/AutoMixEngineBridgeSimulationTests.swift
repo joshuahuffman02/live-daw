@@ -48,6 +48,21 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertFalse(AutoMixEngineBridge.isHD96TargetSampleRate(88_200.0))
     }
 
+    func testBridgeAcceptsOnlyAdjacentStereoLinks() throws {
+        try bridge.startSimulated(
+            withChannelCount: 4,
+            sampleRate: 96_000,
+            bufferFrameSize: 256,
+            channelRoles: Array(repeating: ChannelRole.keys.rawValue, count: 4),
+            inputChannelIndices: [0, 1, 2, 3]
+        )
+
+        XCTAssertTrue(bridge.setStereoLinkForLeftChannel(0, rightChannel: 1))
+        XCTAssertFalse(bridge.setStereoLinkForLeftChannel(0, rightChannel: 2))
+        XCTAssertFalse(bridge.setStereoLinkForLeftChannel(3, rightChannel: 4))
+        XCTAssertTrue(bridge.clearStereoLink(forChannel: 1))
+    }
+
     func testLatencyReportIncludesLimiterBuffersAndSeparateOutputPrebuffer() throws {
         try bridge.startSimulated(
             withChannelCount: 2,
@@ -2382,6 +2397,43 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
     }
 
     @MainActor
+    func testAppModelSynchronizesStereoPairByMixerIndex() throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(profileDirectory: profileDirectory, autoStartRemoteMonitoring: false)
+        defer {
+            model.debugStopPollingForTesting()
+            try? FileManager.default.removeItem(at: profileDirectory)
+        }
+
+        var left = ChannelMapping(
+            index: 0,
+            name: "Playback L",
+            role: .playback,
+            faderOverrideEnabled: true,
+            faderDb: -9,
+            stereoLinkedToNext: true
+        )
+        left.setMuted(true)
+        let right = ChannelMapping(index: 1, name: "Playback R", role: .keys)
+        model.channelMappings = [right, left]
+        model.channelDidChange(left)
+
+        let synchronizedLeft = try XCTUnwrap(model.channelMappings.first { $0.index == 0 })
+        let synchronizedRight = try XCTUnwrap(model.channelMappings.first { $0.index == 1 })
+        XCTAssertTrue(synchronizedLeft.stereoLinkedToNext)
+        XCTAssertEqual(synchronizedRight.role, .playback)
+        XCTAssertEqual(synchronizedRight.faderDb, synchronizedLeft.faderDb)
+        XCTAssertEqual(synchronizedRight.faderOverrideEnabled, synchronizedLeft.faderOverrideEnabled)
+        XCTAssertEqual(synchronizedRight.muted, synchronizedLeft.muted)
+        XCTAssertTrue(model.stereoLinkCoverage.isReady)
+        XCTAssertEqual(
+            model.stereoLinkCoverage.pairs,
+            [StereoLinkPair(leftChannelIndex: 0, rightChannelIndex: 1)]
+        )
+    }
+
+    @MainActor
     func testPlanningCenterTimedCueDrivesNativeSceneOnlyAfterStartTime() throws {
         let profileDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -3026,6 +3078,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(report.recordedInputPeakDbByChannel.count, 64)
         XCTAssertEqual(Array(report.recordedInputPeakDbByChannel.prefix(12)), Array(repeating: -28.0, count: 12))
         XCTAssertEqual(Array(report.recordedInputPeakDbByChannel.dropFirst(12)), Array(repeating: -100.0, count: 52))
+        XCTAssertEqual(report.checks.first { $0.name == "Stereo Links" }?.passed, true)
     }
 
     func testSoundcheckReportRequiresSafeBypassForProofRecording() throws {
@@ -3715,6 +3768,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(report.summary, "Stability monitor passed")
         XCTAssertEqual(report.validationSource, .simulatedHD96Dante)
         XCTAssertEqual(report.checks.first { $0.name == "Route Clock" }?.passed, true)
+        XCTAssertEqual(report.checks.first { $0.name == "Stereo Links" }?.passed, true)
     }
 
     func testStabilityMonitorReportRequiresAutonomousProofControlsDisabled() throws {

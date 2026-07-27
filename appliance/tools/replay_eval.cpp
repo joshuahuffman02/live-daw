@@ -17,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -27,6 +28,7 @@ struct Config {
     std::string metricsPath;
     std::string decisionsPath;
     std::vector<app::Cls> roles;
+    std::vector<std::pair<int, int>> stereoPairs;
     app::Scene scene = app::Scene::Worship;
     int blockSize = 256;
 };
@@ -86,7 +88,12 @@ const char* roleName(app::Cls role) {
         case app::Cls::Electric: return "electricGuitar";
         case app::Cls::Bass: return "bass";
         case app::Cls::Kick: return "kick";
+        case app::Cls::Snare: return "snare";
+        case app::Cls::Tom: return "tom";
+        case app::Cls::Overhead: return "overhead";
+        case app::Cls::Percussion: return "percussion";
         case app::Cls::Keys: return "keys";
+        case app::Cls::Playback: return "playback";
         case app::Cls::Unknown: return "unknown";
     }
     return "unknown";
@@ -111,7 +118,12 @@ app::Cls parseRole(const std::string& value) {
     if (value == "electricGuitar" || value == "electricguitar") return app::Cls::Electric;
     if (value == "bass") return app::Cls::Bass;
     if (value == "kick") return app::Cls::Kick;
+    if (value == "snare") return app::Cls::Snare;
+    if (value == "tom") return app::Cls::Tom;
+    if (value == "overhead") return app::Cls::Overhead;
+    if (value == "percussion") return app::Cls::Percussion;
     if (value == "keys") return app::Cls::Keys;
+    if (value == "playback" || value == "tracks") return app::Cls::Playback;
     if (value == "unknown") return app::Cls::Unknown;
     throw std::runtime_error("unknown role: " + value);
 }
@@ -133,6 +145,31 @@ std::vector<std::string> split(const std::string& value, char delimiter) {
         if (!field.empty()) fields.push_back(field);
     }
     return fields;
+}
+
+std::vector<std::pair<int, int>> parseStereoPairs(const std::string& value) {
+    std::vector<std::pair<int, int>> pairs;
+    for (const auto& token : split(value, ',')) {
+        const size_t separator = token.find('-');
+        if (separator == std::string::npos ||
+            token.find('-', separator + 1) != std::string::npos) {
+            throw std::runtime_error(
+                "stereo pairs must use 1-based adjacent channel numbers such as 11-12,18-19"
+            );
+        }
+        const int left = std::stoi(token.substr(0, separator)) - 1;
+        const int right = std::stoi(token.substr(separator + 1)) - 1;
+        pairs.emplace_back(left, right);
+    }
+    return pairs;
+}
+
+int stereoPeerFor(const Config& config, int channel) {
+    for (const auto& pair : config.stereoPairs) {
+        if (pair.first == channel) return pair.second;
+        if (pair.second == channel) return pair.first;
+    }
+    return -1;
 }
 
 void writeDecisionRecord(
@@ -161,6 +198,11 @@ void writeDecisionRecord(
         if (channel) out << ',';
         out << "{\"channel\":" << channel
             << ",\"role\":\"" << roleName(config.roles[channel]) << "\""
+            << ",\"stereoPeer\":";
+        const int stereoPeer = stereoPeerFor(config, (int)channel);
+        if (stereoPeer >= 0) out << stereoPeer + 1;
+        else out << "null";
+        out
             << ",\"inputRmsDb\":" << inputRmsDb[channel]
             << ",\"inputPeakDb\":" << inputPeakDb[channel]
             << ",\"postRmsDb\":" << engine.channelPostRmsDb((int)channel)
@@ -178,11 +220,24 @@ void writeMetrics(const std::string& path, const Config& config, const Metrics& 
     if (!out) throw std::runtime_error("could not create metrics JSON: " + path);
     out << std::fixed << std::setprecision(4)
         << "{\n"
-        << "  \"schemaVersion\": 1,\n"
+        << "  \"schemaVersion\": 2,\n"
         << "  \"input\": \"" << jsonEscape(config.inputPath) << "\",\n"
         << "  \"sourceCrc32\": \"" << std::hex << std::setw(8) << std::setfill('0')
         << metrics.sourceCrc32 << std::dec << std::setfill(' ') << "\",\n"
         << "  \"scene\": \"" << sceneName(config.scene) << "\",\n"
+        << "  \"roles\": [";
+    for (size_t index = 0; index < config.roles.size(); ++index) {
+        if (index) out << ", ";
+        out << '"' << roleName(config.roles[index]) << '"';
+    }
+    out << "],\n"
+        << "  \"stereoPairs\": [";
+    for (size_t index = 0; index < config.stereoPairs.size(); ++index) {
+        if (index) out << ", ";
+        out << '[' << config.stereoPairs[index].first + 1
+            << ", " << config.stereoPairs[index].second + 1 << ']';
+    }
+    out << "],\n"
         << "  \"sampleRate\": " << metrics.sampleRate << ",\n"
         << "  \"blockSize\": " << config.blockSize << ",\n"
         << "  \"sourceChannels\": " << metrics.sourceChannels << ",\n"
@@ -226,6 +281,24 @@ Metrics evaluate(const Config& config) {
     if (config.blockSize < 16 || config.blockSize > 4096) {
         throw std::runtime_error("block size must be 16..4096 frames");
     }
+    std::vector<bool> stereoUsed((size_t)inputChannels, false);
+    for (const auto& pair : config.stereoPairs) {
+        const int left = pair.first;
+        const int right = pair.second;
+        if (left < 0 || right != left + 1 || right >= inputChannels) {
+            throw std::runtime_error("stereo pairs must be adjacent and within the role list");
+        }
+        if (stereoUsed[(size_t)left] || stereoUsed[(size_t)right]) {
+            throw std::runtime_error("stereo pairs must not overlap");
+        }
+        if (config.roles[(size_t)left] != config.roles[(size_t)right] ||
+            config.roles[(size_t)left] == app::Cls::Speech ||
+            config.roles[(size_t)left] == app::Cls::Unknown) {
+            throw std::runtime_error("stereo pairs must use the same assigned non-speech role");
+        }
+        stereoUsed[(size_t)left] = true;
+        stereoUsed[(size_t)right] = true;
+    }
 
     std::ofstream decisions(config.decisionsPath, std::ios::trunc);
     if (!decisions) {
@@ -249,6 +322,12 @@ Metrics evaluate(const Config& config) {
     brain.configure(inputChannels, source.sampleRate, config.roles);
     brain.setScene(config.scene);
     brain.setOnsetSource(&engine);
+    for (const auto& pair : config.stereoPairs) {
+        if (!engine.setStereoLink(pair.first, pair.second) ||
+            !brain.setStereoLink(pair.first, pair.second)) {
+            throw std::runtime_error("could not apply validated stereo pair");
+        }
+    }
 
     std::vector<std::vector<float>> planar(
         (size_t)inputChannels,
@@ -416,6 +495,8 @@ Config parseArgs(int argc, char** argv) {
         else if (arg == "--block-size") config.blockSize = std::stoi(next());
         else if (arg == "--roles") {
             for (const auto& role : split(next(), ',')) config.roles.push_back(parseRole(role));
+        } else if (arg == "--stereo-pairs") {
+            config.stereoPairs = parseStereoPairs(next());
         } else {
             throw std::runtime_error("unknown argument: " + arg);
         }
@@ -442,8 +523,9 @@ int selfTest() {
     config.outputPath = base + "-output.wav";
     config.metricsPath = base + "-metrics.json";
     config.decisionsPath = base + "-decisions.jsonl";
-    config.roles = {app::Cls::Speech, app::Cls::Bass};
-    config.scene = app::Scene::Sermon;
+    config.roles = {app::Cls::Playback, app::Cls::Playback};
+    config.stereoPairs = {{0, 1}};
+    config.scene = app::Scene::Worship;
     config.blockSize = 256;
 
     replay::WavData fixture;
@@ -453,12 +535,12 @@ int selfTest() {
     fixture.interleaved.resize((size_t)frames * fixture.channels, 0.0f);
     for (uint64_t frame = 0; frame < frames; ++frame) {
         const double t = (double)frame / fixture.sampleRate;
-        const float speech = 0.035f * (float)std::sin(2.0 * M_PI * 220.0 * t);
-        const float bass = 0.012f * (float)std::sin(2.0 * M_PI * 82.0 * t);
-        fixture.interleaved[(size_t)frame * 4u] = speech;
-        fixture.interleaved[(size_t)frame * 4u + 1u] = bass;
-        fixture.interleaved[(size_t)frame * 4u + 2u] = speech * 0.65f + bass * 0.12f;
-        fixture.interleaved[(size_t)frame * 4u + 3u] = speech * 0.65f + bass * 0.12f;
+        const float left = 0.035f * (float)std::sin(2.0 * M_PI * 220.0 * t);
+        const float right = 0.012f * (float)std::sin(2.0 * M_PI * 330.0 * t);
+        fixture.interleaved[(size_t)frame * 4u] = left;
+        fixture.interleaved[(size_t)frame * 4u + 1u] = right;
+        fixture.interleaved[(size_t)frame * 4u + 2u] = left * 0.65f;
+        fixture.interleaved[(size_t)frame * 4u + 3u] = right * 0.65f;
     }
     replay::writeFloat32Wav(config.inputPath, fixture);
 
@@ -500,7 +582,8 @@ void printUsage() {
         << "Usage:\n"
         << "  automix_replay --input service.wav --roles speech,bass,... \\\n"
         << "    --scene sermon --output program.wav --metrics metrics.json \\\n"
-        << "    --decisions decisions.jsonl [--block-size 256]\n"
+        << "    --decisions decisions.jsonl [--stereo-pairs 11-12,18-19] \\\n"
+        << "    [--block-size 256]\n"
         << "  automix_replay --self-test\n";
 }
 

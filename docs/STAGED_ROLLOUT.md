@@ -7,7 +7,8 @@ first because speech automation has fewer interacting sources than a worship mix
 
 - Real DVS/HD96 input is visible as 64 float channels at 96 kHz.
 - An isolated stereo encoder/virtual output is visible and cannot return to FOH.
-- Service role map and Dante-to-mixer channel map have been reviewed.
+- Service role map, Dante-to-mixer channel map, and intended stereo links have been
+  reviewed; linked pairs are adjacent, same-role, non-overlapping, and labeled L/R.
 - External static backup and fail-safe switching pass every kill test in
   `EXTERNAL_FAILOVER.md`.
 - Encoder and public-egress health endpoints are configured and independently

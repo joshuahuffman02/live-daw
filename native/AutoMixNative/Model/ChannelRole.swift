@@ -9,7 +9,12 @@ enum ChannelRole: String, CaseIterable, Codable, Identifiable, Sendable {
     case electricGuitar
     case bass
     case kick
+    case snare
+    case tom
+    case overhead
+    case percussion
     case keys
+    case playback
 
     var id: String { rawValue }
 
@@ -23,7 +28,21 @@ enum ChannelRole: String, CaseIterable, Codable, Identifiable, Sendable {
         case .electricGuitar: return "Electric"
         case .bass: return "Bass"
         case .kick: return "Kick"
+        case .snare: return "Snare"
+        case .tom: return "Tom"
+        case .overhead: return "Overhead"
+        case .percussion: return "Percussion"
         case .keys: return "Keys"
+        case .playback: return "Playback / Tracks"
+        }
+    }
+
+    var supportsStereoLink: Bool {
+        switch self {
+        case .unknown, .speech:
+            return false
+        default:
+            return true
         }
     }
 }
@@ -60,6 +79,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
     var faderDb: Double
     var panOverrideEnabled: Bool
     var pan: Double
+    var stereoLinkedToNext: Bool
     // Remote-console mute, layered on the existing fader override (no DSP change):
     // mute forces a fader override at the -80 dB floor; unmute restores the prior
     // fader state captured here. Persisted so a muted channel survives a restart.
@@ -69,7 +89,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
 
     var id: Int { index }
 
-    init(index: Int, inputChannelIndex: Int? = nil, name: String, role: ChannelRole, faderOverrideEnabled: Bool = false, faderDb: Double = -6.0, panOverrideEnabled: Bool = false, pan: Double = 0.0) {
+    init(index: Int, inputChannelIndex: Int? = nil, name: String, role: ChannelRole, faderOverrideEnabled: Bool = false, faderDb: Double = -6.0, panOverrideEnabled: Bool = false, pan: Double = 0.0, stereoLinkedToNext: Bool = false) {
         self.index = index
         self.inputChannelIndex = max(inputChannelIndex ?? index, 0)
         self.name = name
@@ -78,6 +98,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
         self.faderDb = faderDb
         self.panOverrideEnabled = panOverrideEnabled
         self.pan = pan
+        self.stereoLinkedToNext = stereoLinkedToNext
     }
 
     init(from decoder: Decoder) throws {
@@ -90,6 +111,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
         faderDb = try container.decodeIfPresent(Double.self, forKey: .faderDb) ?? -6.0
         panOverrideEnabled = try container.decodeIfPresent(Bool.self, forKey: .panOverrideEnabled) ?? false
         pan = try container.decodeIfPresent(Double.self, forKey: .pan) ?? 0.0
+        stereoLinkedToNext = try container.decodeIfPresent(Bool.self, forKey: .stereoLinkedToNext) ?? false
         muted = try container.decodeIfPresent(Bool.self, forKey: .muted) ?? false
         preMuteFaderDb = try container.decodeIfPresent(Double.self, forKey: .preMuteFaderDb) ?? faderDb
         preMuteFaderOverrideEnabled = try container.decodeIfPresent(Bool.self, forKey: .preMuteFaderOverrideEnabled) ?? false
@@ -138,7 +160,8 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
             return ChannelMapping(
                 index: index,
                 name: serviceName(for: index, role: role),
-                role: role
+                role: role,
+                stereoLinkedToNext: serviceStereoLink(for: index, count: boundedCount)
             )
         }
     }
@@ -154,6 +177,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
             channel.index = index
             channel.name = seeded.name
             channel.role = seeded.role
+            channel.stereoLinkedToNext = seeded.stereoLinkedToNext
             return channel
         }
     }
@@ -204,10 +228,28 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
             .keys,
             .bass,
             .kick,
+            .snare,
+            .tom,
+            .tom,
+            .overhead,
+            .overhead,
+            .percussion,
+            .playback,
+            .playback,
             .speech,
-            .keys
+            .unknown
         ]
         return seed[index % seed.count]
+    }
+
+    private static func serviceStereoLink(for index: Int, count: Int) -> Bool {
+        guard index + 1 < count else { return false }
+        switch index % 24 {
+        case 10, 17, 20:
+            return true
+        default:
+            return false
+        }
     }
 
     private static func serviceName(for index: Int, role: ChannelRole) -> String {
@@ -226,8 +268,18 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
             return "Bass"
         case .kick:
             return "Kick"
+        case .snare:
+            return "Snare"
+        case .tom:
+            return index % 24 == 15 ? "Tom 1" : "Tom 2"
+        case .overhead:
+            return index % 24 == 17 ? "Overhead L" : "Overhead R"
+        case .percussion:
+            return "Percussion"
         case .keys:
-            return "Keys \((index % 2) + 1)"
+            return index % 24 == 10 ? "Keys L" : "Keys R"
+        case .playback:
+            return index % 24 == 20 ? "Playback L" : "Playback R"
         case .unknown:
             return "Ch \(index + 1)"
         }
@@ -379,7 +431,8 @@ struct SourceRoleCoverage: Equatable, Sendable {
                 unknownRoleCount += 1
             case .speech:
                 speechRoleCount += 1
-            case .leadVocal, .bgv, .acousticGuitar, .electricGuitar, .bass, .kick, .keys:
+            case .leadVocal, .bgv, .acousticGuitar, .electricGuitar, .bass, .kick,
+                    .snare, .tom, .overhead, .percussion, .keys, .playback:
                 musicRoleCount += 1
             }
         }
@@ -390,6 +443,69 @@ struct SourceRoleCoverage: Equatable, Sendable {
             speechRoleCount: speechRoleCount,
             musicRoleCount: musicRoleCount,
             unknownRoleCount: unknownRoleCount
+        )
+    }
+}
+
+struct StereoLinkPair: Equatable, Sendable {
+    var leftChannelIndex: Int
+    var rightChannelIndex: Int
+}
+
+struct StereoLinkCoverage: Equatable, Sendable {
+    var pairs: [StereoLinkPair]
+    var invalidChannels: [Int]
+
+    var isReady: Bool {
+        invalidChannels.isEmpty
+    }
+
+    var summary: String {
+        if !invalidChannels.isEmpty {
+            let channels = invalidChannels.prefix(8).map { "\($0 + 1)" }.joined(separator: ", ")
+            return "invalid stereo link at Mix Ch \(channels)"
+        }
+        return pairs.isEmpty ? "no stereo pairs" : "\(pairs.count) stereo pair(s)"
+    }
+
+    static func make(channelMappings: [ChannelMapping]) -> StereoLinkCoverage {
+        let byIndex = Dictionary(
+            channelMappings.map { ($0.index, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var pairs: [StereoLinkPair] = []
+        var invalid = Set<Int>()
+        var used = Set<Int>()
+
+        for left in channelMappings.sorted(by: { $0.index < $1.index })
+        where left.stereoLinkedToNext {
+            let rightIndex = left.index + 1
+            guard let right = byIndex[rightIndex],
+                  left.role.supportsStereoLink,
+                  right.role.supportsStereoLink,
+                  left.role == right.role,
+                  !right.stereoLinkedToNext,
+                  !invalid.contains(left.index),
+                  !used.contains(left.index),
+                  !used.contains(rightIndex)
+            else {
+                invalid.insert(left.index)
+                invalid.insert(rightIndex)
+                continue
+            }
+            pairs.append(
+                StereoLinkPair(
+                    leftChannelIndex: left.index,
+                    rightChannelIndex: rightIndex
+                )
+            )
+            used.insert(left.index)
+            used.insert(rightIndex)
+        }
+
+        return StereoLinkCoverage(
+            pairs: pairs,
+            invalidChannels: invalid.filter { byIndex[$0] != nil }.sorted()
         )
     }
 }
