@@ -16,6 +16,7 @@
 		3AA3F7DE2922718E07959868 /* PairingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B3C73AE9B2C66B7AF280143 /* PairingStore.swift */; };
 		50E78121ABE3681487AFDA1F /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A20B08AAC37558E32B75FC4 /* ContentView.swift */; };
 		5AC382710F07185DD9E6A46E /* RemoteMonitoringPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 093AC7B0B4C017B3CF966355 /* RemoteMonitoringPanel.swift */; };
+		5B7E58C330A916AADF745F70 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 140AD089508E104B0A381DDD /* Security.framework */; };
 		601D5C31CAE64833405665EC /* AutoMixEngineBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = ED94EC1FEA9D1C3D2C02B105 /* AutoMixEngineBridge.mm */; };
 		632FF07078D8EF541B9098D7 /* HTTPRequestParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13610CBAE47CAD686D057C7 /* HTTPRequestParsingTests.swift */; };
 		68F8085AFC3BBE20249BA28E /* MonitorWireContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2677A2CD6F9E8F155D11B9F0 /* MonitorWireContractTests.swift */; };
@@ -37,7 +38,6 @@
 		D077CF3F4EBEE75292759F82 /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F8888CD50A1AF6A4D95CA914 /* CoreAudio.framework */; };
 		D3C8E4BC7029657CB27E82B0 /* MonitorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37165304CEEA85930CE8D34B /* MonitorService.swift */; };
 		D648C7EC14F7A71EA1CFAAF8 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA225074D37C8C74CC61F671 /* AVFoundation.framework */; };
-		E10000000000000000000001 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E10000000000000000000002 /* Security.framework */; };
 		D7B90D7ECDF0C81338BB098A /* AlertEvaluatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D68D6326441EF2F9C6D0A4DB /* AlertEvaluatorTests.swift */; };
 		DA9F5EA009A85F43C204C745 /* AlertEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AC5D451C9733216B260904D /* AlertEvaluator.swift */; };
 		DD1BDF82C77381ECDBDCC6C5 /* ChannelMappingMuteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374761092384611895911D4A /* ChannelMappingMuteTests.swift */; };
@@ -59,6 +59,8 @@
 		093AC7B0B4C017B3CF966355 /* RemoteMonitoringPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteMonitoringPanel.swift; sourceTree = "<group>"; };
 		0FF11BF0D5CB8FBD7FE11D46 /* AppModel+Remote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+Remote.swift"; sourceTree = "<group>"; };
 		129612A78B049535B28439D8 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		13D3592FDBE0C759C36D37BC /* AutoMixNative.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AutoMixNative.entitlements; sourceTree = "<group>"; };
+		140AD089508E104B0A381DDD /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		16FAB57B4BF9DD1EB19AA646 /* HTTPConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPConnection.swift; sourceTree = "<group>"; };
 		1A20B08AAC37558E32B75FC4 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		1AC5D451C9733216B260904D /* AlertEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertEvaluator.swift; sourceTree = "<group>"; };
@@ -90,7 +92,6 @@
 		DC997C3D59703BFA05903484 /* AutoMixNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoMixNativeApp.swift; sourceTree = "<group>"; };
 		E8A7BE9CFED91799110E3FD8 /* RemoteCommandRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandRoutingTests.swift; sourceTree = "<group>"; };
 		EA225074D37C8C74CC61F671 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
-		E10000000000000000000002 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		EBBD4D1A98057E11FC999406 /* AutoMixNative-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "AutoMixNative-Bridging-Header.h"; sourceTree = "<group>"; };
 		ED94EC1FEA9D1C3D2C02B105 /* AutoMixEngineBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = AutoMixEngineBridge.mm; sourceTree = "<group>"; };
 		F07E658054DEBE846732B29A /* AutoMixEngineBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AutoMixEngineBridge.h; sourceTree = "<group>"; };
@@ -106,7 +107,7 @@
 				D077CF3F4EBEE75292759F82 /* CoreAudio.framework in Frameworks */,
 				39A28F986D2B8899BD636059 /* AudioToolbox.framework in Frameworks */,
 				D648C7EC14F7A71EA1CFAAF8 /* AVFoundation.framework in Frameworks */,
-				E10000000000000000000001 /* Security.framework in Frameworks */,
+				5B7E58C330A916AADF745F70 /* Security.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -157,8 +158,8 @@
 			children = (
 				A0509617DD69AECD0FC2137B /* AudioToolbox.framework */,
 				EA225074D37C8C74CC61F671 /* AVFoundation.framework */,
-				E10000000000000000000002 /* Security.framework */,
 				F8888CD50A1AF6A4D95CA914 /* CoreAudio.framework */,
+				140AD089508E104B0A381DDD /* Security.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -166,6 +167,7 @@
 		9521EF1DF9692EE33136CD62 /* AutoMixNative */ = {
 			isa = PBXGroup;
 			children = (
+				13D3592FDBE0C759C36D37BC /* AutoMixNative.entitlements */,
 				DC997C3D59703BFA05903484 /* AutoMixNativeApp.swift */,
 				6B8396F6223BFD984934D499 /* Info.plist */,
 				40B46CBA9D5617E392120E82 /* Audio */,
@@ -284,7 +286,6 @@
 				};
 			};
 			buildConfigurationList = 72AF857994FAED809A555173 /* Build configuration list for PBXProject "AutoMixNative" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -294,6 +295,7 @@
 			mainGroup = 1C95CCD04AB1643A15955DD6;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			productRefGroup = 14431B0FC2738764E4664F5B /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (

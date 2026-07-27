@@ -18,6 +18,14 @@ jobs:
       - name: Check out sources
         uses: actions/checkout@v7
 
+      - name: Verify generated Xcode project
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew bundle --file Brewfile
+          xcodegen generate --spec native/project.yml --project native
+          git diff --exit-code -- native/AutoMixNative.xcodeproj/project.pbxproj
+
       - name: Build and test deterministic DSP
         run: |
           clang++ -std=c++17 -O2 \

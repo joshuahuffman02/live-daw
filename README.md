@@ -1,18 +1,21 @@
 # Live DAW — Autonomous Church Broadcast Mixer
 
-Two things live in this repo:
+Four layers live in this repo:
 
-1. **[`SPEC.md`](SPEC.md)** — the full build spec for the shippable product: a
+1. **[`SPEC.md`](SPEC.md)** — the acceptance contract for the shippable product: a
    plugin-free C++/JUCE appliance that takes a Dante split and autonomously builds a
-   broadcast mix, with a human override layer. That's the months-long engineering
-   target.
+   broadcast mix, with a human override layer.
 
 2. **[`native/`](native/)** — the native Apple Silicon macOS app target. It is a
    SwiftUI/Core Audio shell around the existing C++ DSP and brain code. This is the
    production direction for an M-series Mac running Dante Virtual Soundcard with a
    Midas Heritage-D HD96-24 Dante split.
 
-3. **[`web/`](web/)** — a **runnable proof-of-concept** of the entire architecture,
+3. **[`appliance/`](appliance/)** — the shared deterministic C++17 DSP/control core,
+   its replay evaluator and correctness suite, plus the strict headless JUCE
+   portability executable.
+
+4. **[`web/`](web/)** — a **runnable proof-of-concept** of the entire architecture,
    built with the Web Audio API. It is *not* the Dante appliance, but it is a faithful,
    working embodiment of the spec's design that you can open in a browser today:
 
@@ -28,11 +31,20 @@ Two things live in this repo:
      override on every parameter, a global **FREEZE**, a **hard bypass to a safe mix**,
      and a Planning-Center-style **scene engine** that drives the mix from a service plan.
 
+### Development setup
+
+The checked-in Xcode project builds without regeneration. CMake and XcodeGen are
+declared for appliance builds and intentional project regeneration:
+
+```bash
+brew bundle
+```
+
 ### Run the proof-of-concept
 
 ```bash
 cd web
-npm install
+npm ci
 npm run dev
 ```
 
