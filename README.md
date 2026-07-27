@@ -31,6 +31,10 @@ Four layers live in this repo:
      override on every parameter, a global **FREEZE**, a **hard bypass to a safe mix**,
      and a Planning-Center-style **scene engine** that drives the mix from a service plan.
 
+The requirement-by-requirement distinction between locally verified software and
+venue-only production evidence is maintained in
+[`docs/COMPLETION_AUDIT.md`](docs/COMPLETION_AUDIT.md).
+
 ### Development setup
 
 The checked-in Xcode project builds without regeneration. CMake and XcodeGen are
