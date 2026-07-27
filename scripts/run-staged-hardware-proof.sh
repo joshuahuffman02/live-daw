@@ -50,6 +50,29 @@ fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 phase_directory="${evidence_root}/${phase}-${timestamp}"
 /bin/mkdir -p "${phase_directory}"
+app_integrity_report="${phase_directory}/app-integrity.txt"
+
+# A rehearsal build can exercise every software check but cannot mint production
+# hardware proof. Bind the evidence to an intact, notarized, Gatekeeper-accepted app.
+: > "${app_integrity_report}"
+if ! /usr/bin/codesign --verify --deep --strict --verbose=2 \
+    "${app_path}" >> "${app_integrity_report}" 2>&1; then
+  print -u2 "Hardware proof requires an intact signed app; inspect ${app_integrity_report}."
+  exit 3
+fi
+/usr/bin/codesign -dv --verbose=4 "${app_path}" >> "${app_integrity_report}" 2>&1
+if ! /usr/bin/xcrun stapler validate \
+    "${app_path}" >> "${app_integrity_report}" 2>&1; then
+  print -u2 "Hardware proof requires a stapled notarization ticket; inspect ${app_integrity_report}."
+  exit 3
+fi
+if ! /usr/sbin/spctl --assess --type execute --verbose=4 \
+    "${app_path}" >> "${app_integrity_report}" 2>&1; then
+  print -u2 "Hardware proof requires Gatekeeper acceptance; inspect ${app_integrity_report}."
+  exit 3
+fi
+/usr/bin/shasum -a 256 "${app_binary}" >> "${app_integrity_report}"
+
 encoder_health_url="$(/usr/bin/plutil -extract encoderHealthURL raw -o - "${profile_path}" 2>/dev/null || true)"
 egress_health_url="$(/usr/bin/plutil -extract egressHealthURL raw -o - "${profile_path}" 2>/dev/null || true)"
 if [[ -z "${encoder_health_url}" || -z "${egress_health_url}" ]]; then

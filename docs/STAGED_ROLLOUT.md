@@ -14,6 +14,9 @@ first because speech automation has fewer interacting sources than a worship mix
 - Encoder and public-egress health endpoints are configured and independently
   observed.
 - The signed app is installed at its permanent path; the LaunchAgent is installed.
+  The proof runner independently requires a valid signature, stapled notarization
+  ticket, and Gatekeeper acceptance, then records the signing details and executable
+  SHA-256 in `app-integrity.txt`.
 - Continuous recording has adequate free space (about 91.2 GB/hour at 64+2 channels,
   96 kHz float). Set its planned duration at least as long as the service/proof, keep
   automatic start enabled for the supervised app run, and confirm the capacity gate

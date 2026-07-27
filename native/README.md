@@ -530,6 +530,9 @@ Run this on the actual HD96/Dante rig before trusting it live:
    manifest can have `passed=true` but is still not hardware proof.
 16. Confirm Watchdog SAFE remains inactive during normal audio; if it becomes active,
     treat that as a control-thread failure and do not go live until it is understood.
+17. Use `scripts/run-staged-hardware-proof.sh` for acceptance evidence. It refuses
+    development/ad-hoc builds and records signature, notarization, Gatekeeper, and
+    executable-hash evidence before the run.
 
 The current app has been build-verified locally, XCTest-verified through the simulated
 native bridge, and DSP-verified without hardware. Real Dante clocking, channel order,
