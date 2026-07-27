@@ -33,6 +33,7 @@ public:
     }
     void setCeiling(float db) { ceilingDb_ = db; ceiling_ = std::pow(10.0f, db / 20.0f); }
     float gainReductionDb() const { return grDb_; }
+    int latencySamples() const { return look_; }
 
     inline void process(float inL, float inR, float& outL, float& outR) {
         const float tp = std::max(truePeak(histL_, inL), truePeak(histR_, inR));

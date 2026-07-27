@@ -77,15 +77,16 @@ cmake --build build --target BroadcastMixer
 
 ## Status — what's verified vs. scaffolded
 
-- **Verified here:** the entire `dsp/` core, via 92 assertions in `tests/test_dsp.cpp`
+- **Verified here:** the entire `dsp/` core, via 94 assertions in `tests/test_dsp.cpp`
   (filter response, +6 dB loudness scaling, the limiter never exceeding its ceiling,
   automixer gain sharing and 96 kHz acquisition/handoff timing, compressor/gate
   behavior, full-engine output under the ceiling, role-aware SAFE fallback behavior,
   96 kHz
   engine processing, bus/pan routing, live source-role reassignment,
   measurement-driven gain staging/activity/noise-floor behavior, bounded slow
-  master loudness correction and limiter backoff, SHADOW candidate equivalence and
-  non-application, BrainThread manual override guards, and the no-allocation
+  master loudness correction and limiter backoff, fixed limiter latency reporting
+  and impulse verification, SHADOW candidate equivalence and non-application,
+  BrainThread manual override guards, and the no-allocation
   invariant for `Engine::process`, measurement publication, `BrainThread::applyTo`,
   and live channel config updates).
 - **Native production path:** [`../native`](../native) wraps this same verified core
@@ -103,7 +104,9 @@ cmake --build build --target BroadcastMixer
   sample-rate mismatch (the native app reports selected-device sample rate).
 - Take a **split** of the raw channels; never feed the room PA (no acoustic feedback
   path by design).
-- Expose a fixed, known audio latency so the video encoder can compensate for lip sync.
+- The limiter exposes its exact fixed latency; the native app adds Core Audio/device
+  estimates and measured A/V calibration per
+  [`../docs/LATENCY_AND_LIPSYNC.md`](../docs/LATENCY_AND_LIPSYNC.md).
 - Always record raw multitracks + the output (forensics + the training-data flywheel).
 - A failed app or powered-off Mac is outside the in-app watchdog's reach. Production
   requires the independent hardware/encoder fallback and kill tests in

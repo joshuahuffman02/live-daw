@@ -143,6 +143,17 @@ static void testLimiter() {
     }
     CHECK(std::fabs(lim2.gainReductionDb()) < 0.1f, "transparent below the ceiling (no GR)");
     CHECK(std::fabs(maxQuiet - 0.1f) < 0.02f, "quiet signal passes unchanged");
+
+    Limiter delayed;
+    delayed.reset(96000.0, -1.0f);
+    CHECK(delayed.latencySamples() == 144, "limiter reports its fixed 1.5 ms latency at 96 kHz");
+    int firstOutput = -1;
+    for (int sample = 0; sample < 200; ++sample) {
+        float left = 0.0f, right = 0.0f;
+        delayed.process(sample == 0 ? 0.1f : 0.0f, 0.0f, left, right);
+        if (firstOutput < 0 && std::fabs(left) > 0.05f) firstOutput = sample;
+    }
+    CHECK(firstOutput == delayed.latencySamples(), "reported limiter latency matches an impulse render");
 }
 
 // ---- Automixer -------------------------------------------------------------

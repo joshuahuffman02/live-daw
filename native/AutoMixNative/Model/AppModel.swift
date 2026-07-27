@@ -58,6 +58,28 @@ final class AppModel: ObservableObject {
             saveProfile()
         }
     }
+    @Published var measuredEndToEndAudioLatencyMs = 0.0 {
+        didSet {
+            let clamped = min(max(measuredEndToEndAudioLatencyMs, 0), 1_000)
+            if measuredEndToEndAudioLatencyMs != clamped {
+                measuredEndToEndAudioLatencyMs = clamped
+                return
+            }
+            invalidateValidationEvidence()
+            saveProfile()
+        }
+    }
+    @Published var measuredEndToEndVideoLatencyMs = 0.0 {
+        didSet {
+            let clamped = min(max(measuredEndToEndVideoLatencyMs, 0), 1_000)
+            if measuredEndToEndVideoLatencyMs != clamped {
+                measuredEndToEndVideoLatencyMs = clamped
+                return
+            }
+            invalidateValidationEvidence()
+            saveProfile()
+        }
+    }
     @Published var channelMappings = ChannelMapping.defaults(count: 32) {
         didSet {
             invalidateValidationEvidence()
@@ -243,6 +265,26 @@ final class AppModel: ObservableObject {
 
     var detectedBufferFrames: Int {
         engine.bufferFrameSize
+    }
+    var algorithmicLatencyMs: Double { engine.algorithmicLatencyMs }
+    var estimatedOneWayAudioLatencyMs: Double { engine.estimatedOneWayLatencyMs }
+    var lipSyncAudioLatencyReferenceMs: Double {
+        measuredEndToEndAudioLatencyMs > 0
+            ? measuredEndToEndAudioLatencyMs
+            : estimatedOneWayAudioLatencyMs
+    }
+    var lipSyncRecommendation: String {
+        guard measuredEndToEndAudioLatencyMs > 0, measuredEndToEndVideoLatencyMs > 0 else {
+            return "Measure audio + video paths"
+        }
+        let offset = measuredEndToEndAudioLatencyMs - measuredEndToEndVideoLatencyMs
+        if abs(offset) < 1 {
+            return "Aligned within 1.0 ms"
+        }
+        if offset > 0 {
+            return String(format: "Delay video %.1f ms", offset)
+        }
+        return String(format: "Delay audio %.1f ms", -offset)
     }
 
     var sampleRateState: SampleRateState {
@@ -844,6 +886,8 @@ final class AppModel: ObservableObject {
         selectedOutputUID = profile.outputDeviceUID
         selectedScene = profile.scene
         shadowMode = profile.shadowMode
+        measuredEndToEndAudioLatencyMs = profile.measuredEndToEndAudioLatencyMs
+        measuredEndToEndVideoLatencyMs = profile.measuredEndToEndVideoLatencyMs
         expectedInputChannels = profile.expectedInputChannels
         expectedSampleRate = profile.expectedSampleRate
         channelMappings = profile.channelMappings.isEmpty ? ChannelMapping.defaults(count: 32) : profile.channelMappings
@@ -857,6 +901,8 @@ final class AppModel: ObservableObject {
             outputDeviceUID: selectedOutputUID,
             scene: selectedScene,
             shadowMode: shadowMode,
+            measuredEndToEndAudioLatencyMs: measuredEndToEndAudioLatencyMs,
+            measuredEndToEndVideoLatencyMs: measuredEndToEndVideoLatencyMs,
             expectedInputChannels: expectedInputChannels,
             expectedSampleRate: expectedSampleRate,
             channelMappings: channelMappings

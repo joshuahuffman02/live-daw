@@ -39,6 +39,12 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   The UI exposes candidate activity, learned floor, trim, fader, and master trim.
   Autonomous stability proof turns SHADOW off so proof cannot accidentally certify
   a static mix as autonomous.
+- Latency/lip sync: the limiter exposes and impulse-tests its exact 1.5 ms delay. The
+  native bridge reports a one-way estimate from input/output buffers, Core Audio
+  device latency/safety offsets, DSP latency, and any separate-output prebuffer.
+  Venue profiles persist measured end-to-end audio and video path latency and the UI
+  names the path/delay needed for alignment. Real measurement and drift gates are in
+  `docs/LATENCY_AND_LIPSYNC.md`.
 - CPU/architecture: arm64-only Apple Silicon build.
 - HD96/Dante operating point: 64 mapped input channels at 96 kHz, with clear
   sample-rate, channel-count, Core Audio float-format readiness, callback frame-size,
@@ -274,7 +280,9 @@ off-site.
 
 ## Latency / sync
 Broadcast-only gives 30–50 ms+ headroom → look-ahead is fine everywhere. But hit lip
-sync: expose a fixed, known audio latency so video can compensate; measure end-to-end.
+sync: expose fixed DSP and estimated route latency, then measure both audio and video
+end-to-end and compensate the faster path. Re-measure after route/buffer/encoder
+changes and prove that the offset does not drift over a multi-hour run.
 
 ## Real-world robustness
 - Dante needs a hardware leader clock; guard against sample-rate mismatch.

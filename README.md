@@ -138,6 +138,10 @@ Current native milestone:
   encoder is trusted;
 - shows master momentary/short-term/integrated LUFS and limiter gain reduction for
   livestream loudness sanity checks;
+- reports exact DSP latency plus a Core Audio one-way estimate that includes device
+  buffers, device latency/safety offsets, and separate-output prebuffering; the venue
+  profile stores measured end-to-end audio/video paths and tells the operator which
+  encoder path needs delay;
 - saves a local venue profile with Core Audio device UIDs, expected channel count,
   scene, Dante input mapping, channel roles, and per-channel manual fader/pan
   overrides covering the native engine range of -80 to +12 dB fader and full
@@ -202,6 +206,8 @@ Soundcard on the Mac, and this app receiving those channels through Core Audio.
 App/Mac/power failure requires the independent, fail-safe hardware path and kill-test
 contract in [`docs/EXTERNAL_FAILOVER.md`](docs/EXTERNAL_FAILOVER.md); the in-app SAFE
 button cannot cover loss of its own host.
+End-to-end A/V calibration and clock-drift proof follow
+[`docs/LATENCY_AND_LIPSYNC.md`](docs/LATENCY_AND_LIPSYNC.md).
 
 ### Native/DSP verification
 

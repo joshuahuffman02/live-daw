@@ -227,6 +227,55 @@ private struct DeviceControlPanel: View {
                         StatusRow(label: "Short-Term", value: lufsLabel(model.shortTermLufs), warning: masterLoudnessWarning)
                         StatusRow(label: "Integrated", value: lufsLabel(model.integratedLufs), warning: masterLoudnessWarning)
                         StatusRow(label: "Limiter GR", value: dbLabel(model.limiterGainReductionDb), warning: limiterWarning)
+                        StatusRow(
+                            label: "DSP Latency",
+                            value: String(format: "%.2f ms", model.algorithmicLatencyMs)
+                        )
+                        StatusRow(
+                            label: "Estimated Audio Path",
+                            value: String(format: "%.2f ms", model.estimatedOneWayAudioLatencyMs)
+                        )
+                        HStack {
+                            Text("Measured E2E Audio")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            TextField(
+                                "0 = estimate",
+                                value: $model.measuredEndToEndAudioLatencyMs,
+                                format: .number.precision(.fractionLength(1))
+                            )
+                            .frame(width: 86)
+                            Text("ms")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
+                        .help("Enter a real clapper/loopback end-to-end measurement. Zero keeps the Core Audio/DSP estimate.")
+                        HStack {
+                            Text("Measured E2E Video")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            TextField(
+                                "required",
+                                value: $model.measuredEndToEndVideoLatencyMs,
+                                format: .number.precision(.fractionLength(1))
+                            )
+                            .frame(width: 86)
+                            Text("ms")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.caption)
+                        .help("Enter the measured camera-to-encoder video path latency from the same sync test.")
+                        StatusRow(
+                            label: "Audio Reference",
+                            value: String(format: "%.2f ms", model.lipSyncAudioLatencyReferenceMs),
+                            warning: model.measuredEndToEndAudioLatencyMs <= 0
+                        )
+                        StatusRow(
+                            label: "Lip-sync Action",
+                            value: model.lipSyncRecommendation,
+                            warning: model.measuredEndToEndAudioLatencyMs <= 0 ||
+                                model.measuredEndToEndVideoLatencyMs <= 0
+                        )
                         StatusRow(label: "Tempo", value: tempoSummary)
                         HStack(spacing: 8) {
                             Text("L")

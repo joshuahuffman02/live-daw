@@ -357,6 +357,11 @@ The app does not configure the Midas console. It expects Dante to already exist:
   same activity/noise-floor/trim/fader/master candidates, but the audio path applies
   static role/scene targets plus manual overrides. The UI shows those candidates;
   autonomous stability proof explicitly turns SHADOW off.
+- Stream Mix reports the limiter's fixed latency and a one-way estimate including
+  Core Audio buffers, device-reported latency/safety offsets, and separate-output
+  prebuffering. Saved end-to-end audio/video measurements produce an explicit
+  encoder delay recommendation; use the procedure in
+  [`../docs/LATENCY_AND_LIPSYNC.md`](../docs/LATENCY_AND_LIPSYNC.md).
 - Scene selection feeds `BrainThread` scene targets and is saved in the venue profile.
 - Source-role edits update the running control thread and are applied to engine
   routing/automix config from the audio callback with no heap allocation or locks

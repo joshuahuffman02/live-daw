@@ -48,6 +48,34 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertFalse(AutoMixEngineBridge.isHD96TargetSampleRate(88_200.0))
     }
 
+    func testLatencyReportIncludesLimiterBuffersAndSeparateOutputPrebuffer() throws {
+        try bridge.startSimulated(
+            withChannelCount: 2,
+            sampleRate: 96_000,
+            bufferFrameSize: 256,
+            channelRoles: [ChannelRole.speech.rawValue, ChannelRole.bass.rawValue],
+            inputChannelIndices: [0, 1]
+        )
+        XCTAssertEqual(bridge.algorithmicLatencyFrames, 144)
+        XCTAssertEqual(bridge.algorithmicLatencyMs, 1.5, accuracy: 0.001)
+        XCTAssertEqual(bridge.inputHardwareLatencyFrames, 0)
+        XCTAssertEqual(bridge.outputHardwareLatencyFrames, 0)
+        XCTAssertEqual(bridge.separateOutputPrebufferFrames, 0)
+        XCTAssertEqual(bridge.estimatedOneWayLatencyMs, 6.833, accuracy: 0.01)
+
+        bridge.stop()
+        try bridge.startSimulatedSeparateOutput(
+            withChannelCount: 2,
+            sampleRate: 96_000,
+            inputBufferFrameSize: 256,
+            outputBufferFrameSize: 512,
+            channelRoles: [ChannelRole.speech.rawValue, ChannelRole.bass.rawValue],
+            inputChannelIndices: [0, 1]
+        )
+        XCTAssertEqual(bridge.separateOutputPrebufferFrames, 8_192)
+        XCTAssertEqual(bridge.estimatedOneWayLatencyMs, 94.833, accuracy: 0.01)
+    }
+
     func testBridgeOutputIsolationHelperMatchesHD96RouteSafety() {
         XCTAssertFalse(AutoMixEngineBridge.isLivestreamSafeOutputRoute(
             forInputName: "Dante Virtual Soundcard",
@@ -2032,6 +2060,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         let profile = try JSONDecoder().decode(VenueProfile.self, from: data)
         XCTAssertEqual(profile.expectedInputChannels, 64)
         XCTAssertTrue(profile.shadowMode)
+        XCTAssertEqual(profile.measuredEndToEndAudioLatencyMs, 0)
+        XCTAssertEqual(profile.measuredEndToEndVideoLatencyMs, 0)
         XCTAssertEqual(profile.channelMappings.first?.inputChannelIndex, 0)
         XCTAssertEqual(profile.channelMappings.first?.faderOverrideEnabled, false)
         XCTAssertEqual(profile.channelMappings.first?.panOverrideEnabled, false)
@@ -2042,6 +2072,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             inputDeviceUID: "input",
             outputDeviceUID: "output",
             shadowMode: false,
+            measuredEndToEndAudioLatencyMs: 37.5,
+            measuredEndToEndVideoLatencyMs: 55.0,
             expectedInputChannels: 64,
             channelMappings: [
                 ChannelMapping(
@@ -2069,6 +2101,27 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(decoded.channelMappings[0].panOverrideEnabled, true)
         XCTAssertEqual(decoded.channelMappings[0].pan, -0.35)
         XCTAssertFalse(decoded.shadowMode)
+        XCTAssertEqual(decoded.measuredEndToEndAudioLatencyMs, 37.5)
+        XCTAssertEqual(decoded.measuredEndToEndVideoLatencyMs, 55.0)
+    }
+
+    @MainActor
+    func testLipSyncRecommendationNamesThePathThatNeedsDelay() {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(profileDirectory: profileDirectory)
+        defer { model.debugStopPollingForTesting() }
+
+        XCTAssertTrue(model.lipSyncRecommendation.localizedCaseInsensitiveContains("measure"))
+        model.measuredEndToEndAudioLatencyMs = 20
+        model.measuredEndToEndVideoLatencyMs = 50
+        XCTAssertEqual(model.lipSyncRecommendation, "Delay audio 30.0 ms")
+
+        model.measuredEndToEndAudioLatencyMs = 70
+        XCTAssertEqual(model.lipSyncRecommendation, "Delay video 20.0 ms")
+
+        model.measuredEndToEndVideoLatencyMs = 70.5
+        XCTAssertEqual(model.lipSyncRecommendation, "Aligned within 1.0 ms")
     }
 
     func testVenueProfileNormalizesReadyChannelMapByMixerIndex() throws {

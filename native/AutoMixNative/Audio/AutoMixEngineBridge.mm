@@ -195,6 +195,11 @@ struct AMRealtimeAllocationGuard {
     NSInteger _inputChannelCount;
     NSInteger _outputChannelCount;
     NSInteger _bufferFrameSize;
+    NSInteger _inputBufferFramesForLatency;
+    NSInteger _outputBufferFramesForLatency;
+    NSInteger _inputHardwareLatencyFrames;
+    NSInteger _outputHardwareLatencyFrames;
+    NSInteger _separateOutputPrebufferFrames;
     double _sampleRate;
 
     std::vector<float> _recordBuffer;
@@ -211,6 +216,8 @@ struct AMRealtimeAllocationGuard {
 }
 - (BOOL)renderStateIsPreparedForFrames:(UInt32)frames channelCount:(int)chCount;
 - (void)clearOutputBufferList:(AudioBufferList *)output;
+- (NSInteger)latencyFramesForDevice:(AudioDeviceID)device
+                               scope:(AudioObjectPropertyScope)scope;
 @end
 
 @implementation AutoMixEngineBridge
@@ -268,6 +275,11 @@ struct AMRealtimeAllocationGuard {
         _inputChannelCount = 0;
         _outputChannelCount = 0;
         _bufferFrameSize = 0;
+        _inputBufferFramesForLatency = 0;
+        _outputBufferFramesForLatency = 0;
+        _inputHardwareLatencyFrames = 0;
+        _outputHardwareLatencyFrames = 0;
+        _separateOutputPrebufferFrames = 0;
         _sampleRate = 0;
         _recordFrameCapacity = 0;
         _recordFrameWrite = 0;
@@ -304,6 +316,26 @@ struct AMRealtimeAllocationGuard {
 - (double)sampleRate { return _sampleRate; }
 - (NSInteger)inputChannelCount { return _inputChannelCount; }
 - (NSInteger)bufferFrameSize { return _bufferFrameSize; }
+- (NSInteger)algorithmicLatencyFrames { return (NSInteger)_engine.algorithmicLatencyFrames(); }
+- (double)algorithmicLatencyMs {
+    return _sampleRate > 0
+        ? 1000.0 * (double)_engine.algorithmicLatencyFrames() / _sampleRate
+        : 0.0;
+}
+- (NSInteger)inputHardwareLatencyFrames { return _inputHardwareLatencyFrames; }
+- (NSInteger)outputHardwareLatencyFrames { return _outputHardwareLatencyFrames; }
+- (NSInteger)separateOutputPrebufferFrames { return _separateOutputPrebufferFrames; }
+- (double)estimatedOneWayLatencyMs {
+    if (_sampleRate <= 0) return 0.0;
+    const NSInteger frames =
+        (NSInteger)_engine.algorithmicLatencyFrames() +
+        _inputBufferFramesForLatency +
+        _outputBufferFramesForLatency +
+        _inputHardwareLatencyFrames +
+        _outputHardwareLatencyFrames +
+        _separateOutputPrebufferFrames;
+    return 1000.0 * (double)std::max<NSInteger>(0, frames) / _sampleRate;
+}
 - (NSUInteger)dropoutCount { return (NSUInteger)_dropoutCountAtomic.load(); }
 - (NSUInteger)callbackOverrunCount { return (NSUInteger)_callbackOverrunCountAtomic.load(); }
 - (NSUInteger)renderDeadlineMissCount { return (NSUInteger)_deadlineMissCountAtomic.load(); }
@@ -1013,6 +1045,13 @@ struct AMRealtimeAllocationGuard {
     _outputDeviceID = separateOutput ? outputDevice : kAudioObjectUnknown;
     _simulationMode = false;
     _separateOutputMode = separateOutput;
+    _inputBufferFramesForLatency = bufferFrames;
+    _outputBufferFramesForLatency = outputBufferFrames;
+    _inputHardwareLatencyFrames = [self latencyFramesForDevice:inputDevice
+                                                         scope:kAudioDevicePropertyScopeInput];
+    _outputHardwareLatencyFrames = [self latencyFramesForDevice:outputDevice
+                                                          scope:kAudioDevicePropertyScopeOutput];
+    _separateOutputPrebufferFrames = 0;
     [self resetRealtimeCounters];
     if (![self prepareEngineWithInputChannels:inputChannels
                                outputChannels:outputChannels
@@ -1109,6 +1148,11 @@ struct AMRealtimeAllocationGuard {
     const NSInteger channels = channelCount > 0 ? channelCount : 64;
     const double rate = sampleRate > 0 ? sampleRate : 96000.0;
     const NSInteger frames = bufferFrameSize > 0 ? bufferFrameSize : 256;
+    _inputBufferFramesForLatency = frames;
+    _outputBufferFramesForLatency = frames;
+    _inputHardwareLatencyFrames = 0;
+    _outputHardwareLatencyFrames = 0;
+    _separateOutputPrebufferFrames = 0;
 
     if (![self prepareEngineWithInputChannels:channels
                                outputChannels:2
@@ -1155,6 +1199,11 @@ struct AMRealtimeAllocationGuard {
     const double rate = sampleRate > 0 ? sampleRate : 96000.0;
     const NSInteger inputFrames = inputBufferFrameSize > 0 ? inputBufferFrameSize : 256;
     const NSInteger outputFrames = outputBufferFrameSize > 0 ? outputBufferFrameSize : inputFrames;
+    _inputBufferFramesForLatency = inputFrames;
+    _outputBufferFramesForLatency = outputFrames;
+    _inputHardwareLatencyFrames = 0;
+    _outputHardwareLatencyFrames = 0;
+    _separateOutputPrebufferFrames = 0;
 
     if (![self prepareEngineWithInputChannels:channels
                                outputChannels:2
@@ -1514,6 +1563,7 @@ struct AMRealtimeAllocationGuard {
     _outputRingR.assign((size_t)_outputRingFrameCapacity, 0.0f);
     const uint64_t prebuffer = std::min<uint64_t>(_outputRingFrameCapacity / 2u,
                                                   (uint64_t)std::max<NSInteger>(inputFrames, outputFrames) * 16u);
+    _separateOutputPrebufferFrames = (NSInteger)prebuffer;
     _outputRingReadFrameAtomic.store(0, std::memory_order_release);
     _outputRingWriteFrameAtomic.store(prebuffer, std::memory_order_release);
 }
@@ -2242,6 +2292,29 @@ static NSString *audioFormatSummary(const AudioStreamBasicDescription& format) {
     UInt32 size = sizeof(frames);
     if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &frames) != noErr) return 0;
     return frames;
+}
+
+- (NSInteger)latencyFramesForDevice:(AudioDeviceID)device
+                               scope:(AudioObjectPropertyScope)scope {
+    NSInteger total = 0;
+    const AudioObjectPropertySelector selectors[] = {
+        kAudioDevicePropertyLatency,
+        kAudioDevicePropertySafetyOffset
+    };
+    for (AudioObjectPropertySelector selector : selectors) {
+        AudioObjectPropertyAddress address = {
+            selector,
+            scope,
+            kAudioObjectPropertyElementMain
+        };
+        UInt32 frames = 0;
+        UInt32 size = sizeof(frames);
+        if (AudioObjectHasProperty(device, &address) &&
+            AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &frames) == noErr) {
+            total += (NSInteger)frames;
+        }
+    }
+    return total;
 }
 
 - (BOOL)streamFormatSupportedForDevice:(AudioDeviceID)device

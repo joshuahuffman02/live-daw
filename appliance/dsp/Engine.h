@@ -124,6 +124,7 @@ public:
     float momentaryLufs() const { return loud_.momentary(); }
     float shortTermLufs() const { return loud_.shortTerm(); }
     bool shortTermLoudnessReady() const { return loud_.shortTermReady(); }
+    int algorithmicLatencyFrames() const { return lim_.latencySamples(); }
     float integratedLufs() const { return loud_.integrated(); }
     float limiterGrDb() const { return lim_.gainReductionDb(); }
     float channelGrDb(int i) const { return strips_[i].compGainReductionDb(); }
