@@ -44,7 +44,9 @@ Per-sample DSP, no allocation/locking/ML in the hot path, all params ramped:
   It consumes atomically published input/post-strip levels for activity detection,
   idle-only noise-floor learning, bounded gain staging, adaptive gate thresholds,
   conservative per-scene level riding, expanded worship-source profiles, and
-  conservative shared targets for adjacent stereo pairs. A separate master
+  conservative shared targets for adjacent stereo pairs. Saved, operator-confirmed
+  venue roles remain authoritative throughout a service; any future classifier is a
+  soundcheck suggestion tool, not a live relabeling authority. A separate master
   measurement closes a slow, limiter-aware loudness loop after a full short-term
   window. It includes the watchdog that drops to the SAFE mix if the brain stalls.
   The **integration points** for any future classifier, spectral auto-EQ, and

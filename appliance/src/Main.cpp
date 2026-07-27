@@ -89,8 +89,9 @@ private:
 int main() {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    // Soundcheck channel assignment. In the product this comes from the classifier
-    // (confirmed by the operator) and the Planning Center plan drives the scene.
+    // Example soundcheck assignment. The production app loads operator-confirmed
+    // roles from the venue profile; a classifier may suggest them at soundcheck but
+    // is never authoritative during a live service.
     using C = app::Cls;
     std::vector<C> stage = {C::Speech, C::Speech, C::LeadVocal, C::Bgv,
                             C::Acoustic, C::Electric, C::Bass, C::Kick, C::Keys};

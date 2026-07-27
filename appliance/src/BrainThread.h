@@ -3,10 +3,12 @@
 // audio thread through an atomic mailbox so the audio callback NEVER blocks or locks. A
 // watchdog drops the engine to the SAFE mix if the brain stalls.
 //
-// The native control loop combines per-class profiles and scene offsets with live
-// channel measurements for gain staging/gating/riding and a slow master loudness
-// correction. Future classifier, spectral auto-EQ, and cross-channel masking stages
-// plug in at the marked integration points.
+// The native control loop combines operator-confirmed venue roles and scene offsets
+// with live channel measurements for gain staging/gating/riding and a slow master
+// loudness correction. Roles deliberately come from the saved patch: a classifier
+// may suggest changes at soundcheck but must never relabel a live channel without
+// confirmation. Optional spectral auto-EQ and masking stages plug in at the marked
+// integration points.
 #pragma once
 #include "Engine.h"
 #include "BeatTracker.h"
@@ -41,8 +43,8 @@ enum class Cls {
 enum class Scene { PreService, Worship, Sermon, Prayer, PostService };
 
 // ---- integration point: channel classifier -------------------------------
-// In the appliance this is backed by a small int8 CNN (ONNX Runtime / Core ML)
-// running on log-mel spectrograms. Here it's an interface with a pass-through stub.
+// Optional soundcheck assistant. A future small model may implement this interface,
+// but the live engine consumes only confirmed venue-profile roles.
 struct IClassifier {
     virtual ~IClassifier() = default;
     // given a channel's recent audio block, return (class, confidence)
@@ -756,8 +758,9 @@ private:
         }
 
         for (int i = 0; i < numCh; ++i) {
-            // INTEGRATION POINT: classifier label would arrive here (ONNX). For the
-            // skeleton we use the soundcheck-assigned class.
+            // The confirmed venue-profile role is authoritative during a service.
+            // A soundcheck classifier may propose this value before the run, but it
+            // never relabels a live channel from this control loop.
             const Cls c = classes[(size_t)i];
             const SourceProfile p = profileFor(c);
             bdsp::ChannelParams cp;
