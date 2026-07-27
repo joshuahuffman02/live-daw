@@ -1117,7 +1117,7 @@ struct AutoMixNativeApp: App {
         )
         let scene = sceneArgument() ?? profile?.scene ?? .worship
         let soundcheckSeconds = min(max(doubleArgument("--soundcheck-seconds") ?? 10.0, 1.0), 30.0)
-        let stabilitySeconds = min(max(doubleArgument("--stability-seconds") ?? 300.0, 30.0), 1_800.0)
+        let stabilitySeconds = min(max(doubleArgument("--stability-seconds") ?? 300.0, 30.0), 14_400.0)
         let outputDirectory = try validationOutputDirectory()
 
         return CoreAudioValidationOptions(

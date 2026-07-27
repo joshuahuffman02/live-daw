@@ -2172,6 +2172,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
 
         let profile = try JSONDecoder().decode(VenueProfile.self, from: data)
         XCTAssertEqual(profile.expectedInputChannels, 64)
+        XCTAssertEqual(profile.expectedSampleRate, 96_000)
         XCTAssertTrue(profile.shadowMode)
         XCTAssertEqual(profile.measuredEndToEndAudioLatencyMs, 0)
         XCTAssertEqual(profile.measuredEndToEndVideoLatencyMs, 0)
@@ -2241,6 +2242,22 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
 
         model.measuredEndToEndVideoLatencyMs = 70.5
         XCTAssertEqual(model.lipSyncRecommendation, "Aligned within 1.0 ms")
+    }
+
+    @MainActor
+    func testStabilityMonitorSupportsFourHourHardwareProofWindow() {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(profileDirectory: profileDirectory, autoStartRemoteMonitoring: false)
+        defer {
+            model.debugStopPollingForTesting()
+            try? FileManager.default.removeItem(at: profileDirectory)
+        }
+
+        model.stabilityMonitorDurationSeconds = 20_000
+        XCTAssertEqual(model.stabilityMonitorDurationSeconds, 14_400)
+        model.stabilityMonitorDurationSeconds = 1
+        XCTAssertEqual(model.stabilityMonitorDurationSeconds, 30)
     }
 
     @MainActor

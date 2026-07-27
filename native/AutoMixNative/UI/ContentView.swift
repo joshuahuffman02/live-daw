@@ -413,7 +413,7 @@ private struct DeviceControlPanel: View {
 
                 GroupBox("Stability Monitor") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Stepper(value: $model.stabilityMonitorDurationSeconds, in: 30...1_800, step: 30) {
+                        Stepper(value: $model.stabilityMonitorDurationSeconds, in: 30...14_400, step: 300) {
                             Text("Duration \(formatDuration(model.stabilityMonitorDurationSeconds))")
                         }
                         .font(.caption)

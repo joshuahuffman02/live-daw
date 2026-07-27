@@ -191,6 +191,9 @@ Current native milestone:
   provide fresh-payload verification to the desktop and remote alert path, with the
   crash-relaunch/session-resume procedure documented in
   [`docs/RUNTIME_RESILIENCE.md`](docs/RUNTIME_RESILIENCE.md);
+- supports a gated sermon-first then worship hardware rollout with multi-hour
+  stability windows, manifest verification, and named human acceptance before the
+  worship proof; see [`docs/STAGED_ROLLOUT.md`](docs/STAGED_ROLLOUT.md);
 - enforces SAFE bypass directly from the audio callback so the next render enters the
   curated role-aware raw-input mix even while FREEZE is holding control-thread
   targets; the fallback gives speech priority, attenuates instruments/unknown patch

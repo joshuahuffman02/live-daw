@@ -416,6 +416,10 @@ The app does not configure the Midas console. It expects Dante to already exist:
   treating a generic HTTP 200 as proof. See
   [`../docs/RUNTIME_RESILIENCE.md`](../docs/RUNTIME_RESILIENCE.md) for the LaunchAgent,
   session-resume contract, and kill-test procedure.
+- Hardware rollout is gated sermon-first, then worship only after a verified real
+  sermon manifest and named operator acceptance. Stability proof supports up to four
+  hours; the evidence runner and acceptance criteria are in
+  [`../docs/STAGED_ROLLOUT.md`](../docs/STAGED_ROLLOUT.md).
 - The Soundcheck controls expose each phase explicitly: recording frames, saving the
   WAV file, then analyzing the saved payload for the report.
 - Stability Monitor runs a longer non-recording validation from the control side and

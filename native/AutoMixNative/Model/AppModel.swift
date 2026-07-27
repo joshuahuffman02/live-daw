@@ -47,7 +47,7 @@ final class AppModel: ObservableObject {
             saveProfile()
         }
     }
-    @Published var expectedSampleRate: Double = 48000 {
+    @Published var expectedSampleRate: Double = 96000 {
         didSet {
             let clamped = BroadcastSampleRate.nearestSupported(expectedSampleRate)
             if expectedSampleRate != clamped {
@@ -154,7 +154,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var egressHealth: StreamEndpointHealth = .disabled
     @Published var stabilityMonitorDurationSeconds = 300.0 {
         didSet {
-            let clamped = min(max(stabilityMonitorDurationSeconds, 30.0), 1_800.0)
+            let clamped = min(max(stabilityMonitorDurationSeconds, 30.0), 14_400.0)
             if stabilityMonitorDurationSeconds != clamped {
                 stabilityMonitorDurationSeconds = clamped
             }
@@ -771,7 +771,7 @@ final class AppModel: ObservableObject {
             return
         }
         prepareAutonomousStabilityProofMode()
-        let duration = min(max(seconds ?? stabilityMonitorDurationSeconds, 30.0), 1_800.0)
+        let duration = min(max(seconds ?? stabilityMonitorDurationSeconds, 30.0), 14_400.0)
         stabilityMonitorDurationSeconds = duration
         let now = Date()
         stabilityStartedAt = nil

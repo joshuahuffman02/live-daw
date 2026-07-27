@@ -466,7 +466,7 @@ struct VenueProfile: Codable, Sendable {
     var expectedSampleRate: Double
     var channelMappings: [ChannelMapping]
 
-    init(inputDeviceUID: String, outputDeviceUID: String, scene: MixScene = .worship, shadowMode: Bool = true, measuredEndToEndAudioLatencyMs: Double = 0, measuredEndToEndVideoLatencyMs: Double = 0, encoderHealthURL: String = "", egressHealthURL: String = "", expectedInputChannels: Int = 64, expectedSampleRate: Double = 48000, channelMappings: [ChannelMapping]) {
+    init(inputDeviceUID: String, outputDeviceUID: String, scene: MixScene = .worship, shadowMode: Bool = true, measuredEndToEndAudioLatencyMs: Double = 0, measuredEndToEndVideoLatencyMs: Double = 0, encoderHealthURL: String = "", egressHealthURL: String = "", expectedInputChannels: Int = 64, expectedSampleRate: Double = 96000, channelMappings: [ChannelMapping]) {
         self.inputDeviceUID = inputDeviceUID
         self.outputDeviceUID = outputDeviceUID
         self.scene = scene
@@ -516,7 +516,7 @@ struct VenueProfile: Codable, Sendable {
         encoderHealthURL = try container.decodeIfPresent(String.self, forKey: .encoderHealthURL) ?? ""
         egressHealthURL = try container.decodeIfPresent(String.self, forKey: .egressHealthURL) ?? ""
         expectedInputChannels = min(max(try container.decodeIfPresent(Int.self, forKey: .expectedInputChannels) ?? 64, 1), 64)
-        expectedSampleRate = BroadcastSampleRate.nearestSupported(try container.decodeIfPresent(Double.self, forKey: .expectedSampleRate) ?? 48000)
+        expectedSampleRate = BroadcastSampleRate.nearestSupported(try container.decodeIfPresent(Double.self, forKey: .expectedSampleRate) ?? 96000)
         let decodedMappings = try container.decode([ChannelMapping].self, forKey: .channelMappings)
         channelMappings = Self.normalizedChannelMappingsIfReady(
             decodedMappings,
