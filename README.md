@@ -152,6 +152,10 @@ Current native milestone:
 - ramps automatic scene and level changes instead of stepping them, with a full
   sermon-scene move settling in roughly 1–2 seconds and persisted manual overrides
   retaining final authority;
+- defaults the operator app to SHADOW mode: the native brain continues learning and
+  exposes per-channel activity/noise-floor/trim/fader plus master-loudness
+  candidates, while the audible path holds static role/scene settings and manual
+  overrides; autonomous stability proof explicitly disables SHADOW;
 - closes the native master loudness loop only after a complete three-second
   short-term measurement: correction is bounded to ±6 dB, moves no faster than
   1 dB/second, ignores silence, holds during FREEZE/SAFE, and backs away instead of

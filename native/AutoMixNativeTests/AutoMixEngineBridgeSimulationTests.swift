@@ -982,6 +982,27 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertFalse(bridge.watchdogSafeActive)
     }
 
+    func testShadowModeStatePersistsAcrossNativeBridgeStart() throws {
+        XCTAssertFalse(bridge.shadowModeEnabled)
+        bridge.setShadowMode(true)
+        XCTAssertTrue(bridge.shadowModeEnabled)
+
+        try bridge.startSimulated(
+            withChannelCount: 1,
+            sampleRate: 96_000,
+            bufferFrameSize: 256,
+            channelRoles: [ChannelRole.speech.rawValue],
+            inputChannelIndices: [0]
+        )
+        XCTAssertTrue(waitUntil(timeout: 2.0) {
+            self.bridge.lastCallbackFrameCount == 256
+        })
+        XCTAssertTrue(bridge.shadowModeEnabled)
+
+        bridge.setShadowMode(false)
+        XCTAssertFalse(bridge.shadowModeEnabled)
+    }
+
     #if DEBUG
     func testSafeBypassAppliesOnNextRenderWhileBrainIsFrozen() throws {
         try bridge.startSimulated(
@@ -1128,14 +1149,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             self.bridge.lastCallbackFrameCount == 256
         })
 
-        _ = bridge.debugRenderCoreAudioMonoOutputBuffers(
+        let levels = bridge.debugRenderCoreAudioInputLevels(
             withFrameCount: 256,
-            outputBufferCount: 2,
-            activeInputChannel: 2,
-            warmupBlocks: 0
-        )
-
-        let levels = bridge.inputLevelsDb().map(\.doubleValue)
+            activeInputChannel: 2
+        ).map(\.doubleValue)
         XCTAssertEqual(levels.count, 4)
         XCTAssertGreaterThan(levels[0], -30.0)
         XCTAssertLessThan(levels[1], -90.0)
@@ -2014,6 +2031,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
 
         let profile = try JSONDecoder().decode(VenueProfile.self, from: data)
         XCTAssertEqual(profile.expectedInputChannels, 64)
+        XCTAssertTrue(profile.shadowMode)
         XCTAssertEqual(profile.channelMappings.first?.inputChannelIndex, 0)
         XCTAssertEqual(profile.channelMappings.first?.faderOverrideEnabled, false)
         XCTAssertEqual(profile.channelMappings.first?.panOverrideEnabled, false)
@@ -2023,6 +2041,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         let profile = VenueProfile(
             inputDeviceUID: "input",
             outputDeviceUID: "output",
+            shadowMode: false,
             expectedInputChannels: 64,
             channelMappings: [
                 ChannelMapping(
@@ -2049,6 +2068,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(decoded.channelMappings[0].faderDb, -11.5)
         XCTAssertEqual(decoded.channelMappings[0].panOverrideEnabled, true)
         XCTAssertEqual(decoded.channelMappings[0].pan, -0.35)
+        XCTAssertFalse(decoded.shadowMode)
     }
 
     func testVenueProfileNormalizesReadyChannelMapByMixerIndex() throws {
@@ -2256,7 +2276,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
     }
 
     @MainActor
-    func testStabilityProofModeDisablesSafeAndFreeze() throws {
+    func testStabilityProofModeDisablesSafeFreezeAndShadow() throws {
         let profileDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let model = AppModel(profileDirectory: profileDirectory)
@@ -2264,11 +2284,13 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
 
         model.safeBypass = true
         model.frozen = true
+        model.shadowMode = true
 
         model.debugPrepareAutonomousStabilityProofModeForTesting()
 
         XCTAssertFalse(model.safeBypass)
         XCTAssertFalse(model.frozen)
+        XCTAssertFalse(model.shadowMode)
     }
 
     @MainActor
@@ -2300,6 +2322,15 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertTrue(model.statusText.localizedCaseInsensitiveContains("FREEZE"))
         XCTAssertNil(model.finishedFullCheckManifestURL)
         XCTAssertNil(model.lastFullCheckVerification)
+
+        model.frozen = false
+        model.debugActivateStabilityMonitorForInvalidationProbe()
+        XCTAssertTrue(model.stabilityMonitorActive)
+
+        model.shadowMode.toggle()
+
+        XCTAssertFalse(model.stabilityMonitorActive)
+        XCTAssertTrue(model.statusText.localizedCaseInsensitiveContains("SHADOW"))
     }
 
     func testSourceRoleCoverageRequiresAtLeastOneAssignedRole() {

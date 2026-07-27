@@ -175,6 +175,7 @@ struct AMRealtimeAllocationGuard {
     std::atomic<bool> _runningAtomic;
     std::atomic<bool> _safeBypassAtomic;
     std::atomic<bool> _frozenAtomic;
+    std::atomic<bool> _shadowModeAtomic;
     std::atomic<bool> _recordingAtomic;
     std::atomic<bool> _recordReadyToWrite;
     std::atomic<bool> _recordWriteScheduledAtomic;
@@ -247,6 +248,7 @@ struct AMRealtimeAllocationGuard {
         _runningAtomic.store(false);
         _safeBypassAtomic.store(false);
         _frozenAtomic.store(false);
+        _shadowModeAtomic.store(false);
         _recordingAtomic.store(false);
         _recordReadyToWrite.store(false);
         _recordWriteScheduledAtomic.store(false);
@@ -317,6 +319,7 @@ struct AMRealtimeAllocationGuard {
 - (double)currentBpm { return _brainStarted ? (double)_brain.currentBpm() : 0.0; }
 - (double)currentBpmConfidence { return _brainStarted ? (double)_brain.currentBpmConfidence() : 0.0; }
 - (double)autoLoudnessTrimDb { return (double)_brain.currentAutoLoudnessTrimDb(); }
+- (BOOL)shadowModeEnabled { return _shadowModeAtomic.load(std::memory_order_relaxed); }
 - (double)autoTrimDbForChannel:(NSInteger)channel {
     return (double)_brain.currentAutoTrimDb((int)channel);
 }
@@ -662,6 +665,47 @@ struct AMRealtimeAllocationGuard {
         [result addObject:buffer];
     }
     return result;
+}
+
+- (NSArray<NSNumber *> *)debugRenderCoreAudioInputLevelsWithFrameCount:(NSUInteger)frameCount
+                                                    activeInputChannel:(NSInteger)activeInputChannel {
+    if (!_runningAtomic.load(std::memory_order_acquire) || !_audioQueue) return @[];
+
+    const UInt32 safeFrames = (UInt32)std::max<NSUInteger>(
+        1,
+        std::min<NSUInteger>(frameCount, (NSUInteger)std::max<NSInteger>(1, _bufferFrameSize))
+    );
+    const int channelCount = (int)std::max<NSInteger>(1, _inputChannelCount);
+    if (activeInputChannel < 0 || activeInputChannel >= channelCount) return @[];
+
+    const double sampleRate = _sampleRate > 0 ? _sampleRate : 96000.0;
+    const double twoPi = 6.28318530717958647692;
+    const size_t inputListBytes = offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer);
+    std::vector<uint8_t> inputListStorage(inputListBytes, 0);
+    std::vector<float> inputSamples((size_t)safeFrames * (size_t)channelCount, 0.0f);
+    for (UInt32 frame = 0; frame < safeFrames; ++frame) {
+        const double t = (double)frame / sampleRate;
+        inputSamples[(size_t)frame * (size_t)channelCount + (size_t)activeInputChannel] =
+            0.2f * (float)std::sin(twoPi * 1000.0 * t);
+    }
+
+    AudioBufferList *inputList = (AudioBufferList *)inputListStorage.data();
+    inputList->mNumberBuffers = 1;
+    inputList->mBuffers[0].mNumberChannels = (UInt32)channelCount;
+    inputList->mBuffers[0].mDataByteSize = (UInt32)(inputSamples.size() * sizeof(float));
+    inputList->mBuffers[0].mData = inputSamples.data();
+
+    __block std::vector<float> captured((size_t)channelCount, -100.0f);
+    dispatch_sync(_audioQueue, ^{
+        [self renderInput:inputList output:nullptr frames:safeFrames];
+        for (int channel = 0; channel < channelCount; ++channel) {
+            captured[(size_t)channel] = _meterDb[(size_t)channel].load(std::memory_order_relaxed);
+        }
+    });
+
+    NSMutableArray<NSNumber *> *levels = [NSMutableArray arrayWithCapacity:(NSUInteger)channelCount];
+    for (float level : captured) [levels addObject:@(level)];
+    return levels;
 }
 
 - (NSArray<NSArray<NSNumber *> *> *)debugRenderSeparateCoreAudioInterleavedOutputChannelsWithFrameCount:(NSUInteger)frameCount
@@ -1212,6 +1256,11 @@ struct AMRealtimeAllocationGuard {
 - (void)setFrozen:(BOOL)enabled {
     _frozenAtomic.store(enabled);
     _brain.setFrozen(enabled);
+}
+
+- (void)setShadowMode:(BOOL)enabled {
+    _shadowModeAtomic.store(enabled, std::memory_order_relaxed);
+    _brain.setShadowMode(enabled);
 }
 
 - (void)setSceneName:(NSString *)sceneName {
@@ -1826,6 +1875,7 @@ struct AMRealtimeAllocationGuard {
         _brain.setScene(_scene);
         _brain.setOperatorBypass(_safeBypassAtomic.load());
         _brain.setFrozen(_frozenAtomic.load());
+        _brain.setShadowMode(_shadowModeAtomic.load(std::memory_order_relaxed));
         _brain.setOnsetSource(&_engine);
         _brain.start();
         _brainStarted = true;

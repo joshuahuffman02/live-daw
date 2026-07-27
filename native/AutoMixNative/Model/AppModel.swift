@@ -72,6 +72,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var limiterGainReductionDb = 0.0
     @Published private(set) var bpm = 0.0
     @Published private(set) var bpmConfidence = 0.0
+    @Published private(set) var autoLoudnessTrimDb = 0.0
+    @Published private(set) var autoTrimDb: [Double] = Array(repeating: 0.0, count: 32)
+    @Published private(set) var autoFaderDb: [Double] = Array(repeating: -6.0, count: 32)
+    @Published private(set) var learnedNoiseFloorDb: [Double] = Array(repeating: -60.0, count: 32)
+    @Published private(set) var autoChannelActive: [Bool] = Array(repeating: false, count: 32)
     @Published private(set) var audioInputPermission: AudioInputPermissionState = .unknown
     @Published private(set) var statusText = "Idle"
     @Published private(set) var lastError: String?
@@ -133,6 +138,16 @@ final class AppModel: ObservableObject {
             engine.setFrozen(frozen)
             if oldValue != frozen {
                 cancelActiveStabilityMonitorForProofControlChange("FREEZE")
+            }
+        }
+    }
+    @Published var shadowMode = true {
+        didSet {
+            engine.setShadowMode(shadowMode)
+            if oldValue != shadowMode {
+                cancelActiveStabilityMonitorForProofControlChange("SHADOW")
+                invalidateValidationEvidence()
+                saveProfile()
             }
         }
     }
@@ -423,6 +438,7 @@ final class AppModel: ObservableObject {
             engine.setSceneName(selectedScene.rawValue)
             engine.setSafeBypass(safeBypass)
             engine.setFrozen(frozen)
+            engine.setShadowMode(shadowMode)
             applyAllManualOverrides()
             statusText = engine.status
         } catch {
@@ -720,6 +736,7 @@ final class AppModel: ObservableObject {
         update(\.limiterGainReductionDb, engine.limiterGainReductionDb)
         update(\.bpm, engine.currentBpm)
         update(\.bpmConfidence, engine.currentBpmConfidence)
+        update(\.autoLoudnessTrimDb, engine.autoLoudnessTrimDb)
         update(\.recordingSaveInProgress, engine.recordingSaveInProgress)
         update(\.recordedFrameCount, engine.recordedFrameCount)
         update(\.recordingTargetFrameCount, engine.recordingTargetFrameCount)
@@ -730,6 +747,15 @@ final class AppModel: ObservableObject {
             levels.append(contentsOf: Array(repeating: -100.0, count: channelMappings.count - levels.count))
         }
         update(\.levelsDb, levels)
+        let automationChannels = channelMappings.indices
+        update(\.autoTrimDb, automationChannels.map { engine.autoTrimDb(forChannel: $0) })
+        update(\.autoFaderDb, automationChannels.map { engine.autoFaderDb(forChannel: $0) })
+        update(\.learnedNoiseFloorDb, automationChannels.map {
+            engine.learnedNoiseFloorDb(forChannel: $0)
+        })
+        update(\.autoChannelActive, automationChannels.map {
+            engine.autoChannelActive(forChannel: $0)
+        })
 
         var streamLevels = engine.outputLevelsDb().map { $0.doubleValue }
         if streamLevels.count < 2 {
@@ -817,6 +843,7 @@ final class AppModel: ObservableObject {
         selectedInputUID = profile.inputDeviceUID
         selectedOutputUID = profile.outputDeviceUID
         selectedScene = profile.scene
+        shadowMode = profile.shadowMode
         expectedInputChannels = profile.expectedInputChannels
         expectedSampleRate = profile.expectedSampleRate
         channelMappings = profile.channelMappings.isEmpty ? ChannelMapping.defaults(count: 32) : profile.channelMappings
@@ -829,6 +856,7 @@ final class AppModel: ObservableObject {
             inputDeviceUID: selectedInputUID,
             outputDeviceUID: selectedOutputUID,
             scene: selectedScene,
+            shadowMode: shadowMode,
             expectedInputChannels: expectedInputChannels,
             expectedSampleRate: expectedSampleRate,
             channelMappings: channelMappings
@@ -1066,6 +1094,9 @@ final class AppModel: ObservableObject {
         }
         if frozen {
             frozen = false
+        }
+        if shadowMode {
+            shadowMode = false
         }
     }
 

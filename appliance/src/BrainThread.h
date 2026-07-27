@@ -334,7 +334,9 @@ public:
     }
     void setScene(Scene s) { scene_.store((int)s); }
     void setFrozen(bool f) { frozen_.store(f); }
+    void setShadowMode(bool enabled) { shadowMode_.store(enabled); }
     void setOperatorBypass(bool b) { opBypass_.store(b); }
+    bool shadowMode() const { return shadowMode_.load(std::memory_order_relaxed); }
     bool watchdogBypassActive() const { return watchdogBypass_.load(std::memory_order_relaxed); }
 
     // Wire the engine whose onset features this brain tracks. Call after the engine is
@@ -633,11 +635,12 @@ private:
 
     void computeTargets(EngineSnapshot& s) {
         const Scene scene = (Scene)scene_.load();
+        const bool shadow = shadowMode_.load(std::memory_order_relaxed);
         s.bypass = opBypass_.load();
         s.master.targetLufs = sceneTargetLufs(scene);
         s.master.ceilingDbTP = -1.0f;
         if (!s.bypass) updateMasterLoudnessState(s.master.targetLufs);
-        s.master.loudnessTrimDb = autoLoudnessTrimDb_;
+        s.master.loudnessTrimDb = shadow ? 0.0f : autoLoudnessTrimDb_;
 
         // Production FX targets (conservative): a clean room reverb on every scene, and
         // a tempo-synced eighth-note vocal delay only in Worship. Delay time locks to the
@@ -723,8 +726,22 @@ private:
             autoFaderDb_[(size_t)i] = approach(autoFaderDb_[(size_t)i], faderTarget, 0.5f);
             cp.faderDb = autoFaderDb_[(size_t)i];
             cp.reverbSendDb = (scene == Scene::Worship && p.bus == bdsp::BusId::Vocals) ? -9.0f : -60.0f;
-            applyManual(cp, manual[(size_t)i], masks[(size_t)i]);
-            s.ch[i] = cp;
+
+            bdsp::ChannelParams applied = cp;
+            if (shadow) {
+                // Keep the deterministic role/scene mix audible while calculating
+                // candidate automation in parallel. Only measurement-driven trim,
+                // adaptive gate threshold, level correction, and master trim are
+                // withheld; operator manual overrides still have final authority.
+                applied.trimDb = 0.0f;
+                applied.gateThreshDb = std::max(
+                    -60.0f,
+                    std::min(-15.0f, -60.0f + p.gateOffsetDb)
+                );
+                applied.faderDb = std::max(-80.0f, std::min(12.0f, sceneFader));
+            }
+            applyManual(applied, manual[(size_t)i], masks[(size_t)i]);
+            s.ch[i] = applied;
             autoFaderPublished_[(size_t)i].store(autoFaderDb_[(size_t)i], std::memory_order_relaxed);
         }
     }
@@ -761,7 +778,8 @@ private:
     double fs_ = bdsp::kDefaultSampleRate;
     std::array<Cls, EngineSnapshot::kMaxCh> classes_{};
     std::thread th_;
-    std::atomic<bool> running_{false}, frozen_{false}, opBypass_{false}, watchdogBypass_{false};
+    std::atomic<bool> running_{false}, frozen_{false}, shadowMode_{false},
+        opBypass_{false}, watchdogBypass_{false};
     std::atomic<int> scene_{(int)Scene::PreService};
     std::atomic<int64_t> lastTickMs_{0};
     std::atomic<uint64_t> publishSeq_{0};

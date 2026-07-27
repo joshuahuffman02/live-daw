@@ -581,6 +581,74 @@ static void testBrainMasterLoudnessControl() {
           "heavy limiter activity makes the loudness controller back away");
 }
 
+static double renderBrainShadowMode(
+    bool shadowMode,
+    float& candidateTrimDb,
+    float& candidateFaderDb,
+    float& candidateMasterTrimDb
+) {
+    const int frames = 256;
+    const double sampleRate = 96000.0;
+    Engine engine;
+    engine.prepare(sampleRate, frames, 1);
+    const auto profile = app::profileFor(app::Cls::Speech);
+    engine.setChannelConfig(0, profile.bus, profile.isSpeech);
+
+    app::BrainThread brain;
+    brain.configure(1, sampleRate, {app::Cls::Speech});
+    brain.setScene(app::Scene::Worship);
+    brain.setShadowMode(shadowMode);
+    for (int tick = 0; tick < 24; ++tick) {
+        brain.pushChannelMeasurement(0, -38.0f, -28.0f, -44.0f);
+        brain.pushMasterMeasurement(-24.0f, -24.0f, 0.0f, true);
+        brain.runOneOfflineControlTick();
+        brain.applyOfflineTo(engine);
+    }
+    candidateTrimDb = brain.currentAutoTrimDb(0);
+    candidateFaderDb = brain.currentAutoFaderDb(0);
+    candidateMasterTrimDb = brain.currentAutoLoudnessTrimDb();
+
+    std::vector<float> input(frames), outL(frames), outR(frames);
+    std::vector<const float*> inputs{input.data()};
+    double phase = 0.0;
+    const double increment = 2.0 * M_PI * 1000.0 / sampleRate;
+    for (int block = 0; block < 180; ++block) {
+        for (int sample = 0; sample < frames; ++sample) {
+            input[(size_t)sample] = 0.003f * (float)std::sin(phase);
+            phase += increment;
+        }
+        engine.process(inputs.data(), 1, outL.data(), outR.data(), frames);
+    }
+    return rms(outL, frames / 2);
+}
+
+static void testBrainShadowMode() {
+    std::printf("BrainThread (shadow mode computes without applying automation)\n");
+    float shadowTrim = 0.0f, shadowFader = 0.0f, shadowMaster = 0.0f;
+    float liveTrim = 0.0f, liveFader = 0.0f, liveMaster = 0.0f;
+    const double shadowOutput = renderBrainShadowMode(
+        true,
+        shadowTrim,
+        shadowFader,
+        shadowMaster
+    );
+    const double liveOutput = renderBrainShadowMode(
+        false,
+        liveTrim,
+        liveFader,
+        liveMaster
+    );
+
+    CHECK(shadowTrim >= 5.0f && shadowMaster >= 1.0f,
+          "shadow mode still computes measurable channel and master candidates");
+    CHECK(std::fabs(shadowTrim - liveTrim) < 0.01f &&
+          std::fabs(shadowFader - liveFader) < 0.01f &&
+          std::fabs(shadowMaster - liveMaster) < 0.01f,
+          "shadow and enabled modes make the same candidate decisions");
+    CHECK(liveOutput > shadowOutput * 1.5,
+          "shadow mode withholds candidate gain from the rendered program");
+}
+
 static std::pair<double, double> renderBrainTone(bool manualOverride) {
     const int frames = 256;
     const double fs = 96000.0;
@@ -881,6 +949,7 @@ int main() {
     testBrainThreadManualOverrideBehavior();
     testBrainMeasurementDrivenGainStaging();
     testBrainMasterLoudnessControl();
+    testBrainShadowMode();
     testBeatTracker();
     testOnsetDetector();
     testOnsetFeedsBeatTracker();

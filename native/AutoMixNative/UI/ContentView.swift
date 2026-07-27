@@ -57,6 +57,12 @@ private struct StatusStrip: View {
             }
             .toggleStyle(.switch)
 
+            Toggle(isOn: $model.shadowMode) {
+                Label("SHADOW", systemImage: "eye")
+            }
+            .toggleStyle(.switch)
+            .help("Compute automation candidates without applying measurement-driven gain, gate, level, or master-loudness moves.")
+
             Toggle(isOn: $model.rehearsalMode) {
                 Label("Rehearsal", systemImage: "figure.run")
             }
@@ -195,6 +201,15 @@ private struct DeviceControlPanel: View {
                         StatusRow(label: "Output Underruns", value: "\(model.outputUnderrunCount)", warning: model.outputUnderrunCount > 0)
                         StatusRow(label: "Output Overruns", value: "\(model.outputOverrunCount)", warning: model.outputOverrunCount > 0)
                         StatusRow(label: "Watchdog SAFE", value: model.watchdogSafeActive ? "active" : "inactive", warning: model.watchdogSafeActive)
+                        StatusRow(
+                            label: "Automation",
+                            value: model.shadowMode ? "shadow (candidates only)" : "enabled",
+                            warning: model.shadowMode
+                        )
+                        StatusRow(
+                            label: "Master Candidate",
+                            value: String(format: "%+.1f dB", model.autoLoudnessTrimDb)
+                        )
                         if let error = model.lastError {
                             Label(error, systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption)
@@ -620,6 +635,11 @@ private struct ChannelMappingPanel: View {
                             channel: $channel,
                             inputChannelLimit: inputChannelLimit,
                             levelDb: model.levelsDb.indices.contains(channel.index) ? model.levelsDb[channel.index] : -100.0,
+                            autoTrimDb: model.autoTrimDb.indices.contains(channel.index) ? model.autoTrimDb[channel.index] : 0.0,
+                            autoFaderDb: model.autoFaderDb.indices.contains(channel.index) ? model.autoFaderDb[channel.index] : -6.0,
+                            noiseFloorDb: model.learnedNoiseFloorDb.indices.contains(channel.index) ? model.learnedNoiseFloorDb[channel.index] : -60.0,
+                            autoActive: model.autoChannelActive.indices.contains(channel.index) ? model.autoChannelActive[channel.index] : false,
+                            shadowMode: model.shadowMode,
                             isExpanded: expandedIndex == channel.index,
                             onToggleExpand: {
                                 expandedIndex = (expandedIndex == channel.index) ? nil : channel.index
@@ -662,6 +682,11 @@ private struct ChannelRow: View {
     @Binding var channel: ChannelMapping
     let inputChannelLimit: Int
     let levelDb: Double
+    let autoTrimDb: Double
+    let autoFaderDb: Double
+    let noiseFloorDb: Double
+    let autoActive: Bool
+    let shadowMode: Bool
     let isExpanded: Bool
     let onToggleExpand: () -> Void
 
@@ -734,6 +759,17 @@ private struct ChannelRow: View {
                 .labelsHidden()
                 .frame(width: 160)
             }
+            HStack(spacing: 12) {
+                Text(shadowMode ? "Candidate" : "Automation")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(shadowMode ? .orange : .secondary)
+                Text(autoActive ? "active" : "idle")
+                Text(String(format: "trim %+.1f dB", autoTrimDb))
+                Text(String(format: "fader %+.1f dB", autoFaderDb))
+                Text(String(format: "floor %.1f dBFS", noiseFloorDb))
+            }
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
             ManualOverrideControls(channel: $channel)
                 .frame(maxWidth: 380, alignment: .leading)
         }

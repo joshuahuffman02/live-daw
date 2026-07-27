@@ -5,7 +5,7 @@ workflow. It keeps the browser app as a prototype/reference and moves the real a
 path into a macOS `.app`:
 
 - SwiftUI operator surface for device selection, status, channel mapping, meters,
-  scenes, manual fader/pan overrides, SAFE, FREEZE, and test recording.
+  scenes, manual fader/pan overrides, SAFE, FREEZE, SHADOW, and test recording.
 - Objective-C++ Core Audio bridge for Dante Virtual Soundcard / Dante hardware exposed
   as Core Audio devices.
 - Existing C++ `bdsp::Engine` and `app::BrainThread` as the mixer core.
@@ -353,6 +353,10 @@ The app does not configure the Midas console. It expects Dante to already exist:
 - SAFE bypass and FREEZE are operator controls backed by atomics/control-thread state.
   The audio callback also applies the SAFE atomic directly, so SAFE takes effect on
   the next render even while FREEZE is holding the last control-thread targets.
+- SHADOW defaults on in saved venue profiles. The brain computes and publishes the
+  same activity/noise-floor/trim/fader/master candidates, but the audio path applies
+  static role/scene targets plus manual overrides. The UI shows those candidates;
+  autonomous stability proof explicitly turns SHADOW off.
 - Scene selection feeds `BrainThread` scene targets and is saved in the venue profile.
 - Source-role edits update the running control thread and are applied to engine
   routing/automix config from the audio callback with no heap allocation or locks

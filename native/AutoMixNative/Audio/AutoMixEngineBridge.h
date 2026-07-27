@@ -54,6 +54,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) double currentBpm;
 @property (nonatomic, readonly) double currentBpmConfidence;
 @property (nonatomic, readonly) double autoLoudnessTrimDb;
+@property (nonatomic, readonly) BOOL shadowModeEnabled;
 - (double)autoTrimDbForChannel:(NSInteger)channel;
 - (double)autoFaderDbForChannel:(NSInteger)channel;
 - (double)learnedNoiseFloorDbForChannel:(NSInteger)channel;
@@ -85,6 +86,8 @@ NS_ASSUME_NONNULL_BEGIN
                                                                       outputBufferCount:(NSUInteger)outputBufferCount
                                                                      activeInputChannel:(NSInteger)activeInputChannel
                                                                            warmupBlocks:(NSUInteger)warmupBlocks;
+- (NSArray<NSNumber *> *)debugRenderCoreAudioInputLevelsWithFrameCount:(NSUInteger)frameCount
+                                                    activeInputChannel:(NSInteger)activeInputChannel;
 - (NSArray<NSArray<NSNumber *> *> *)debugRenderSeparateCoreAudioInterleavedOutputChannelsWithFrameCount:(NSUInteger)frameCount
                                                                                       outputChannelCount:(NSUInteger)outputChannelCount
                                                                                             warmupBlocks:(NSUInteger)warmupBlocks;
@@ -126,6 +129,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stop;
 - (void)setSafeBypass:(BOOL)enabled;
 - (void)setFrozen:(BOOL)enabled;
+- (void)setShadowMode:(BOOL)enabled;
 - (void)setSceneName:(NSString *)sceneName;
 - (BOOL)setChannelRoleForChannel:(NSInteger)channel
                              role:(NSString *)role;

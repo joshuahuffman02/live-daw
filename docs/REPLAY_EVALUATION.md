@@ -68,9 +68,10 @@ For every algorithm change:
    human/reference mix. Listen blind to the complete output, transitions, speech
    handoffs, and the worst metric deltas.
 5. Record reviewer, commit, corpus IDs, findings, and approve/reject disposition.
-6. Only then run the candidate in native shadow mode, where decisions are logged but
-   not applied. Compare a complete service before enabling one automation family at a
-   time under supervision.
+6. Only then run the candidate in native SHADOW mode (the saved-profile default).
+   The UI exposes candidates while the program retains static role/scene targets.
+   Compare a complete service before disabling SHADOW and enabling one automation
+   family at a time under supervision.
 
 The replay corpus should include sermons, prayers, walk-in/out playback, quiet
 speakers, loud speakers, panel/two-mic handoffs, worship with dense instrumentation,

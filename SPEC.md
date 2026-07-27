@@ -33,6 +33,12 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   ±6 dB before the final loudness meter and true-peak limiter. Silence/noise cannot
   trigger upward gain, SAFE/FREEZE hold the current correction, and significant
   limiter gain reduction forces the controller to back away.
+- Native shadow mode: venue profiles default to SHADOW enabled. The brain continues
+  measuring and computes the same automatic trim, gate, fader, and master candidates,
+  while the rendered program uses static role/scene targets plus operator overrides.
+  The UI exposes candidate activity, learned floor, trim, fader, and master trim.
+  Autonomous stability proof turns SHADOW off so proof cannot accidentally certify
+  a static mix as autonomous.
 - CPU/architecture: arm64-only Apple Silicon build.
 - HD96/Dante operating point: 64 mapped input channels at 96 kHz, with clear
   sample-rate, channel-count, Core Audio float-format readiness, callback frame-size,

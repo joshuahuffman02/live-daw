@@ -77,16 +77,17 @@ cmake --build build --target BroadcastMixer
 
 ## Status — what's verified vs. scaffolded
 
-- **Verified here:** the entire `dsp/` core, via 89 assertions in `tests/test_dsp.cpp`
+- **Verified here:** the entire `dsp/` core, via 92 assertions in `tests/test_dsp.cpp`
   (filter response, +6 dB loudness scaling, the limiter never exceeding its ceiling,
   automixer gain sharing and 96 kHz acquisition/handoff timing, compressor/gate
   behavior, full-engine output under the ceiling, role-aware SAFE fallback behavior,
   96 kHz
   engine processing, bus/pan routing, live source-role reassignment,
   measurement-driven gain staging/activity/noise-floor behavior, bounded slow
-  master loudness correction and limiter backoff, BrainThread manual override
-  guards, and the no-allocation invariant for `Engine::process`, measurement
-  publication, `BrainThread::applyTo`, and live channel config updates).
+  master loudness correction and limiter backoff, SHADOW candidate equivalence and
+  non-application, BrainThread manual override guards, and the no-allocation
+  invariant for `Engine::process`, measurement publication, `BrainThread::applyTo`,
+  and live channel config updates).
 - **Native production path:** [`../native`](../native) wraps this same verified core
   in a real Apple Silicon macOS app with Core Audio device selection, HD96 preflight,
   channel mapping, soundcheck recording, stability monitoring, SAFE, FREEZE, and

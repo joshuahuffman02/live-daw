@@ -457,14 +457,16 @@ struct VenueProfile: Codable, Sendable {
     var inputDeviceUID: String
     var outputDeviceUID: String
     var scene: MixScene
+    var shadowMode: Bool
     var expectedInputChannels: Int
     var expectedSampleRate: Double
     var channelMappings: [ChannelMapping]
 
-    init(inputDeviceUID: String, outputDeviceUID: String, scene: MixScene = .worship, expectedInputChannels: Int = 64, expectedSampleRate: Double = 48000, channelMappings: [ChannelMapping]) {
+    init(inputDeviceUID: String, outputDeviceUID: String, scene: MixScene = .worship, shadowMode: Bool = true, expectedInputChannels: Int = 64, expectedSampleRate: Double = 48000, channelMappings: [ChannelMapping]) {
         self.inputDeviceUID = inputDeviceUID
         self.outputDeviceUID = outputDeviceUID
         self.scene = scene
+        self.shadowMode = shadowMode
         self.expectedInputChannels = min(max(expectedInputChannels, 1), 64)
         self.expectedSampleRate = BroadcastSampleRate.nearestSupported(expectedSampleRate)
         self.channelMappings = Self.normalizedChannelMappingsIfReady(
@@ -494,6 +496,7 @@ struct VenueProfile: Codable, Sendable {
         inputDeviceUID = try container.decode(String.self, forKey: .inputDeviceUID)
         outputDeviceUID = try container.decode(String.self, forKey: .outputDeviceUID)
         scene = try container.decodeIfPresent(MixScene.self, forKey: .scene) ?? .worship
+        shadowMode = try container.decodeIfPresent(Bool.self, forKey: .shadowMode) ?? true
         expectedInputChannels = min(max(try container.decodeIfPresent(Int.self, forKey: .expectedInputChannels) ?? 64, 1), 64)
         expectedSampleRate = BroadcastSampleRate.nearestSupported(try container.decodeIfPresent(Double.self, forKey: .expectedSampleRate) ?? 48000)
         let decodedMappings = try container.decode([ChannelMapping].self, forKey: .channelMappings)
