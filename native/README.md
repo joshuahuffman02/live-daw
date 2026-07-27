@@ -69,6 +69,9 @@ sudo ditto "/exact/release/path/AutoMix Native.app" "/Applications/AutoMix Nativ
 The LaunchAgent installer also fails closed on an invalid signature, missing
 notarization ticket, or Gatekeeper rejection. `ALLOW_UNNOTARIZED_AUTOMIX=1` is
 available only for deliberate local rehearsal with a non-production build.
+The native app does not link JUCE; the licensing boundary between it, external DVS,
+and the optional JUCE shell is recorded in
+[`../docs/RELEASE_COMPLIANCE.md`](../docs/RELEASE_COMPLIANCE.md).
 
 Headless launch/device-enumeration smoke test:
 

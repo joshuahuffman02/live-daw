@@ -114,5 +114,9 @@ cmake --build build --target BroadcastMixer
 - A failed app or powered-off Mac is outside the in-app watchdog's reach. Production
   requires the independent hardware/encoder fallback and kill tests in
   [`../docs/EXTERNAL_FAILOVER.md`](../docs/EXTERNAL_FAILOVER.md).
-- Shipping a product on Dante may require an Audinate license/partnership — settle that
-  before committing to the I/O design.
+- The current route treats licensed Dante Virtual Soundcard as external Core Audio
+  software and does not bundle a Dante SDK. Any future embedded Dante integration or
+  redistribution of Audinate software needs its own licensing review.
+- This optional executable links JUCE 8, unlike the production Swift/Core Audio app.
+  Resolve its commercial/AGPL distribution basis before shipping it; see
+  [`../docs/RELEASE_COMPLIANCE.md`](../docs/RELEASE_COMPLIANCE.md).
