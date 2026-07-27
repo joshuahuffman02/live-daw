@@ -171,7 +171,10 @@ Current native milestone:
   reports preserve opened-route UID identity while re-reading running Core Audio
   sample-rate, channel-count, and format properties when the report is written;
 - enforces SAFE bypass directly from the audio callback so the next render enters the
-  safe static mix even while FREEZE is holding control-thread targets;
+  curated role-aware raw-input mix even while FREEZE is holding control-thread
+  targets; the fallback gives speech priority, attenuates instruments/unknown patch
+  points, energy-normalizes the configured channel set, and still terminates in the
+  true-peak limiter;
 - includes a non-recording stability monitor for longer HD96/Dante runs, producing a
   JSON report for dropout deltas, callback-overrun deltas, render-deadline-miss
   deltas, output-underrun/overrun deltas, watchdog SAFE state, callback activity,
@@ -192,6 +195,9 @@ Current native milestone:
 The app intentionally does not change HD96 console configuration. The expected live
 setup is still: HD96 direct outs/splits already present on Dante, Dante Virtual
 Soundcard on the Mac, and this app receiving those channels through Core Audio.
+App/Mac/power failure requires the independent, fail-safe hardware path and kill-test
+contract in [`docs/EXTERNAL_FAILOVER.md`](docs/EXTERNAL_FAILOVER.md); the in-app SAFE
+button cannot cover loss of its own host.
 
 ### Native/DSP verification
 

@@ -40,7 +40,13 @@ public:
         engine_.prepare(fs_, block_, numCh);
         for (int i = 0; i < numCh; ++i) {
             const auto p = app::profileFor(classes_[i]);
-            engine_.setChannelConfig(i, p.bus, p.isSpeech);
+            engine_.setChannelConfig(
+                i,
+                p.bus,
+                p.isSpeech,
+                app::safeGainDbFor(classes_[i]),
+                app::safePanFor(classes_[i])
+            );
         }
         inPtrs_.assign(numCh, nullptr);
         silence_.assign(juce::jmax(block_, 2048), 0.0f);

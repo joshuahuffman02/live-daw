@@ -114,6 +114,12 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   route properties, requires every embedded soundcheck/stability report check to pass,
   requires the expected SAFE/FREEZE proof-control states, and exits nonzero unless the
   run is real HD96/Dante hardware proof.
+- SAFE scope: operator/watchdog SAFE uses fixed source-role gains and conservative
+  pans on raw inputs, normalizes the configured channel set by energy, and feeds the
+  existing true-peak limiter. It does not depend on channel-strip DSP or a fresh brain
+  snapshot. Full app/Mac/power failure is covered only by the independent fail-safe
+  hardware/encoder topology and kill-test contract in
+  `docs/EXTERNAL_FAILOVER.md`.
 - ML status: no ML is shipped in the native app. Any future classifier must stay
   off the realtime callback and only publish control-rate targets.
 

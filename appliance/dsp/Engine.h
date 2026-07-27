@@ -1,7 +1,7 @@
 // Engine.h - the full deterministic mix engine: channels -> automix (speech) -> buses
 // -> master (glue comp -> master EQ -> loudness meter -> true-peak limiter) -> out,
-// with an always-available SAFE bypass (static sum of raw inputs straight to the
-// limiter) so audio never goes silent if anything upstream misbehaves.
+// with an always-available SAFE bypass (curated role-aware mix of raw inputs straight
+// to the limiter) so audio never goes silent if anything upstream misbehaves.
 //
 // This is the audio-thread half of the two-rate design. It allocates only in
 // prepare(); process() does no allocation, no locking, no ML.
@@ -35,6 +35,8 @@ public:
         send_.resize(numChannels);
         bus_.assign(numChannels, BusId::Band);
         speech_.assign(numChannels, false);
+        safeLeftGain_.assign(numChannels, dbToGain(-24.0f) * 0.7071f);
+        safeRightGain_.assign(numChannels, dbToGain(-24.0f) * 0.7071f);
         chBuf_.assign(numChannels, std::vector<float>(maxBlock, 0.0f));
         channelPostRmsDb_.assign(numChannels, -100.0f);
         speechBuf_.assign(maxBlock, 0.0f);
@@ -69,13 +71,26 @@ public:
         eqAirR_.reset(sampleRate);
         eqAirL_.set(SVF::HighShelf, 12000.0, 0.7, 1.0);
         eqAirR_.set(SVF::HighShelf, 12000.0, 0.7, 1.0);
+        recomputeSafeNormalization();
     }
 
-    void setChannelConfig(int i, BusId bus, bool isSpeech) {
+    void setChannelConfig(
+        int i,
+        BusId bus,
+        bool isSpeech,
+        float safeGainDb = -18.0f,
+        float safePan = 0.0f
+    ) {
         if (i < 0 || i >= (int)strips_.size()) return;
         bus_[i] = bus;
         speech_[i] = isSpeech;
         automix_.setWeight(i, isSpeech ? 1.0f : 0.0f);
+        const float gain = dbToGain(std::max(-60.0f, std::min(6.0f, safeGainDb)));
+        const float pan = std::max(-1.0f, std::min(1.0f, safePan));
+        const float angle = (pan * 0.5f + 0.5f) * 1.5707963f;
+        safeLeftGain_[(size_t)i] = gain * std::cos(angle);
+        safeRightGain_[(size_t)i] = gain * std::sin(angle);
+        recomputeSafeNormalization();
     }
 
     void setChannelParams(int i, const ChannelParams& p) {
@@ -152,11 +167,13 @@ public:
         for (int s = 0; s < frames; ++s) {
             float busL[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             float busR[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            float safe = 0.0f;
+            float safeL = 0.0f;
+            float safeR = 0.0f;
             float reverbSend = 0.0f;
 
             for (int i = 0; i < numCh; ++i) {
-                safe += inputs[i][s];
+                safeL += inputs[i][s] * safeLeftGain_[(size_t)i];
+                safeR += inputs[i][s] * safeRightGain_[(size_t)i];
                 reverbSend += chBuf_[i][s] * send_[i].next();
                 if (speech_[i]) continue; // summed via the automix bus below
 
@@ -173,11 +190,14 @@ public:
             busR[busIndex(BusId::Speech)] += spOut;
 
             if (bypass_) {
-                // static safe sum straight to the limiter - never silent
-                const float g = 0.5f * safe;
-                feedOnset(std::fabs(g));   // keep tempo tracking alive even in SAFE
+                // Static, role-aware raw mix straight to the limiter. Energy
+                // normalization bounds the nominal contribution as channel count
+                // grows; the true-peak limiter still covers coherent worst cases.
+                const float safeOutL = safeL * safeNormalization_;
+                const float safeOutR = safeR * safeNormalization_;
+                feedOnset(std::max(std::fabs(safeOutL), std::fabs(safeOutR)));
                 float oL, oR;
-                lim_.process(g, g, oL, oR);
+                lim_.process(safeOutL, safeOutR, oL, oR);
                 loud_.process(oL, oR);
                 outL[s] = oL;
                 outR[s] = oR;
@@ -250,12 +270,22 @@ private:
         if (onset_.process(mixMag, onset)) onsetRing_.push(onset);
     }
 
+    void recomputeSafeNormalization() {
+        double energy = 0.0;
+        for (size_t i = 0; i < safeLeftGain_.size(); ++i) {
+            energy += (double)safeLeftGain_[i] * safeLeftGain_[i];
+            energy += (double)safeRightGain_[i] * safeRightGain_[i];
+        }
+        safeNormalization_ = energy > 1.0 ? (float)(1.0 / std::sqrt(energy)) : 1.0f;
+    }
+
     double fs_ = kDefaultSampleRate;
     int maxBlock_ = 512;
     std::vector<ChannelStrip> strips_;
     std::vector<Smoothed> pan_, send_;
     std::vector<BusId> bus_;
     std::vector<bool> speech_;
+    std::vector<float> safeLeftGain_, safeRightGain_;
     std::vector<std::vector<float>> chBuf_;
     std::vector<float> channelPostRmsDb_;
     std::vector<float> speechBuf_;
@@ -273,6 +303,7 @@ private:
     SpscFloatRing<1024> onsetRing_;
     float glueEnv_ = 0, glueAtk_ = 0, glueRel_ = 0, glueThresh_ = -18, glueRatio_ = 2;
     float targetLufs_ = -14;
+    float safeNormalization_ = 1.0f;
     bool bypass_ = false;
 };
 

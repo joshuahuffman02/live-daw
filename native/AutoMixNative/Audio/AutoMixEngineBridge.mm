@@ -1573,7 +1573,13 @@ struct AMRealtimeAllocationGuard {
     for (int i = 0; i < count; ++i) {
         const auto assignedClass = (app::Cls)_pendingClassCodes[(size_t)i].load(std::memory_order_acquire);
         const auto profile = app::profileFor(assignedClass);
-        _engine.setChannelConfig(i, profile.bus, profile.isSpeech);
+        _engine.setChannelConfig(
+            i,
+            profile.bus,
+            profile.isSpeech,
+            app::safeGainDbFor(assignedClass),
+            app::safePanFor(assignedClass)
+        );
     }
 }
 
@@ -1807,7 +1813,13 @@ struct AMRealtimeAllocationGuard {
         _engine.prepare(sampleRate, maxBlock, engineChannels);
         for (int i = 0; i < engineChannels; ++i) {
             const auto p = app::profileFor(_classes[(size_t)i]);
-            _engine.setChannelConfig(i, p.bus, p.isSpeech);
+            _engine.setChannelConfig(
+                i,
+                p.bus,
+                p.isSpeech,
+                app::safeGainDbFor(_classes[(size_t)i]),
+                app::safePanFor(_classes[(size_t)i])
+            );
         }
 
         _brain.configure(engineChannels, sampleRate, _classes);

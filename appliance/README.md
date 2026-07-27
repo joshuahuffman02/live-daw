@@ -72,10 +72,11 @@ cmake --build build --target BroadcastMixer
 
 ## Status — what's verified vs. scaffolded
 
-- **Verified here:** the entire `dsp/` core, via 86 assertions in `tests/test_dsp.cpp`
+- **Verified here:** the entire `dsp/` core, via 89 assertions in `tests/test_dsp.cpp`
   (filter response, +6 dB loudness scaling, the limiter never exceeding its ceiling,
   automixer gain sharing and 96 kHz acquisition/handoff timing, compressor/gate
-  behavior, full-engine output under the ceiling, SAFE bypass behavior, 96 kHz
+  behavior, full-engine output under the ceiling, role-aware SAFE fallback behavior,
+  96 kHz
   engine processing, bus/pan routing, live source-role reassignment,
   measurement-driven gain staging/activity/noise-floor behavior, bounded slow
   master loudness correction and limiter backoff, BrainThread manual override
@@ -98,5 +99,8 @@ cmake --build build --target BroadcastMixer
   path by design).
 - Expose a fixed, known audio latency so the video encoder can compensate for lip sync.
 - Always record raw multitracks + the output (forensics + the training-data flywheel).
+- A failed app or powered-off Mac is outside the in-app watchdog's reach. Production
+  requires the independent hardware/encoder fallback and kill tests in
+  [`../docs/EXTERNAL_FAILOVER.md`](../docs/EXTERNAL_FAILOVER.md).
 - Shipping a product on Dante may require an Audinate license/partnership — settle that
   before committing to the I/O design.

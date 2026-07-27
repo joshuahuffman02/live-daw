@@ -59,6 +59,28 @@ inline SourceProfile profileFor(Cls c) {
     }
 }
 
+// SAFE never depends on the live brain snapshot, but it does retain the operator's
+// assigned source roles. Speech stays forward; musical sources and unknown patch
+// points are progressively lower so a 64-channel emergency sum remains intelligible.
+inline float safeGainDbFor(Cls c) {
+    switch (c) {
+        case Cls::Speech: return 0.0f;
+        case Cls::LeadVocal: return -4.0f;
+        case Cls::Bgv: return -9.0f;
+        case Cls::Kick:
+        case Cls::Bass: return -12.0f;
+        case Cls::Acoustic:
+        case Cls::Keys: return -14.0f;
+        case Cls::Electric: return -16.0f;
+        case Cls::Unknown: return -24.0f;
+    }
+    return -24.0f;
+}
+
+inline float safePanFor(Cls c) {
+    return profileFor(c).pan * 0.35f;
+}
+
 // scene -> (per-band fader offset already folded in by caller) speech active + LUFS target
 inline float sceneFaderOffset(Scene s, bdsp::BusId bus) {
     switch (s) {

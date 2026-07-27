@@ -274,7 +274,7 @@ static void testEngine() {
 }
 
 static void testEngine96kAndRouting() {
-    std::printf("Engine (96 kHz, bus routing, pan, and SAFE raw sum)\n");
+    std::printf("Engine (96 kHz, bus routing, pan, and SAFE raw mix)\n");
     const double fs = 96000.0;
     const int N = 2, frames = 512;
     Engine eng; eng.prepare(fs, frames, N);
@@ -316,7 +316,61 @@ static void testEngine96kAndRouting() {
         in[1][s] = -0.05f;
     }
     for (int b = 0; b < 20; ++b) eng.process(ptrs.data(), N, oL.data(), oR.data(), frames);
-    CHECK(rms(oL) < 1e-5 && rms(oR) < 1e-5, "SAFE bypass uses raw mono sum before channel processing");
+    CHECK(rms(oL) < 1e-5 && rms(oR) < 1e-5, "SAFE bypass uses raw inputs before channel processing");
+}
+
+static void testEngineRoleAwareSafeMix() {
+    std::printf("Engine (role-aware SAFE fallback)\n");
+    const int frames = 256;
+    Engine eng;
+    eng.prepare(96000.0, frames, 2);
+    eng.setChannelConfig(0, BusId::Speech, true, app::safeGainDbFor(app::Cls::Speech), 0.0f);
+    eng.setChannelConfig(1, BusId::Band, false, app::safeGainDbFor(app::Cls::Electric), 0.0f);
+    eng.setBypass(true);
+
+    std::vector<std::vector<float>> input(2, std::vector<float>(frames, 0.0f));
+    std::vector<const float*> inputs{input[0].data(), input[1].data()};
+    std::vector<float> outL(frames), outR(frames);
+    double phase = 0.0;
+    const double increment = 2.0 * M_PI * 1000.0 / 96000.0;
+
+    auto renderRole = [&](int activeChannel) {
+        for (int block = 0; block < 80; ++block) {
+            for (int sample = 0; sample < frames; ++sample) {
+                const float value = 0.05f * (float)std::sin(phase);
+                phase += increment;
+                input[0][(size_t)sample] = activeChannel == 0 ? value : 0.0f;
+                input[1][(size_t)sample] = activeChannel == 1 ? value : 0.0f;
+            }
+            eng.process(inputs.data(), 2, outL.data(), outR.data(), frames);
+        }
+        return rms(outL, frames / 2);
+    };
+
+    const double speech = renderRole(0);
+    const double electric = renderRole(1);
+    CHECK(speech > electric * 5.0, "SAFE prioritizes speech over an equally hot instrument input");
+    CHECK(speech > 0.01, "SAFE speech path remains clearly audible");
+
+    Engine crowded;
+    constexpr int crowdedChannels = 64;
+    crowded.prepare(96000.0, frames, crowdedChannels);
+    std::vector<std::vector<float>> crowdedInput(crowdedChannels, std::vector<float>(frames, 0.2f));
+    std::vector<const float*> crowdedPtrs(crowdedChannels);
+    for (int channel = 0; channel < crowdedChannels; ++channel) {
+        crowded.setChannelConfig(channel, BusId::Speech, true, 0.0f, 0.0f);
+        crowdedPtrs[(size_t)channel] = crowdedInput[(size_t)channel].data();
+    }
+    crowded.setBypass(true);
+    for (int block = 0; block < 20; ++block) {
+        crowded.process(crowdedPtrs.data(), crowdedChannels, outL.data(), outR.data(), frames);
+    }
+    const float ceiling = std::pow(10.0f, -1.0f / 20.0f);
+    float peak = 0.0f;
+    for (int sample = 0; sample < frames; ++sample) {
+        peak = std::max(peak, std::max(std::fabs(outL[(size_t)sample]), std::fabs(outR[(size_t)sample])));
+    }
+    CHECK(peak <= ceiling + 1e-3f, "SAFE 64-channel coherent worst case remains under the true-peak ceiling");
 }
 
 static void testEngineProcessNoAllocation() {
@@ -820,6 +874,7 @@ int main() {
     testGate();
     testEngine();
     testEngine96kAndRouting();
+    testEngineRoleAwareSafeMix();
     testEngineProcessNoAllocation();
     testEngineMasterLoudnessTrim();
     testBrainThreadControls();
