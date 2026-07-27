@@ -147,9 +147,9 @@ Current native milestone:
   profile stores measured end-to-end audio/video paths and tells the operator which
   encoder path needs delay;
 - saves a local venue profile with Core Audio device UIDs, expected channel count,
-  scene, Dante input mapping, channel roles, and per-channel manual fader/pan
-  overrides covering the native engine range of -80 to +12 dB fader and full
-  left/right pan;
+  scene, Dante input mapping, channel roles, and complete per-channel manual
+  overrides for trim, HPF, gate, eight-band EQ, compressor, fader, pan, and reverb
+  send; every family uses the same bounded ranges as the native engine;
 - pushes source-role edits to the running control thread and applies the matching
   engine routing/automix config on the audio callback without heap allocation or locks;
 - publishes per-channel input RMS/peak and post-strip RMS from the audio callback to
@@ -178,7 +178,8 @@ Current native milestone:
   L/R activity, per-input recorded peak levels/active channel numbers, stream output
   channels, captured frame count/duration, Core Audio float-format readiness, route
   clocking, output isolation, one-to-one Dante input and mixer-row map coverage,
-  manual fader/pan override coverage, SAFE-bypass proof state, opened-route identity, active
+  complete manual-processing override coverage, SAFE-bypass proof state,
+  opened-route identity, active
   non-clipping stream L/R levels, LUFS telemetry, and limiter gain reduction; proof
   reports preserve opened-route UID identity while re-reading running Core Audio
   sample-rate, channel-count, and format properties when the report is written;
@@ -210,8 +211,9 @@ Current native milestone:
   JSON report for dropout deltas, callback-overrun deltas, render-deadline-miss
   deltas, output-underrun/overrun deltas, watchdog SAFE state, callback activity,
   callback frame-size bounds, observed input activity, Core Audio
-  float-format readiness, route clocking, output isolation, one-to-one Dante input-map coverage,
-  manual fader/pan override coverage, operator SAFE/FREEZE proof-control state,
+  float-format readiness, route clocking, output isolation, one-to-one Dante
+  input-map coverage,
+  complete manual-processing override coverage, operator SAFE/FREEZE proof-control state,
   opened-route identity, stream L/R min/max levels, momentary LUFS range,
   and limiter gain reduction without buffering multichannel audio; the proof window starts after stream L/R is active or
   after a short timeout so startup silence does not pollute an otherwise healthy run;
@@ -279,9 +281,10 @@ xcodebuild test -project native/AutoMixNative.xcodeproj \
 ```
 
 This launches the native test host, starts the simulated 64-channel / 96 kHz
-HD96/Dante bridge, checks meters/realtime counters/role/manual controls, verifies native
-manual fader/pan override set/clear behavior in controlled Core Audio renders, verifies native
-FREEZE and SAFE bypass still produce stereo stream output, verifies expected channel-count
+HD96/Dante bridge, checks meters/realtime counters/role/manual controls, verifies
+native full-processing override behavior and mix-only edits in controlled Core Audio
+renders, verifies native FREEZE and SAFE bypass still produce stereo stream output,
+verifies expected channel-count
 warning/profile behavior, exercises simulated separate-output routing, records a
 test WAV, runs debug no-allocation probes across the native simulated render path
 and the real Core Audio `AudioBufferList` input render path, forces rapid continuous
@@ -338,7 +341,7 @@ validation and service-profile commands use `--output-uid` when supplied, otherw
 the saved profile output, otherwise a livestream-safe auto-detected output. They do
 not fall back to the Dante input UID; if no stream/encoder/virtual/capture/Aggregate
 output is visible, the command fails with a clear output-selection error. Headless
-validation also applies saved manual fader/pan overrides before soundcheck and
+validation also applies every saved manual processing override before soundcheck and
 stability runs, so the generated proof reports describe the mix state that was
 actually rendered.
 

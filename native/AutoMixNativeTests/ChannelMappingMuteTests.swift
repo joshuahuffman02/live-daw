@@ -50,11 +50,14 @@ final class ChannelMappingMuteTests: XCTestCase {
         ch.faderOverrideEnabled = true
         ch.panOverrideEnabled = true
         ch.pan = -0.5
+        ch.processingOverride.trimOverrideEnabled = true
+        ch.processingOverride.compressorOverrideEnabled = true
         ch.setMuted(true)
         ch.clearOverrides()
         XCTAssertFalse(ch.muted)
         XCTAssertFalse(ch.faderOverrideEnabled)
         XCTAssertFalse(ch.panOverrideEnabled)
+        XCTAssertEqual(ch.processingOverride.enabledFamilyCount, 0)
     }
 
     func testClearOverridesRestoresFaderWhenClearingAMutedChannel() {
@@ -83,6 +86,31 @@ final class ChannelMappingMuteTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ChannelMapping.self, from: Data(legacy.utf8))
         XCTAssertFalse(decoded.muted)
         XCTAssertFalse(decoded.stereoLinkedToNext)
+        XCTAssertEqual(decoded.processingOverride, ChannelProcessingOverride())
+    }
+
+    func testProcessingOverridesRoundTripInCodable() throws {
+        var ch = channel()
+        ch.processingOverride.trimOverrideEnabled = true
+        ch.processingOverride.trimDb = 4.5
+        ch.processingOverride.hpfOverrideEnabled = true
+        ch.processingOverride.hpfHz = 115
+        ch.processingOverride.eqOverrideEnabled = true
+        ch.processingOverride.eqBands[0].type = .notch
+        ch.processingOverride.eqBands[0].frequencyHz = 315
+        ch.processingOverride.eqBands[0].q = 6
+        ch.processingOverride.eqBands[0].gainDb = -8
+        ch.processingOverride.compressorOverrideEnabled = true
+        ch.processingOverride.compressorRatio = 4
+        ch.processingOverride.reverbOverrideEnabled = true
+        ch.processingOverride.reverbSendDb = -18
+
+        let data = try JSONEncoder().encode(ch)
+        let decoded = try JSONDecoder().decode(ChannelMapping.self, from: data)
+
+        XCTAssertEqual(decoded, ch)
+        XCTAssertTrue(decoded.processingOverride.isValid)
+        XCTAssertEqual(decoded.processingOverride.enabledFamilyCount, 5)
     }
 
     func testStereoLinkRoundTripsInCodable() throws {

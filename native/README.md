@@ -5,7 +5,8 @@ workflow. It keeps the browser app as a prototype/reference and moves the real a
 path into a macOS `.app`:
 
 - SwiftUI operator surface for device selection, status, channel mapping, meters,
-  scenes, Keychain-backed Planning Center cue driving, manual fader/pan overrides,
+  scenes, Keychain-backed Planning Center cue driving, complete manual channel
+  processing,
   SAFE, FREEZE, SHADOW, soundcheck recording, and segmented continuous
   multitrack/program capture.
 - Objective-C++ Core Audio bridge for Dante Virtual Soundcard / Dante hardware exposed
@@ -177,12 +178,12 @@ the Dante input UID; if no stream/encoder/virtual/capture/Aggregate output is vi
 the command fails with a clear output-selection error.
 
 Headless validation commands load the saved profile's Dante input assignments, source
-roles, and manual fader/pan overrides, then apply those overrides to the running bridge
-before soundcheck or stability evidence is captured.
+roles, and complete manual processing overrides, then apply those overrides to the
+running bridge before soundcheck or stability evidence is captured.
 
 Use the Channel Map `Service Roles` button to seed a starter church role layout. It
 updates names/source roles and seeds adjacent linked keys, overhead, and playback
-pairs; Dante input assignments, fader overrides, and pan overrides are preserved for
+pairs; Dante input assignments and all manual processing overrides are preserved for
 each mixer row. A stereo link is valid only for adjacent, same-role music channels.
 Linked automation and gate/compressor detection follow the louder side without
 collapsing the independent L/R audio; manual overrides remain authoritative.
@@ -201,7 +202,7 @@ file "$TMPDIR/automix-native-sim-stability.json"
 The simulation exposes a clearly named `Simulated HD96 Dante Split` device, starts the
 same bridge/engine path at 64 channels and 96 kHz, updates input meters, runs
 SAFE/FREEZE-capable `BrainThread` control, applies the sermon scene and a channel-1
-manual fader/pan override through the native bridge, enables FREEZE and SAFE bypass
+manual channel-processing override through the native bridge, enables FREEZE and SAFE bypass
 before the test recording, reports callback frame/dropout, callback-overrun,
 render-deadline-miss, output-underrun, and output-overrun counters, and writes a
 66-channel IEEE-float WAV: 64 raw inputs plus stereo stream mix, with a JSON
@@ -394,11 +395,13 @@ The app does not configure the Midas console. It expects Dante to already exist:
 - Dante Check and the soundcheck report validate one-to-one input and mixer-row map
   coverage, so duplicate Dante input assignments, duplicate mixer rows, or unmapped
   detected inputs are visible before trusting the stream mix.
-- Per-channel manual fader/pan overrides are saved in the venue profile and pushed to
-  the running control thread when changed. The SwiftUI controls expose the same
-  -80 to +12 dB fader and full left/right pan range accepted by the native bridge.
-  XCTest drives controlled Core Audio renders to prove setting and clearing fader/pan
-  overrides changes the native stream output.
+- Per-channel manual overrides for trim, HPF, gate, all eight EQ bands, compressor,
+  fader, pan, and reverb send are saved in the venue profile and pushed to the
+  running control thread when changed. SwiftUI exposes the same bounded ranges
+  accepted by the native bridge. Advanced settings synchronize across a linked
+  stereo pair while pan remains independent. XCTest drives controlled Core Audio
+  renders to prove processing overrides affect output and that a remote fader/pan
+  edit does not clear an advanced override.
 - Test recording preallocates a bounded multichannel float buffer before recording,
   captures every raw Dante input in Core Audio order plus the stereo stream mix,
   hands the completed buffer to a background file queue for WAV writing, then scans

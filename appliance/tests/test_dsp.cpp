@@ -542,6 +542,11 @@ static void testBrainThreadControls() {
 
     ChannelParams manual; manual.faderDb = -18.0f; manual.pan = -0.5f;
     CHECK(brain.setManualChannelParams(1, manual, app::OverrideFader | app::OverridePan), "accepts manual override on valid channel");
+    ChannelParams mixOnly; mixOnly.faderDb = -9.0f;
+    CHECK(brain.updateManualChannelParams(1, mixOnly, app::OverrideFader, app::OverrideFader),
+          "partial manual update changes its controlled family");
+    CHECK(!brain.updateManualChannelParams(1, mixOnly, app::OverrideTrim, app::OverrideFader),
+          "partial manual update rejects enabled bits outside its controlled family");
     CHECK(!brain.setManualChannelParams(99, manual, app::OverrideFader), "rejects manual override on invalid channel");
     CHECK(brain.clearManualOverrides(1, app::OverridePan), "clears a manual override mask on valid channel");
     CHECK(!brain.clearManualOverrides(-1), "rejects clearing override on invalid channel");

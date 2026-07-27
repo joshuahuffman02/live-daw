@@ -67,6 +67,162 @@ enum MixScene: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum ChannelEQFilterType: String, CaseIterable, Codable, Identifiable, Sendable {
+    case lowPass
+    case highPass
+    case bandPass
+    case notch
+    case bell
+    case lowShelf
+    case highShelf
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .lowPass: return "Low-pass"
+        case .highPass: return "High-pass"
+        case .bandPass: return "Band-pass"
+        case .notch: return "Notch"
+        case .bell: return "Bell"
+        case .lowShelf: return "Low shelf"
+        case .highShelf: return "High shelf"
+        }
+    }
+}
+
+enum ChannelEQBandSlot: String, CaseIterable, Codable, Identifiable, Sendable {
+    case corrective1
+    case corrective2
+    case masking1
+    case masking2
+    case voicing1
+    case voicing2
+    case voicing3
+    case deEsser
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .corrective1: return "Corrective 1"
+        case .corrective2: return "Corrective 2"
+        case .masking1: return "Masking 1"
+        case .masking2: return "Masking 2"
+        case .voicing1: return "Voicing 1"
+        case .voicing2: return "Voicing 2"
+        case .voicing3: return "Voicing 3"
+        case .deEsser: return "De-esser"
+        }
+    }
+}
+
+struct ChannelEQBandOverride: Codable, Equatable, Identifiable, Sendable {
+    var slot: ChannelEQBandSlot
+    var type: ChannelEQFilterType
+    var frequencyHz: Double
+    var q: Double
+    var gainDb: Double
+
+    var id: ChannelEQBandSlot { slot }
+}
+
+struct ChannelProcessingOverride: Codable, Equatable, Sendable {
+    static let trimDbRange: ClosedRange<Double> = -24.0...24.0
+    static let hpfHzRange: ClosedRange<Double> = 20.0...500.0
+    static let gateThresholdDbRange: ClosedRange<Double> = -80.0...0.0
+    static let gateRatioRange: ClosedRange<Double> = 1.0...20.0
+    static let gateRangeDbRange: ClosedRange<Double> = 0.0...80.0
+    static let eqFrequencyHzRange: ClosedRange<Double> = 20.0...20_000.0
+    static let eqQRange: ClosedRange<Double> = 0.1...20.0
+    static let eqGainDbRange: ClosedRange<Double> = -18.0...18.0
+    static let compressorThresholdDbRange: ClosedRange<Double> = -80.0...0.0
+    static let compressorRatioRange: ClosedRange<Double> = 1.0...20.0
+    static let compressorAttackSecondsRange: ClosedRange<Double> = 0.0001...1.0
+    static let compressorReleaseSecondsRange: ClosedRange<Double> = 0.01...5.0
+    static let compressorKneeDbRange: ClosedRange<Double> = 0.0...24.0
+    static let compressorMakeupDbRange: ClosedRange<Double> = -24.0...24.0
+    static let reverbSendDbRange: ClosedRange<Double> = -120.0...12.0
+
+    var trimOverrideEnabled = false
+    var trimDb = 0.0
+    var hpfOverrideEnabled = false
+    var hpfHz = 80.0
+    var gateOverrideEnabled = false
+    var gateEnabled = false
+    var gateThresholdDb = -45.0
+    var gateRatio = 2.5
+    var gateRangeDb = 14.0
+    var eqOverrideEnabled = false
+    var eqBands = Self.defaultEQBands
+    var compressorOverrideEnabled = false
+    var compressorThresholdDb = -24.0
+    var compressorRatio = 2.5
+    var compressorAttackSeconds = 0.01
+    var compressorReleaseSeconds = 0.2
+    var compressorKneeDb = 8.0
+    var compressorMakeupDb = 0.0
+    var reverbOverrideEnabled = false
+    var reverbSendDb = -60.0
+
+    static var defaultEQBands: [ChannelEQBandOverride] {
+        ChannelEQBandSlot.allCases.map { slot in
+            ChannelEQBandOverride(
+                slot: slot,
+                type: slot == .deEsser ? .highShelf : .bell,
+                frequencyHz: slot == .deEsser ? 7_000.0 : 1_000.0,
+                q: slot == .deEsser ? 0.8 : 1.0,
+                gainDb: 0.0
+            )
+        }
+    }
+
+    var enabledFamilyCount: Int {
+        [
+            trimOverrideEnabled,
+            hpfOverrideEnabled,
+            gateOverrideEnabled,
+            eqOverrideEnabled,
+            compressorOverrideEnabled,
+            reverbOverrideEnabled
+        ].filter { $0 }.count
+    }
+
+    var isValid: Bool {
+        guard Self.trimDbRange.contains(trimDb),
+              Self.hpfHzRange.contains(hpfHz),
+              Self.gateThresholdDbRange.contains(gateThresholdDb),
+              Self.gateRatioRange.contains(gateRatio),
+              Self.gateRangeDbRange.contains(gateRangeDb),
+              eqBands.count == ChannelEQBandSlot.allCases.count,
+              Set(eqBands.map(\.slot)).count == ChannelEQBandSlot.allCases.count,
+              Self.compressorThresholdDbRange.contains(compressorThresholdDb),
+              Self.compressorRatioRange.contains(compressorRatio),
+              Self.compressorAttackSecondsRange.contains(compressorAttackSeconds),
+              Self.compressorReleaseSecondsRange.contains(compressorReleaseSeconds),
+              Self.compressorKneeDbRange.contains(compressorKneeDb),
+              Self.compressorMakeupDbRange.contains(compressorMakeupDb),
+              Self.reverbSendDbRange.contains(reverbSendDb)
+        else { return false }
+        for band in eqBands {
+            guard Self.eqFrequencyHzRange.contains(band.frequencyHz),
+                  Self.eqQRange.contains(band.q),
+                  Self.eqGainDbRange.contains(band.gainDb)
+            else { return false }
+        }
+        return true
+    }
+
+    mutating func clear() {
+        trimOverrideEnabled = false
+        hpfOverrideEnabled = false
+        gateOverrideEnabled = false
+        eqOverrideEnabled = false
+        compressorOverrideEnabled = false
+        reverbOverrideEnabled = false
+    }
+}
+
 struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
     static let faderDbOverrideRange: ClosedRange<Double> = -80.0...12.0
     static let panOverrideRange: ClosedRange<Double> = -1.0...1.0
@@ -79,6 +235,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
     var faderDb: Double
     var panOverrideEnabled: Bool
     var pan: Double
+    var processingOverride: ChannelProcessingOverride
     var stereoLinkedToNext: Bool
     // Remote-console mute, layered on the existing fader override (no DSP change):
     // mute forces a fader override at the -80 dB floor; unmute restores the prior
@@ -89,7 +246,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
 
     var id: Int { index }
 
-    init(index: Int, inputChannelIndex: Int? = nil, name: String, role: ChannelRole, faderOverrideEnabled: Bool = false, faderDb: Double = -6.0, panOverrideEnabled: Bool = false, pan: Double = 0.0, stereoLinkedToNext: Bool = false) {
+    init(index: Int, inputChannelIndex: Int? = nil, name: String, role: ChannelRole, faderOverrideEnabled: Bool = false, faderDb: Double = -6.0, panOverrideEnabled: Bool = false, pan: Double = 0.0, processingOverride: ChannelProcessingOverride = ChannelProcessingOverride(), stereoLinkedToNext: Bool = false) {
         self.index = index
         self.inputChannelIndex = max(inputChannelIndex ?? index, 0)
         self.name = name
@@ -98,6 +255,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
         self.faderDb = faderDb
         self.panOverrideEnabled = panOverrideEnabled
         self.pan = pan
+        self.processingOverride = processingOverride
         self.stereoLinkedToNext = stereoLinkedToNext
     }
 
@@ -111,6 +269,10 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
         faderDb = try container.decodeIfPresent(Double.self, forKey: .faderDb) ?? -6.0
         panOverrideEnabled = try container.decodeIfPresent(Bool.self, forKey: .panOverrideEnabled) ?? false
         pan = try container.decodeIfPresent(Double.self, forKey: .pan) ?? 0.0
+        processingOverride = try container.decodeIfPresent(
+            ChannelProcessingOverride.self,
+            forKey: .processingOverride
+        ) ?? ChannelProcessingOverride()
         stereoLinkedToNext = try container.decodeIfPresent(Bool.self, forKey: .stereoLinkedToNext) ?? false
         muted = try container.decodeIfPresent(Bool.self, forKey: .muted) ?? false
         preMuteFaderDb = try container.decodeIfPresent(Double.self, forKey: .preMuteFaderDb) ?? faderDb
@@ -145,6 +307,7 @@ struct ChannelMapping: Codable, Identifiable, Equatable, Sendable {
         muted = false
         faderOverrideEnabled = false
         panOverrideEnabled = false
+        processingOverride.clear()
     }
 
     static func defaults(count: Int) -> [ChannelMapping] {
@@ -514,6 +677,7 @@ struct ManualOverrideCoverage: Equatable, Sendable {
     var channelCount: Int
     var faderOverrideCount: Int
     var panOverrideCount: Int
+    var processingOverrideFamilyCount: Int
     var invalidOverrideChannels: [Int]
 
     var isReady: Bool {
@@ -522,11 +686,14 @@ struct ManualOverrideCoverage: Equatable, Sendable {
 
     var summary: String {
         var parts: [String] = []
-        if faderOverrideCount == 0 && panOverrideCount == 0 {
+        if faderOverrideCount == 0 &&
+            panOverrideCount == 0 &&
+            processingOverrideFamilyCount == 0 {
             parts.append("none enabled")
         } else {
             parts.append("fader \(faderOverrideCount)")
             parts.append("pan \(panOverrideCount)")
+            parts.append("processing \(processingOverrideFamilyCount)")
         }
         if !invalidOverrideChannels.isEmpty {
             parts.append("invalid \(Self.channelList(invalidOverrideChannels, label: "Mix Ch"))")
@@ -537,6 +704,7 @@ struct ManualOverrideCoverage: Equatable, Sendable {
     static func make(channelMappings: [ChannelMapping]) -> ManualOverrideCoverage {
         var faderOverrideCount = 0
         var panOverrideCount = 0
+        var processingOverrideFamilyCount = 0
         var invalidOverrideChannels: [Int] = []
 
         for mapping in channelMappings {
@@ -549,6 +717,8 @@ struct ManualOverrideCoverage: Equatable, Sendable {
                 panOverrideCount += 1
                 invalid = invalid || !ChannelMapping.panOverrideRange.contains(mapping.pan)
             }
+            processingOverrideFamilyCount += mapping.processingOverride.enabledFamilyCount
+            invalid = invalid || !mapping.processingOverride.isValid
             if invalid {
                 invalidOverrideChannels.append(mapping.index)
             }
@@ -558,6 +728,7 @@ struct ManualOverrideCoverage: Equatable, Sendable {
             channelCount: channelMappings.count,
             faderOverrideCount: faderOverrideCount,
             panOverrideCount: panOverrideCount,
+            processingOverrideFamilyCount: processingOverrideFamilyCount,
             invalidOverrideChannels: invalidOverrideChannels
         )
     }

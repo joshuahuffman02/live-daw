@@ -29,6 +29,42 @@ NS_ASSUME_NONNULL_BEGIN
      outputFormatSupported:(BOOL)outputFormatSupported;
 @end
 
+typedef NS_OPTIONS(NSUInteger, AMChannelOverrideMask) {
+    AMChannelOverrideMaskTrim = 1u << 0,
+    AMChannelOverrideMaskHPF = 1u << 1,
+    AMChannelOverrideMaskGate = 1u << 2,
+    AMChannelOverrideMaskEQ = 1u << 3,
+    AMChannelOverrideMaskCompressor = 1u << 4,
+    AMChannelOverrideMaskFader = 1u << 5,
+    AMChannelOverrideMaskPan = 1u << 6,
+    AMChannelOverrideMaskReverb = 1u << 7,
+};
+
+// Complete control-rate channel override payload. EQ arrays contain eight entries in
+// this fixed order: corrective 1/2, masking 1/2, voicing 1/2/3, de-esser.
+@interface AMChannelProcessingOverride : NSObject
+@property (nonatomic) AMChannelOverrideMask overrideMask;
+@property (nonatomic) double trimDb;
+@property (nonatomic) double hpfHz;
+@property (nonatomic) BOOL gateEnabled;
+@property (nonatomic) double gateThresholdDb;
+@property (nonatomic) double gateRatio;
+@property (nonatomic) double gateRangeDb;
+@property (nonatomic, copy) NSArray<NSString *> *eqTypes;
+@property (nonatomic, copy) NSArray<NSNumber *> *eqFrequenciesHz;
+@property (nonatomic, copy) NSArray<NSNumber *> *eqQs;
+@property (nonatomic, copy) NSArray<NSNumber *> *eqGainsDb;
+@property (nonatomic) double compressorThresholdDb;
+@property (nonatomic) double compressorRatio;
+@property (nonatomic) double compressorAttackSeconds;
+@property (nonatomic) double compressorReleaseSeconds;
+@property (nonatomic) double compressorKneeDb;
+@property (nonatomic) double compressorMakeupDb;
+@property (nonatomic) double faderDb;
+@property (nonatomic) double pan;
+@property (nonatomic) double reverbSendDb;
+@end
+
 @interface AutoMixEngineBridge : NSObject
 @property (nonatomic, copy, readonly) NSString *status;
 @property (nonatomic, readonly) BOOL running;
@@ -157,6 +193,9 @@ NS_ASSUME_NONNULL_BEGIN
                                     pan:(double)pan
                           overrideFader:(BOOL)overrideFader
                             overridePan:(BOOL)overridePan;
+- (BOOL)setManualChannelProcessingOverride:(AMChannelProcessingOverride *)settings
+                                forChannel:(NSInteger)channel
+    NS_SWIFT_NAME(setManualChannelProcessing(_:forChannel:));
 - (BOOL)clearManualMixOverrideForChannel:(NSInteger)channel;
 - (NSArray<NSNumber *> *)inputLevelsDb;
 - (NSArray<NSNumber *> *)outputLevelsDb;

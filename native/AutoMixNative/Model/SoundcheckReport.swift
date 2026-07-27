@@ -642,7 +642,7 @@ struct SoundcheckReport: Codable, Equatable, Sendable {
             ),
             SoundcheckCheck(
                 name: "Manual Overrides",
-                expected: "disabled or within fader/pan range",
+                expected: "values within native parameter ranges",
                 observed: manualOverrideCoverage.summary,
                 passed: manualOverrideCoverage.isReady
             ),
@@ -1128,7 +1128,7 @@ struct StabilityMonitorReport: Codable, Equatable, Sendable {
             ),
             SoundcheckCheck(
                 name: "Manual Overrides",
-                expected: "disabled or within fader/pan range",
+                expected: "values within native parameter ranges",
                 observed: manualOverrideCoverage.summary,
                 passed: manualOverrideCoverage.isReady
             ),

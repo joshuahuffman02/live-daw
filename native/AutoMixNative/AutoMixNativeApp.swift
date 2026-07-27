@@ -1404,14 +1404,11 @@ enum CLIManualOverrideApplier {
         var appliedCount = 0
         var failedMixerChannels: [Int] = []
 
-        for mapping in mappings where mapping.faderOverrideEnabled || mapping.panOverrideEnabled {
+        for mapping in mappings where mapping.hasAnyManualOverride {
             requestedCount += 1
-            let applied = bridge.setManualMixOverrideForChannel(
-                mapping.index,
-                faderDb: min(max(mapping.faderDb, -80.0), 12.0),
-                pan: min(max(mapping.pan, -1.0), 1.0),
-                overrideFader: mapping.faderOverrideEnabled,
-                overridePan: mapping.panOverrideEnabled
+            let applied = bridge.setManualChannelProcessing(
+                mapping.makeNativeProcessingOverride(),
+                forChannel: mapping.index
             )
             if applied {
                 appliedCount += 1

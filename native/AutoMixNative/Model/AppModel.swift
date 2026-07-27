@@ -3,6 +3,58 @@ import Foundation
 import Security
 import SwiftUI
 
+extension ChannelMapping {
+    var hasAnyManualOverride: Bool {
+        faderOverrideEnabled ||
+            panOverrideEnabled ||
+            processingOverride.enabledFamilyCount > 0
+    }
+
+    func makeNativeProcessingOverride() -> AMChannelProcessingOverride {
+        let processing = processingOverride
+        let settings = AMChannelProcessingOverride()
+        var rawMask: UInt = 0
+        if processing.trimOverrideEnabled { rawMask |= 1 << 0 }
+        if processing.hpfOverrideEnabled { rawMask |= 1 << 1 }
+        if processing.gateOverrideEnabled { rawMask |= 1 << 2 }
+        if processing.eqOverrideEnabled { rawMask |= 1 << 3 }
+        if processing.compressorOverrideEnabled { rawMask |= 1 << 4 }
+        if faderOverrideEnabled { rawMask |= 1 << 5 }
+        if panOverrideEnabled { rawMask |= 1 << 6 }
+        if processing.reverbOverrideEnabled { rawMask |= 1 << 7 }
+        settings.overrideMask = AMChannelOverrideMask(rawValue: rawMask)
+        settings.trimDb = processing.trimDb
+        settings.hpfHz = processing.hpfHz
+        settings.gateEnabled = processing.gateEnabled
+        settings.gateThresholdDb = processing.gateThresholdDb
+        settings.gateRatio = processing.gateRatio
+        settings.gateRangeDb = processing.gateRangeDb
+
+        let defaultBands = ChannelProcessingOverride.defaultEQBands
+        let orderedBands = ChannelEQBandSlot.allCases.map { slot in
+            processing.eqBands.first(where: { $0.slot == slot }) ??
+                defaultBands.first(where: { $0.slot == slot })!
+        }
+        settings.eqTypes = orderedBands.map(\.type.rawValue)
+        settings.eqFrequenciesHz = orderedBands.map { NSNumber(value: $0.frequencyHz) }
+        settings.eqQs = orderedBands.map { NSNumber(value: $0.q) }
+        settings.eqGainsDb = orderedBands.map { NSNumber(value: $0.gainDb) }
+        settings.compressorThresholdDb = processing.compressorThresholdDb
+        settings.compressorRatio = processing.compressorRatio
+        settings.compressorAttackSeconds = processing.compressorAttackSeconds
+        settings.compressorReleaseSeconds = processing.compressorReleaseSeconds
+        settings.compressorKneeDb = processing.compressorKneeDb
+        settings.compressorMakeupDb = processing.compressorMakeupDb
+        settings.faderDb = min(
+            max(faderDb, Self.faderDbOverrideRange.lowerBound),
+            Self.faderDbOverrideRange.upperBound
+        )
+        settings.pan = min(max(pan, Self.panOverrideRange.lowerBound), Self.panOverrideRange.upperBound)
+        settings.reverbSendDb = processing.reverbSendDb
+        return settings
+    }
+}
+
 struct PlanningCenterCredentials: Codable, Equatable, Sendable {
     var applicationID: String
     var secret: String
@@ -3092,6 +3144,7 @@ final class AppModel: ObservableObject {
         channelMappings[partnerPosition].preMuteFaderDb = source.preMuteFaderDb
         channelMappings[partnerPosition].preMuteFaderOverrideEnabled =
             source.preMuteFaderOverrideEnabled
+        channelMappings[partnerPosition].processingOverride = source.processingOverride
     }
 
     private func applyAllStereoLinks() {
@@ -3132,20 +3185,9 @@ final class AppModel: ObservableObject {
 
     private func applyManualOverride(_ channel: ChannelMapping) {
         guard engine.running else { return }
-        let fader = min(
-            max(channel.faderDb, ChannelMapping.faderDbOverrideRange.lowerBound),
-            ChannelMapping.faderDbOverrideRange.upperBound
-        )
-        let pan = min(
-            max(channel.pan, ChannelMapping.panOverrideRange.lowerBound),
-            ChannelMapping.panOverrideRange.upperBound
-        )
-        _ = engine.setManualMixOverrideForChannel(
-            channel.index,
-            faderDb: fader,
-            pan: pan,
-            overrideFader: channel.faderOverrideEnabled,
-            overridePan: channel.panOverrideEnabled
+        _ = engine.setManualChannelProcessing(
+            channel.makeNativeProcessingOverride(),
+            forChannel: channel.index
         )
     }
 

@@ -429,10 +429,20 @@ public:
     // Called by the supervisory UI/control layer, never by the audio callback.
     // Each mask bit protects that parameter family from brain-written targets.
     bool setManualChannelParams(int channel, const bdsp::ChannelParams& params, OverrideMask mask) {
+        return updateManualChannelParams(channel, params, mask, OverrideAll);
+    }
+    bool updateManualChannelParams(
+        int channel,
+        const bdsp::ChannelParams& params,
+        OverrideMask enabledMask,
+        OverrideMask controlledMask
+    ) {
         if (channel < 0 || channel >= numCh_) return false;
+        if ((enabledMask & ~controlledMask) != 0) return false;
         std::lock_guard<std::mutex> lk(controlMutex_);
-        manualParams_[(size_t)channel] = params;
-        overrideMask_[(size_t)channel] = mask;
+        applyManual(manualParams_[(size_t)channel], params, controlledMask);
+        overrideMask_[(size_t)channel] =
+            (overrideMask_[(size_t)channel] & ~controlledMask) | enabledMask;
         return true;
     }
     bool clearManualOverrides(int channel, OverrideMask mask = OverrideAll) {

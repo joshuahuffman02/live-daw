@@ -1188,7 +1188,7 @@ private struct ChannelRow: View {
             .font(.system(.caption, design: .monospaced))
             .foregroundStyle(.secondary)
             ManualOverrideControls(channel: $channel)
-                .frame(maxWidth: 380, alignment: .leading)
+                .frame(maxWidth: 780, alignment: .leading)
         }
         .padding(.leading, 4)
         .padding(.bottom, 4)
@@ -1206,30 +1206,254 @@ private struct ManualOverrideControls: View {
     @Binding var channel: ChannelMapping
 
     var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                Toggle("Fader", isOn: $channel.faderOverrideEnabled)
-                    .toggleStyle(.checkbox)
-                    .frame(width: 72, alignment: .leading)
-                Slider(value: $channel.faderDb, in: ChannelMapping.faderDbOverrideRange, step: 0.5)
-                    .disabled(!channel.faderOverrideEnabled)
-                Text(String(format: "%.1f", channel.faderDb))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(channel.faderOverrideEnabled ? .primary : .secondary)
-                    .frame(width: 42, alignment: .trailing)
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            OverrideSliderRow(
+                label: "Fader",
+                enabled: $channel.faderOverrideEnabled,
+                value: $channel.faderDb,
+                range: ChannelMapping.faderDbOverrideRange,
+                step: 0.5,
+                format: "%.1f dB"
+            )
+            OverrideSliderRow(
+                label: "Pan",
+                enabled: $channel.panOverrideEnabled,
+                value: $channel.pan,
+                range: ChannelMapping.panOverrideRange,
+                step: 0.05,
+                format: "%.2f"
+            )
 
-            HStack(spacing: 8) {
-                Toggle("Pan", isOn: $channel.panOverrideEnabled)
-                    .toggleStyle(.checkbox)
-                    .frame(width: 72, alignment: .leading)
-                Slider(value: $channel.pan, in: ChannelMapping.panOverrideRange, step: 0.05)
-                    .disabled(!channel.panOverrideEnabled)
-                Text(String(format: "%.2f", channel.pan))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(channel.panOverrideEnabled ? .primary : .secondary)
-                    .frame(width: 42, alignment: .trailing)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 10) {
+                    OverrideSliderRow(
+                        label: "Trim",
+                        enabled: $channel.processingOverride.trimOverrideEnabled,
+                        value: $channel.processingOverride.trimDb,
+                        range: ChannelProcessingOverride.trimDbRange,
+                        step: 0.5,
+                        format: "%+.1f dB"
+                    )
+                    OverrideSliderRow(
+                        label: "HPF",
+                        enabled: $channel.processingOverride.hpfOverrideEnabled,
+                        value: $channel.processingOverride.hpfHz,
+                        range: ChannelProcessingOverride.hpfHzRange,
+                        step: 1,
+                        format: "%.0f Hz"
+                    )
+
+                    GroupBox("Gate") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Toggle(
+                                    "Override",
+                                    isOn: $channel.processingOverride.gateOverrideEnabled
+                                )
+                                .toggleStyle(.checkbox)
+                                Toggle(
+                                    "Gate enabled",
+                                    isOn: $channel.processingOverride.gateEnabled
+                                )
+                                .toggleStyle(.checkbox)
+                                .disabled(!channel.processingOverride.gateOverrideEnabled)
+                            }
+                            ParameterSliderRow(
+                                label: "Threshold",
+                                value: $channel.processingOverride.gateThresholdDb,
+                                range: ChannelProcessingOverride.gateThresholdDbRange,
+                                step: 0.5,
+                                format: "%.1f dB",
+                                enabled: channel.processingOverride.gateOverrideEnabled
+                            )
+                            ParameterSliderRow(
+                                label: "Ratio",
+                                value: $channel.processingOverride.gateRatio,
+                                range: ChannelProcessingOverride.gateRatioRange,
+                                step: 0.1,
+                                format: "%.1f:1",
+                                enabled: channel.processingOverride.gateOverrideEnabled
+                            )
+                            ParameterSliderRow(
+                                label: "Range",
+                                value: $channel.processingOverride.gateRangeDb,
+                                range: ChannelProcessingOverride.gateRangeDbRange,
+                                step: 0.5,
+                                format: "%.1f dB",
+                                enabled: channel.processingOverride.gateOverrideEnabled
+                            )
+                        }
+                    }
+
+                    GroupBox("Equalizer") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle(
+                                "Override all eight bands",
+                                isOn: $channel.processingOverride.eqOverrideEnabled
+                            )
+                            .toggleStyle(.checkbox)
+                            ForEach($channel.processingOverride.eqBands) { $band in
+                                HStack(spacing: 8) {
+                                    Text(band.slot.label)
+                                        .frame(width: 90, alignment: .leading)
+                                    Picker("Type", selection: $band.type) {
+                                        ForEach(ChannelEQFilterType.allCases) { type in
+                                            Text(type.label).tag(type)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                    .frame(width: 105)
+                                    TextField(
+                                        "Hz",
+                                        value: $band.frequencyHz,
+                                        format: .number.precision(.fractionLength(0))
+                                    )
+                                    .frame(width: 72)
+                                    Text("Hz")
+                                    TextField(
+                                        "Q",
+                                        value: $band.q,
+                                        format: .number.precision(.fractionLength(2))
+                                    )
+                                    .frame(width: 58)
+                                    Text("Q")
+                                    TextField(
+                                        "dB",
+                                        value: $band.gainDb,
+                                        format: .number.precision(.fractionLength(1))
+                                    )
+                                    .frame(width: 58)
+                                    Text("dB")
+                                }
+                                .disabled(!channel.processingOverride.eqOverrideEnabled)
+                            }
+                        }
+                    }
+
+                    GroupBox("Compressor") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle(
+                                "Override",
+                                isOn: $channel.processingOverride.compressorOverrideEnabled
+                            )
+                            .toggleStyle(.checkbox)
+                            ParameterSliderRow(
+                                label: "Threshold",
+                                value: $channel.processingOverride.compressorThresholdDb,
+                                range: ChannelProcessingOverride.compressorThresholdDbRange,
+                                step: 0.5,
+                                format: "%.1f dB",
+                                enabled: channel.processingOverride.compressorOverrideEnabled
+                            )
+                            ParameterSliderRow(
+                                label: "Ratio",
+                                value: $channel.processingOverride.compressorRatio,
+                                range: ChannelProcessingOverride.compressorRatioRange,
+                                step: 0.1,
+                                format: "%.1f:1",
+                                enabled: channel.processingOverride.compressorOverrideEnabled
+                            )
+                            ParameterSliderRow(
+                                label: "Attack",
+                                value: $channel.processingOverride.compressorAttackSeconds,
+                                range: ChannelProcessingOverride.compressorAttackSecondsRange,
+                                step: 0.001,
+                                format: "%.3f s",
+                                enabled: channel.processingOverride.compressorOverrideEnabled
+                            )
+                            ParameterSliderRow(
+                                label: "Release",
+                                value: $channel.processingOverride.compressorReleaseSeconds,
+                                range: ChannelProcessingOverride.compressorReleaseSecondsRange,
+                                step: 0.01,
+                                format: "%.2f s",
+                                enabled: channel.processingOverride.compressorOverrideEnabled
+                            )
+                            ParameterSliderRow(
+                                label: "Knee",
+                                value: $channel.processingOverride.compressorKneeDb,
+                                range: ChannelProcessingOverride.compressorKneeDbRange,
+                                step: 0.5,
+                                format: "%.1f dB",
+                                enabled: channel.processingOverride.compressorOverrideEnabled
+                            )
+                            ParameterSliderRow(
+                                label: "Makeup",
+                                value: $channel.processingOverride.compressorMakeupDb,
+                                range: ChannelProcessingOverride.compressorMakeupDbRange,
+                                step: 0.5,
+                                format: "%+.1f dB",
+                                enabled: channel.processingOverride.compressorOverrideEnabled
+                            )
+                        }
+                    }
+
+                    OverrideSliderRow(
+                        label: "Reverb",
+                        enabled: $channel.processingOverride.reverbOverrideEnabled,
+                        value: $channel.processingOverride.reverbSendDb,
+                        range: ChannelProcessingOverride.reverbSendDbRange,
+                        step: 0.5,
+                        format: "%.1f dB"
+                    )
+
+                    Button("Clear all manual overrides") {
+                        channel.clearOverrides()
+                    }
+                    .disabled(!channel.hasAnyManualOverride && !channel.muted)
+                }
+                .padding(.top, 6)
+            } label: {
+                Text(
+                    "Advanced processing · \(channel.processingOverride.enabledFamilyCount) override(s)"
+                )
             }
+            .font(.caption)
+        }
+    }
+}
+
+private struct OverrideSliderRow: View {
+    let label: String
+    @Binding var enabled: Bool
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let format: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Toggle(label, isOn: $enabled)
+                .toggleStyle(.checkbox)
+                .frame(width: 82, alignment: .leading)
+            Slider(value: $value, in: range, step: step)
+                .disabled(!enabled)
+            Text(String(format: format, value))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(enabled ? .primary : .secondary)
+                .frame(width: 72, alignment: .trailing)
+        }
+    }
+}
+
+private struct ParameterSliderRow: View {
+    let label: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let format: String
+    let enabled: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .frame(width: 72, alignment: .leading)
+            Slider(value: $value, in: range, step: step)
+                .disabled(!enabled)
+            Text(String(format: format, value))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(enabled ? .primary : .secondary)
+                .frame(width: 72, alignment: .trailing)
         }
     }
 }

@@ -30,6 +30,8 @@ static NSString *const AMBridgeErrorDomain = @"AutoMixEngineBridge";
 static NSString *const AMSimulatedDeviceUID = @"com.livedaw.automix.simulated-hd96-dante";
 static app::Cls classForRole(NSString *role);
 static app::Scene sceneForName(NSString *name);
+static bdsp::SVF::Type svfTypeForName(NSString *name);
+static bool isValidSVFTypeName(NSString *name);
 static bool writeFloatWav(const char *path, const float *samples, uint64_t frames, int channels, uint32_t sampleRate);
 static bool writeFloatWavHeader(FILE *file, uint64_t frames, int channels, uint32_t sampleRate);
 static UInt32 framesInBufferList(const AudioBufferList *list);
@@ -131,6 +133,38 @@ struct AMRealtimeAllocationGuard {
         _outputFormatSummary = [outputFormatSummary copy];
         _inputFormatSupported = inputFormatSupported;
         _outputFormatSupported = outputFormatSupported;
+    }
+    return self;
+}
+@end
+
+@implementation AMChannelProcessingOverride
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _overrideMask = 0;
+        _trimDb = 0.0;
+        _hpfHz = 80.0;
+        _gateEnabled = NO;
+        _gateThresholdDb = -45.0;
+        _gateRatio = 2.5;
+        _gateRangeDb = 14.0;
+        _eqTypes = @[
+            @"bell", @"bell", @"bell", @"bell",
+            @"bell", @"bell", @"bell", @"highShelf"
+        ];
+        _eqFrequenciesHz = @[@1000, @1000, @1000, @1000, @1000, @1000, @1000, @7000];
+        _eqQs = @[@1.0, @1.0, @1.0, @1.0, @1.0, @1.0, @1.0, @0.8];
+        _eqGainsDb = @[@0, @0, @0, @0, @0, @0, @0, @0];
+        _compressorThresholdDb = -24.0;
+        _compressorRatio = 2.5;
+        _compressorAttackSeconds = 0.01;
+        _compressorReleaseSeconds = 0.2;
+        _compressorKneeDb = 8.0;
+        _compressorMakeupDb = 0.0;
+        _faderDb = -6.0;
+        _pan = 0.0;
+        _reverbSendDb = -60.0;
     }
     return self;
 }
@@ -1494,7 +1528,92 @@ struct AMRealtimeAllocationGuard {
     if (overrideFader) mask |= app::OverrideFader;
     if (overridePan) mask |= app::OverridePan;
     if (mask == 0) return [self clearManualMixOverrideForChannel:channel];
-    return _brain.setManualChannelParams((int)channel, params, mask);
+    return _brain.updateManualChannelParams(
+        (int)channel,
+        params,
+        mask,
+        app::OverrideFader | app::OverridePan
+    );
+}
+
+- (BOOL)setManualChannelProcessingOverride:(AMChannelProcessingOverride *)settings
+                                forChannel:(NSInteger)channel {
+    if (channel < 0 ||
+        channel >= _inputChannelCount ||
+        channel >= app::EngineSnapshot::kMaxCh) {
+        return NO;
+    }
+    if (settings.eqTypes.count != 8 ||
+        settings.eqFrequenciesHz.count != 8 ||
+        settings.eqQs.count != 8 ||
+        settings.eqGainsDb.count != 8) {
+        return NO;
+    }
+    constexpr NSUInteger allowedMask = (1u << 8) - 1u;
+    if ((((NSUInteger)settings.overrideMask) & ~allowedMask) != 0) return NO;
+    if (!std::isfinite(settings.trimDb) ||
+        !std::isfinite(settings.hpfHz) ||
+        !std::isfinite(settings.gateThresholdDb) ||
+        !std::isfinite(settings.gateRatio) ||
+        !std::isfinite(settings.gateRangeDb) ||
+        !std::isfinite(settings.compressorThresholdDb) ||
+        !std::isfinite(settings.compressorRatio) ||
+        !std::isfinite(settings.compressorAttackSeconds) ||
+        !std::isfinite(settings.compressorReleaseSeconds) ||
+        !std::isfinite(settings.compressorKneeDb) ||
+        !std::isfinite(settings.compressorMakeupDb) ||
+        !std::isfinite(settings.faderDb) ||
+        !std::isfinite(settings.pan) ||
+        !std::isfinite(settings.reverbSendDb)) {
+        return NO;
+    }
+    for (NSUInteger index = 0; index < 8; ++index) {
+        if (!isValidSVFTypeName(settings.eqTypes[index]) ||
+            !std::isfinite(settings.eqFrequenciesHz[index].doubleValue) ||
+            !std::isfinite(settings.eqQs[index].doubleValue) ||
+            !std::isfinite(settings.eqGainsDb[index].doubleValue)) {
+            return NO;
+        }
+    }
+
+    bdsp::ChannelParams params;
+    params.trimDb = (float)std::clamp(settings.trimDb, -24.0, 24.0);
+    params.hpfHz = (float)std::clamp(settings.hpfHz, 20.0, 500.0);
+    params.gateEnabled = settings.gateEnabled;
+    params.gateThreshDb = (float)std::clamp(settings.gateThresholdDb, -80.0, 0.0);
+    params.gateRatio = (float)std::clamp(settings.gateRatio, 1.0, 20.0);
+    params.gateRangeDb = (float)std::clamp(settings.gateRangeDb, 0.0, 80.0);
+
+    auto applyBand = [&](NSUInteger index, bdsp::EqBandParam& band) {
+        band.type = svfTypeForName(settings.eqTypes[index]);
+        band.freq = (float)std::clamp(settings.eqFrequenciesHz[index].doubleValue, 20.0, 20000.0);
+        band.q = (float)std::clamp(settings.eqQs[index].doubleValue, 0.1, 20.0);
+        band.gainDb = (float)std::clamp(settings.eqGainsDb[index].doubleValue, -18.0, 18.0);
+    };
+    applyBand(0, params.corr[0]);
+    applyBand(1, params.corr[1]);
+    applyBand(2, params.mask[0]);
+    applyBand(3, params.mask[1]);
+    applyBand(4, params.voice[0]);
+    applyBand(5, params.voice[1]);
+    applyBand(6, params.voice[2]);
+    applyBand(7, params.deEss);
+
+    params.compThreshDb = (float)std::clamp(settings.compressorThresholdDb, -80.0, 0.0);
+    params.compRatio = (float)std::clamp(settings.compressorRatio, 1.0, 20.0);
+    params.compAttack = (float)std::clamp(settings.compressorAttackSeconds, 0.0001, 1.0);
+    params.compRelease = (float)std::clamp(settings.compressorReleaseSeconds, 0.01, 5.0);
+    params.compKnee = (float)std::clamp(settings.compressorKneeDb, 0.0, 24.0);
+    params.compMakeupDb = (float)std::clamp(settings.compressorMakeupDb, -24.0, 24.0);
+    params.faderDb = (float)std::clamp(settings.faderDb, -80.0, 12.0);
+    params.pan = (float)std::clamp(settings.pan, -1.0, 1.0);
+    params.reverbSendDb = (float)std::clamp(settings.reverbSendDb, -120.0, 12.0);
+
+    return _brain.setManualChannelParams(
+        (int)channel,
+        params,
+        (app::OverrideMask)settings.overrideMask
+    );
 }
 
 - (BOOL)clearManualMixOverrideForChannel:(NSInteger)channel {
@@ -2556,6 +2675,28 @@ static app::Cls classForRole(NSString *role) {
     if ([r isEqualToString:@"keys"]) return app::Cls::Keys;
     if ([r isEqualToString:@"playback"]) return app::Cls::Playback;
     return app::Cls::Unknown;
+}
+
+static bdsp::SVF::Type svfTypeForName(NSString *name) {
+    NSString *value = name.lowercaseString;
+    if ([value isEqualToString:@"lowpass"]) return bdsp::SVF::LowPass;
+    if ([value isEqualToString:@"highpass"]) return bdsp::SVF::HighPass;
+    if ([value isEqualToString:@"bandpass"]) return bdsp::SVF::BandPass;
+    if ([value isEqualToString:@"notch"]) return bdsp::SVF::Notch;
+    if ([value isEqualToString:@"lowshelf"]) return bdsp::SVF::LowShelf;
+    if ([value isEqualToString:@"highshelf"]) return bdsp::SVF::HighShelf;
+    return bdsp::SVF::Bell;
+}
+
+static bool isValidSVFTypeName(NSString *name) {
+    NSString *value = name.lowercaseString;
+    return [value isEqualToString:@"lowpass"] ||
+        [value isEqualToString:@"highpass"] ||
+        [value isEqualToString:@"bandpass"] ||
+        [value isEqualToString:@"notch"] ||
+        [value isEqualToString:@"bell"] ||
+        [value isEqualToString:@"lowshelf"] ||
+        [value isEqualToString:@"highshelf"];
 }
 
 static app::Scene sceneForName(NSString *name) {

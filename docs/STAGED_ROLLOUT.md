@@ -68,7 +68,8 @@ override.
 Declare the mixer autonomous only when both scene manifests have
 `hardwareProofPassed=true`, the external backup remained broadcast-safe through kill
 tests, end-to-end A/V sync is measured, encoder and public egress stayed healthy, and
-the reviewing operator signs the bundle. Keep SAFE, FREEZE, Stop, and manual fader/pan
-overrides available during every service. New device UIDs, Dante patches, clock
+the reviewing operator signs the bundle. Keep SAFE, FREEZE, Stop, and manual
+channel-processing overrides available during every service. New device UIDs, Dante
+patches, clock
 leaders, buffer sizes, encoder settings, or material role-map changes invalidate the
 evidence and require the affected phase again.

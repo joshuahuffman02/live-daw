@@ -1438,6 +1438,104 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(bridge.renderDeadlineMissCount, 0)
     }
 
+    func testFullManualProcessingOverrideAffectsRenderAndSurvivesMixOnlyEdit() throws {
+        try bridge.startSimulated(
+            withChannelCount: 1,
+            sampleRate: 96_000,
+            bufferFrameSize: 256,
+            channelRoles: [ChannelRole.keys.rawValue],
+            inputChannelIndices: [0]
+        )
+        XCTAssertTrue(waitUntil(timeout: 2.0) {
+            self.bridge.lastCallbackFrameCount == 256
+        })
+
+        let settings = AMChannelProcessingOverride()
+        settings.overrideMask = AMChannelOverrideMask(rawValue: (1 << 0) | (1 << 5))
+        settings.trimDb = -24
+        settings.faderDb = 0
+        XCTAssertTrue(bridge.setManualChannelProcessing(settings, forChannel: 0))
+
+        var attenuatedPeak = 0.0
+        XCTAssertTrue(waitUntil(timeout: 2.0) {
+            let buffers = self.bridge.debugRenderCoreAudioMonoOutputBuffers(
+                withFrameCount: 256,
+                outputBufferCount: 2,
+                activeInputChannel: 0,
+                warmupBlocks: 64
+            ).map { $0.map(\.doubleValue) }
+            guard buffers.count == 2 else { return false }
+            attenuatedPeak = max(
+                self.outputBufferPeak(buffers[0]),
+                self.outputBufferPeak(buffers[1])
+            )
+            return attenuatedPeak > 0.0001 && attenuatedPeak < 0.01
+        })
+
+        // The legacy fader/pan entry point is still used by remote-console commands.
+        // It must update just those families without dropping an advanced trim override.
+        XCTAssertTrue(bridge.setManualMixOverrideForChannel(
+            0,
+            faderDb: 0,
+            pan: 0,
+            overrideFader: true,
+            overridePan: false
+        ))
+        let afterMixOnlyEdit = bridge.debugRenderCoreAudioMonoOutputBuffers(
+            withFrameCount: 256,
+            outputBufferCount: 2,
+            activeInputChannel: 0,
+            warmupBlocks: 64
+        ).map { $0.map(\.doubleValue) }
+        let afterMixOnlyPeak = max(
+            outputBufferPeak(afterMixOnlyEdit[0]),
+            outputBufferPeak(afterMixOnlyEdit[1])
+        )
+        XCTAssertEqual(afterMixOnlyPeak, attenuatedPeak, accuracy: max(attenuatedPeak * 0.2, 0.001))
+
+        settings.trimDb = 6
+        XCTAssertTrue(bridge.setManualChannelProcessing(settings, forChannel: 0))
+        var boostedPeak = 0.0
+        XCTAssertTrue(waitUntil(timeout: 2.0) {
+            let buffers = self.bridge.debugRenderCoreAudioMonoOutputBuffers(
+                withFrameCount: 256,
+                outputBufferCount: 2,
+                activeInputChannel: 0,
+                warmupBlocks: 64
+            ).map { $0.map(\.doubleValue) }
+            guard buffers.count == 2 else { return false }
+            boostedPeak = max(
+                self.outputBufferPeak(buffers[0]),
+                self.outputBufferPeak(buffers[1])
+            )
+            return boostedPeak > attenuatedPeak * 4
+        })
+    }
+
+    func testFullManualProcessingOverrideRejectsMalformedEQPayload() throws {
+        try bridge.startSimulated(
+            withChannelCount: 1,
+            sampleRate: 96_000,
+            bufferFrameSize: 256,
+            channelRoles: [ChannelRole.speech.rawValue],
+            inputChannelIndices: [0]
+        )
+        let settings = AMChannelProcessingOverride()
+        settings.overrideMask = AMChannelOverrideMask(rawValue: 1 << 3)
+        settings.eqTypes = Array(repeating: ChannelEQFilterType.bell.rawValue, count: 7)
+
+        XCTAssertFalse(bridge.setManualChannelProcessing(settings, forChannel: 0))
+        XCTAssertFalse(bridge.setManualChannelProcessing(AMChannelProcessingOverride(), forChannel: 1))
+
+        settings.eqTypes = Array(repeating: ChannelEQFilterType.bell.rawValue, count: 8)
+        settings.trimDb = .nan
+        XCTAssertFalse(bridge.setManualChannelProcessing(settings, forChannel: 0))
+
+        settings.trimDb = 0
+        settings.eqTypes[0] = "unsupported"
+        XCTAssertFalse(bridge.setManualChannelProcessing(settings, forChannel: 0))
+    }
+
     func testSceneChangeAffectsNativeBridgeRenderTargets() throws {
         try bridge.startSimulated(
             withChannelCount: 1,
@@ -2414,6 +2512,11 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             faderDb: -9,
             stereoLinkedToNext: true
         )
+        left.processingOverride.gateOverrideEnabled = true
+        left.processingOverride.gateEnabled = true
+        left.processingOverride.gateThresholdDb = -38
+        left.processingOverride.compressorOverrideEnabled = true
+        left.processingOverride.compressorRatio = 4
         left.setMuted(true)
         let right = ChannelMapping(index: 1, name: "Playback R", role: .keys)
         model.channelMappings = [right, left]
@@ -2426,6 +2529,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(synchronizedRight.faderDb, synchronizedLeft.faderDb)
         XCTAssertEqual(synchronizedRight.faderOverrideEnabled, synchronizedLeft.faderOverrideEnabled)
         XCTAssertEqual(synchronizedRight.muted, synchronizedLeft.muted)
+        XCTAssertEqual(
+            synchronizedRight.processingOverride,
+            synchronizedLeft.processingOverride
+        )
         XCTAssertTrue(model.stereoLinkCoverage.isReady)
         XCTAssertEqual(
             model.stereoLinkCoverage.pairs,
@@ -2906,6 +3013,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         mappings[1].pan = 0.25
         mappings[2].faderOverrideEnabled = true
         mappings[2].faderDb = 18.0
+        mappings[1].processingOverride.hpfOverrideEnabled = true
+        mappings[1].processingOverride.hpfHz = 120
+        mappings[3].processingOverride.eqOverrideEnabled = true
+        mappings[3].processingOverride.eqBands[0].q = 0
 
         let coverage = ManualOverrideCoverage.make(channelMappings: mappings)
 
@@ -2913,9 +3024,11 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(coverage.channelCount, 4)
         XCTAssertEqual(coverage.faderOverrideCount, 2)
         XCTAssertEqual(coverage.panOverrideCount, 1)
-        XCTAssertEqual(coverage.invalidOverrideChannels, [2])
+        XCTAssertEqual(coverage.processingOverrideFamilyCount, 2)
+        XCTAssertEqual(coverage.invalidOverrideChannels, [2, 3])
         XCTAssertTrue(coverage.summary.localizedCaseInsensitiveContains("fader 2"))
         XCTAssertTrue(coverage.summary.localizedCaseInsensitiveContains("pan 1"))
+        XCTAssertTrue(coverage.summary.localizedCaseInsensitiveContains("processing 2"))
         XCTAssertTrue(coverage.summary.localizedCaseInsensitiveContains("invalid Mix Ch 3"))
     }
 
@@ -2935,6 +3048,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertTrue(coverage.isReady)
         XCTAssertEqual(coverage.faderOverrideCount, 2)
         XCTAssertEqual(coverage.panOverrideCount, 2)
+        XCTAssertEqual(coverage.processingOverrideFamilyCount, 0)
         XCTAssertEqual(coverage.invalidOverrideChannels, [])
     }
 
@@ -2952,6 +3066,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         mappings[0].faderDb = -18.0
         mappings[1].panOverrideEnabled = true
         mappings[1].pan = 0.35
+        mappings[2].processingOverride.trimOverrideEnabled = true
+        mappings[2].processingOverride.trimDb = 3
         mappings.append(ChannelMapping(
             index: 7,
             name: "Invalid",
@@ -2962,8 +3078,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
 
         let summary = CLIManualOverrideApplier.apply(mappings, to: bridge)
 
-        XCTAssertEqual(summary.requestedCount, 3)
-        XCTAssertEqual(summary.appliedCount, 2)
+        XCTAssertEqual(summary.requestedCount, 4)
+        XCTAssertEqual(summary.appliedCount, 3)
         XCTAssertEqual(summary.failedMixerChannels, [7])
     }
 
@@ -3169,7 +3285,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         let manualCheck = try XCTUnwrap(report.checks.first { $0.name == "Manual Overrides" })
         XCTAssertTrue(report.passed)
         XCTAssertTrue(manualCheck.passed)
-        XCTAssertEqual(manualCheck.observed, "fader 1 · pan 1")
+        XCTAssertEqual(manualCheck.observed, "fader 1 · pan 1 · processing 0")
     }
 
     func testStabilityReportIncludesManualOverrideCoverage() throws {
@@ -3206,7 +3322,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         let manualCheck = try XCTUnwrap(report.checks.first { $0.name == "Manual Overrides" })
         XCTAssertTrue(report.passed)
         XCTAssertTrue(manualCheck.passed)
-        XCTAssertEqual(manualCheck.observed, "fader 1 · pan 1")
+        XCTAssertEqual(manualCheck.observed, "fader 1 · pan 1 · processing 0")
     }
 
     func testSoundcheckReportFlagsCallbackFramesAbovePreparedBuffer() throws {
