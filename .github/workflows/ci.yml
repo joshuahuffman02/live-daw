@@ -8,6 +8,9 @@ concurrency:
   group: live-daw-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: DSP, web, and native
@@ -16,7 +19,9 @@ jobs:
 
     steps:
       - name: Check out sources
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Verify generated Xcode project
         env:
@@ -55,7 +60,7 @@ jobs:
             --parallel 3
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: npm
