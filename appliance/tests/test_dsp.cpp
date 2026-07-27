@@ -343,6 +343,23 @@ static void testEngine() {
     CHECK(std::isfinite(eng.integratedLufs()), "loudness meter produces a reading");
 }
 
+static void testEngineBounds() {
+    std::printf("Engine (channel and buffer bounds)\n");
+    Engine capped;
+    capped.prepare(FS, 0, 1'000);
+    CHECK(capped.setStereoLink(62, 63),
+          "prepare caps oversized channel requests at the 64-channel engine limit");
+    CHECK(!capped.setStereoLink(63, 64),
+          "stereo-link guard rejects a channel beyond the engine limit");
+    CHECK(capped.channelGrDb(-1) == 0.0f && capped.channelGrDb(64) == 0.0f,
+          "gain-reduction metering is safe for invalid channel indexes");
+
+    Engine empty;
+    empty.prepare(FS, -128, -1);
+    empty.process(nullptr, 0, nullptr, nullptr, 0);
+    CHECK(true, "negative preparation dimensions reduce to a safe empty engine");
+}
+
 static void testEngine96kAndRouting() {
     std::printf("Engine (96 kHz, bus routing, pan, and SAFE raw mix)\n");
     const double fs = 96000.0;
@@ -1078,6 +1095,7 @@ int main() {
     testGate();
     testStereoLinkedChannelStrips();
     testEngine();
+    testEngineBounds();
     testEngine96kAndRouting();
     testEngineRoleAwareSafeMix();
     testEngineProcessNoAllocation();

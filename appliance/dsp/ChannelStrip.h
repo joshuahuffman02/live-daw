@@ -38,9 +38,13 @@ public:
         trim_.setTarget(dbToGain(p.trimDb));
         fader_.setTarget(dbToGain(p.faderDb));
         hpf_.set(SVF::HighPass, p.hpfHz, 0.707);
-        for (int i = 0; i < 2; ++i) corr_[i].set(SVF::Bell, p.corr[i].freq, p.corr[i].q, p.corr[i].gainDb);
-        for (int i = 0; i < 2; ++i) mask_[i].set(SVF::Bell, p.mask[i].freq, p.mask[i].q, p.mask[i].gainDb);
-        for (int i = 0; i < 3; ++i) voice_[i].set(p.voice[i].type, p.voice[i].freq, p.voice[i].q, p.voice[i].gainDb);
+        for (size_t i = 0; i < 2; ++i) {
+            corr_[i].set(SVF::Bell, p.corr[i].freq, p.corr[i].q, p.corr[i].gainDb);
+            mask_[i].set(SVF::Bell, p.mask[i].freq, p.mask[i].q, p.mask[i].gainDb);
+        }
+        for (size_t i = 0; i < 3; ++i) {
+            voice_[i].set(p.voice[i].type, p.voice[i].freq, p.voice[i].q, p.voice[i].gainDb);
+        }
         deEss_.set(p.deEss.type, p.deEss.freq, p.deEss.q, p.deEss.gainDb);
         gate_.setParams(p.gateEnabled, p.gateThreshDb, p.gateRatio, p.gateRangeDb);
         comp_.setParams(p.compThreshDb, p.compRatio, p.compAttack, p.compRelease, p.compKnee, p.compMakeupDb);

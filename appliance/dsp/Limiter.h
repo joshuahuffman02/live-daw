@@ -22,12 +22,12 @@ public:
         setCeiling(ceilingDb);
         buildOversampler();
         look_ = std::max(8, (int)std::round(0.0015 * fs_));
-        dlL_.assign(look_, 0.0f);
-        dlR_.assign(look_, 0.0f);
+        dlL_.assign(static_cast<size_t>(look_), 0.0f);
+        dlR_.assign(static_cast<size_t>(look_), 0.0f);
         pos_ = 0;
         gain_ = 1.0f;
-        gAtk_ = std::exp(-1.0 / (0.0015 * fs_));
-        gRel_ = std::exp(-1.0 / (0.060 * fs_));
+        gAtk_ = static_cast<float>(std::exp(-1.0 / (0.0015 * fs_)));
+        gRel_ = static_cast<float>(std::exp(-1.0 / (0.060 * fs_)));
         histL_.fill(0.0f); histR_.fill(0.0f);
         grDb_ = 0.0f;
     }
@@ -43,8 +43,9 @@ public:
         gain_ = c * gain_ + (1.0f - c) * gTarget;
         grDb_ = 20.0f * std::log10(std::max(1e-6f, gain_));
 
-        const float dL = dlL_[pos_], dR = dlR_[pos_];
-        dlL_[pos_] = inL; dlR_[pos_] = inR;
+        const size_t position = static_cast<size_t>(pos_);
+        const float dL = dlL_[position], dR = dlR_[position];
+        dlL_[position] = inL; dlR_[position] = inR;
         pos_ = (pos_ + 1) % look_;
 
         outL = clamp(dL * gain_);
@@ -61,19 +62,25 @@ private:
                 const double x = (t - kTaps / 2 + 1) - (double)p / kPhases;
                 const double sinc = (x == 0.0) ? 1.0 : std::sin(M_PI * x) / (M_PI * x);
                 const double w = 0.54 - 0.46 * std::cos((2.0 * M_PI * (t + 0.5)) / kTaps);
-                ker_[p][t] = sinc * w;
+                ker_[p][t] = static_cast<float>(sinc * w);
                 sum += ker_[p][t];
             }
-            for (int t = 0; t < kTaps; ++t) ker_[p][t] /= sum;
+            for (int t = 0; t < kTaps; ++t) {
+                ker_[p][t] = static_cast<float>(static_cast<double>(ker_[p][t]) / sum);
+            }
         }
     }
     inline float truePeak(std::array<float, kTaps>& hist, float x) {
-        for (int i = kTaps - 1; i > 0; --i) hist[i] = hist[i - 1];
+        for (int i = kTaps - 1; i > 0; --i) {
+            hist[static_cast<size_t>(i)] = hist[static_cast<size_t>(i - 1)];
+        }
         hist[0] = x;
         float mx = std::fabs(x);
         for (int p = 0; p < kPhases; ++p) {
             float y = 0.0f;
-            for (int t = 0; t < kTaps; ++t) y += ker_[p][t] * hist[t];
+            for (int t = 0; t < kTaps; ++t) {
+                y += ker_[p][t] * hist[static_cast<size_t>(t)];
+            }
             mx = std::max(mx, std::fabs(y));
         }
         return mx;

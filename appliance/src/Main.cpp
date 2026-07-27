@@ -39,17 +39,18 @@ public:
         const int numCh = (int)classes_.size();
         engine_.prepare(fs_, block_, numCh);
         for (int i = 0; i < numCh; ++i) {
-            const auto p = app::profileFor(classes_[i]);
+            const size_t index = static_cast<size_t>(i);
+            const auto p = app::profileFor(classes_[index]);
             engine_.setChannelConfig(
                 i,
                 p.bus,
                 p.isSpeech,
-                app::safeGainDbFor(classes_[i]),
-                app::safePanFor(classes_[i])
+                app::safeGainDbFor(classes_[index]),
+                app::safePanFor(classes_[index])
             );
         }
-        inPtrs_.assign(numCh, nullptr);
-        silence_.assign(juce::jmax(block_, 2048), 0.0f);
+        inPtrs_.assign(static_cast<size_t>(numCh), nullptr);
+        silence_.assign(static_cast<size_t>(juce::jmax(block_, 2048)), 0.0f);
     }
 
     void audioDeviceIOCallbackWithContext(const float* const* in, int numIn,
@@ -60,9 +61,9 @@ public:
 
         const int n = juce::jmin((int)inPtrs_.size(), numIn);
         for (int i = 0; i < n; ++i)
-            inPtrs_[i] = (in[i] != nullptr) ? in[i] : silence_.data();
+            inPtrs_[static_cast<size_t>(i)] = (in[i] != nullptr) ? in[i] : silence_.data();
         for (int i = n; i < (int)inPtrs_.size(); ++i)
-            inPtrs_[i] = silence_.data();
+            inPtrs_[static_cast<size_t>(i)] = silence_.data();
 
         if (numOut <= 0 || out[0] == nullptr) return;
         float* outL = out[0];

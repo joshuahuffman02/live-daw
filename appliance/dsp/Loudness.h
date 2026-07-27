@@ -55,7 +55,7 @@ private:
     void pushBlock() {
         const int n = accN_ ? accN_ : 1;
         const double msL = accL_ / n, msR = accR_ / n;
-        hist_[histWrite_] = {msL, msR};
+        hist_[static_cast<size_t>(histWrite_)] = {msL, msR};
         histWrite_ = (histWrite_ + 1) % kHistBlocks;
         histCount_ = std::min(histCount_ + 1, kHistBlocks);
         // momentary (last 4 blocks = 400 ms) feeds the gated integrated history
@@ -66,7 +66,7 @@ private:
         if (momMs > 0) {
             const double momLufs = -0.691 + 10.0 * std::log10(momMs);
             if (momLufs > -70.0) {
-                intBlocks_[intWrite_] = momMs;
+                intBlocks_[static_cast<size_t>(intWrite_)] = momMs;
                 intWrite_ = (intWrite_ + 1) % kMaxIntBlocks;
                 intCount_ = std::min(intCount_ + 1, kMaxIntBlocks);
             }
@@ -85,11 +85,11 @@ private:
     struct MS { double l, r; };
     MS histAt(int offsetFromOldest) const {
         const int oldest = (histWrite_ - histCount_ + kHistBlocks) % kHistBlocks;
-        return hist_[(oldest + offsetFromOldest) % kHistBlocks];
+        return hist_[static_cast<size_t>((oldest + offsetFromOldest) % kHistBlocks)];
     }
     double intBlockAt(int offsetFromOldest) const {
         const int oldest = (intWrite_ - intCount_ + kMaxIntBlocks) % kMaxIntBlocks;
-        return intBlocks_[(oldest + offsetFromOldest) % kMaxIntBlocks];
+        return intBlocks_[static_cast<size_t>((oldest + offsetFromOldest) % kMaxIntBlocks)];
     }
 
     double fs_ = kDefaultSampleRate;

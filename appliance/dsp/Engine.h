@@ -30,21 +30,28 @@ class Engine {
 public:
     void prepare(double sampleRate, int maxBlock, int numChannels) {
         fs_ = sampleRate;
-        maxBlock_ = maxBlock;
-        strips_.resize(numChannels);
-        pan_.resize(numChannels);
-        send_.resize(numChannels);
-        bus_.assign(numChannels, BusId::Band);
-        speech_.assign(numChannels, false);
-        safeLeftGain_.assign(numChannels, dbToGain(-24.0f) * 0.7071f);
-        safeRightGain_.assign(numChannels, dbToGain(-24.0f) * 0.7071f);
-        chBuf_.assign(numChannels, std::vector<float>(maxBlock, 0.0f));
-        channelPostRmsDb_.assign(numChannels, -100.0f);
-        speechBuf_.assign(maxBlock, 0.0f);
-        speechPtrs_.resize(numChannels);
+        maxBlock_ = std::max(1, maxBlock);
+        numChannels = std::clamp(
+            numChannels,
+            0,
+            static_cast<int>(stereoPeer_.size())
+        );
+        const size_t channelCount = static_cast<size_t>(numChannels);
+        const size_t blockSize = static_cast<size_t>(maxBlock_);
+        strips_.resize(channelCount);
+        pan_.resize(channelCount);
+        send_.resize(channelCount);
+        bus_.assign(channelCount, BusId::Band);
+        speech_.assign(channelCount, false);
+        safeLeftGain_.assign(channelCount, dbToGain(-24.0f) * 0.7071f);
+        safeRightGain_.assign(channelCount, dbToGain(-24.0f) * 0.7071f);
+        chBuf_.assign(channelCount, std::vector<float>(blockSize, 0.0f));
+        channelPostRmsDb_.assign(channelCount, -100.0f);
+        speechBuf_.assign(blockSize, 0.0f);
+        speechPtrs_.resize(channelCount);
         reverb_.prepare(sampleRate, 1.8f, 0.3f, 1.0f);
 
-        for (int i = 0; i < numChannels; ++i) {
+        for (size_t i = 0; i < channelCount; ++i) {
             strips_[i].reset(sampleRate);
             pan_[i].reset(sampleRate, 0.05);
             pan_[i].setImmediate(0.0f);
@@ -69,8 +76,8 @@ public:
         loud_.reset(sampleRate);
         lim_.reset(sampleRate, -1.0f);
         glueEnv_ = 0.0f;
-        glueAtk_ = std::exp(-1.0 / (0.03 * fs_));
-        glueRel_ = std::exp(-1.0 / (0.25 * fs_));
+        glueAtk_ = static_cast<float>(std::exp(-1.0 / (0.03 * fs_)));
+        glueRel_ = static_cast<float>(std::exp(-1.0 / (0.25 * fs_)));
         eqAirL_.reset(sampleRate);
         eqAirR_.reset(sampleRate);
         eqAirL_.set(SVF::HighShelf, 12000.0, 0.7, 1.0);
@@ -86,8 +93,9 @@ public:
         float safePan = 0.0f
     ) {
         if (i < 0 || i >= (int)strips_.size()) return;
-        bus_[i] = bus;
-        speech_[i] = isSpeech;
+        const size_t index = static_cast<size_t>(i);
+        bus_[index] = bus;
+        speech_[index] = isSpeech;
         automix_.setWeight(i, isSpeech ? 1.0f : 0.0f);
         const float gain = dbToGain(std::max(-60.0f, std::min(6.0f, safeGainDb)));
         const float pan = std::max(-1.0f, std::min(1.0f, safePan));
@@ -99,9 +107,10 @@ public:
 
     void setChannelParams(int i, const ChannelParams& p) {
         if (i < 0 || i >= (int)strips_.size()) return;
-        strips_[i].setParams(p);
-        pan_[i].setTarget(p.pan);
-        send_[i].setTarget(p.reverbSendDb <= -50.0f ? 0.0f : dbToGain(p.reverbSendDb));
+        const size_t index = static_cast<size_t>(i);
+        strips_[index].setParams(p);
+        pan_[index].setTarget(p.pan);
+        send_[index].setTarget(p.reverbSendDb <= -50.0f ? 0.0f : dbToGain(p.reverbSendDb));
     }
 
     bool setStereoLink(int left, int right) {
@@ -155,7 +164,11 @@ public:
     int algorithmicLatencyFrames() const { return lim_.latencySamples(); }
     float integratedLufs() const { return loud_.integrated(); }
     float limiterGrDb() const { return lim_.gainReductionDb(); }
-    float channelGrDb(int i) const { return strips_[i].compGainReductionDb(); }
+    float channelGrDb(int i) const {
+        return i >= 0 && i < static_cast<int>(strips_.size())
+            ? strips_[static_cast<size_t>(i)].compGainReductionDb()
+            : 0.0f;
+    }
     float channelPostRmsDb(int i) const {
         return i >= 0 && i < (int)channelPostRmsDb_.size()
             ? channelPostRmsDb_[(size_t)i]
@@ -164,28 +177,31 @@ public:
 
     // inputs: numChannels mono buffers; out: stereo
     void process(const float* const* inputs, int numCh, float* outL, float* outR, int frames) {
-        numCh = std::min(numCh, (int)strips_.size());
-        frames = std::min(frames, maxBlock_);
+        numCh = std::clamp(numCh, 0, static_cast<int>(strips_.size()));
+        frames = std::clamp(frames, 0, maxBlock_);
+        if (frames == 0) return;
 
         // 1) per-channel strips into scratch buffers
-        for (int i = 0; i < (int)strips_.size();) {
-            const int peer = stereoPeer_[(size_t)i].load(std::memory_order_acquire);
-            const bool linked = peer == i + 1 &&
+        for (size_t i = 0; i < strips_.size();) {
+            const int channel = static_cast<int>(i);
+            const int peer = stereoPeer_[i].load(std::memory_order_acquire);
+            const bool linked = peer == channel + 1 &&
                 peer < numCh &&
-                stereoPeer_[(size_t)peer].load(std::memory_order_acquire) == i;
+                stereoPeer_[static_cast<size_t>(peer)].load(std::memory_order_acquire) == channel;
             if (linked) {
-                float* leftBuffer = chBuf_[(size_t)i].data();
-                float* rightBuffer = chBuf_[(size_t)peer].data();
+                const size_t peerIndex = static_cast<size_t>(peer);
+                float* leftBuffer = chBuf_[i].data();
+                float* rightBuffer = chBuf_[peerIndex].data();
                 double leftSquares = 0.0;
                 double rightSquares = 0.0;
                 for (int s = 0; s < frames; ++s) {
                     float leftSample = 0.0f;
                     float rightSample = 0.0f;
                     ChannelStrip::processStereoLinked(
-                        strips_[(size_t)i],
-                        strips_[(size_t)peer],
+                        strips_[i],
+                        strips_[peerIndex],
                         inputs[i][s],
-                        inputs[peer][s],
+                        inputs[peerIndex][s],
                         leftSample,
                         rightSample
                     );
@@ -197,21 +213,21 @@ public:
                 const double denominator = frames > 0 ? (double)frames : 1.0;
                 const double leftRms = frames > 0 ? std::sqrt(leftSquares / denominator) : 0.0;
                 const double rightRms = frames > 0 ? std::sqrt(rightSquares / denominator) : 0.0;
-                channelPostRmsDb_[(size_t)i] = leftRms > 1e-7
+                channelPostRmsDb_[i] = leftRms > 1e-7
                     ? (float)(20.0 * std::log10(leftRms))
                     : -100.0f;
-                channelPostRmsDb_[(size_t)peer] = rightRms > 1e-7
+                channelPostRmsDb_[peerIndex] = rightRms > 1e-7
                     ? (float)(20.0 * std::log10(rightRms))
                     : -100.0f;
-                speechPtrs_[(size_t)i] = leftBuffer;
-                speechPtrs_[(size_t)peer] = rightBuffer;
+                speechPtrs_[i] = leftBuffer;
+                speechPtrs_[peerIndex] = rightBuffer;
                 i += 2;
                 continue;
             }
 
             float* cb = chBuf_[i].data();
             double sumSquares = 0.0;
-            if (i < numCh) {
+            if (channel < numCh) {
                 const float* in = inputs[i];
                 for (int s = 0; s < frames; ++s) {
                     const float sample = strips_[i].process(in[s]);
@@ -222,10 +238,10 @@ public:
                 std::fill(cb, cb + frames, 0.0f);
             }
             const double rms = frames > 0 ? std::sqrt(sumSquares / frames) : 0.0;
-            channelPostRmsDb_[(size_t)i] = rms > 1e-7
+            channelPostRmsDb_[i] = rms > 1e-7
                 ? (float)(20.0 * std::log10(rms))
                 : -100.0f;
-            speechPtrs_[(size_t)i] = cb;
+            speechPtrs_[i] = cb;
             ++i;
         }
 
@@ -242,20 +258,22 @@ public:
             float reverbSend = 0.0f;
 
             for (int i = 0; i < numCh; ++i) {
-                safeL += inputs[i][s] * safeLeftGain_[(size_t)i];
-                safeR += inputs[i][s] * safeRightGain_[(size_t)i];
-                reverbSend += chBuf_[i][s] * send_[i].next();
-                if (speech_[i]) continue; // summed via the automix bus below
+                const size_t channel = static_cast<size_t>(i);
+                const size_t sample = static_cast<size_t>(s);
+                safeL += inputs[i][s] * safeLeftGain_[channel];
+                safeR += inputs[i][s] * safeRightGain_[channel];
+                reverbSend += chBuf_[channel][sample] * send_[channel].next();
+                if (speech_[channel]) continue; // summed via the automix bus below
 
-                const float p = pan_[i].next();
+                const float p = pan_[channel].next();
                 const float ang = (p * 0.5f + 0.5f) * 1.5707963f; // equal-power
-                const int b = busIndex(bus_[i]);
-                busL[b] += chBuf_[i][s] * std::cos(ang);
-                busR[b] += chBuf_[i][s] * std::sin(ang);
+                const int b = busIndex(bus_[channel]);
+                busL[b] += chBuf_[channel][sample] * std::cos(ang);
+                busR[b] += chBuf_[channel][sample] * std::sin(ang);
             }
 
             // speech bus (centered)
-            const float spOut = speechBuf_[s] * 0.7071f;
+            const float spOut = speechBuf_[static_cast<size_t>(s)] * 0.7071f;
             busL[busIndex(BusId::Speech)] += spOut;
             busR[busIndex(BusId::Speech)] += spOut;
 

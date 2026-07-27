@@ -13,17 +13,21 @@ namespace bdsp {
 class Automixer {
 public:
     void reset(double sampleRate, int channels) {
-        n_ = channels;
+        n_ = static_cast<size_t>(std::max(0, channels));
         fs_ = std::max(1.0, sampleRate);
         env_.assign(n_, 0.0f);
-        gain_.assign(n_, 1.0f / std::max(1, n_));
+        gain_.assign(n_, 1.0f / static_cast<float>(std::max<size_t>(1, n_)));
         weight_.assign(n_, 1.0f);
         target_.assign(n_, 0.0f);
-        gSmooth_ = std::exp(-1.0 / (0.008 * fs_));
+        gSmooth_ = static_cast<float>(std::exp(-1.0 / (0.008 * fs_)));
     }
-    void setWeight(int i, float w) { if (i >= 0 && i < n_) weight_[i] = w; }
+    void setWeight(int i, float w) {
+        if (isValidIndex(i)) weight_[static_cast<size_t>(i)] = w;
+    }
     void setDepth(float d) { depth_ = std::clamp(d, 0.0f, 1.0f); }
-    float gain(int i) const { return (i >= 0 && i < n_) ? gain_[i] : 0.0f; }
+    float gain(int i) const {
+        return isValidIndex(i) ? gain_[static_cast<size_t>(i)] : 0.0f;
+    }
 
     // process one block: inputs[i] is channel i's buffer (length frames); writes the
     // summed automixed output into `out`.
@@ -37,7 +41,7 @@ public:
         const float blockRelease = (float)std::exp(-(double)frames / (releaseSeconds_ * fs_));
 
         // update per-channel power envelopes from this block
-        for (int i = 0; i < n_; ++i) {
+        for (size_t i = 0; i < n_; ++i) {
             double p = 0.0;
             const float* in = inputs[i];
             for (int s = 0; s < frames; ++s) p += (double)in[s] * in[s];
@@ -48,11 +52,11 @@ public:
 
         // gain-sharing weights
         double total = floor_;
-        for (int i = 0; i < n_; ++i) total += weight_[i] * env_[i];
+        for (size_t i = 0; i < n_; ++i) total += weight_[i] * env_[i];
         int active = 0;
-        for (int i = 0; i < n_; ++i) if (weight_[i] > 0) ++active;
+        for (size_t i = 0; i < n_; ++i) if (weight_[i] > 0) ++active;
         active = std::max(1, active);
-        for (int i = 0; i < n_; ++i) {
+        for (size_t i = 0; i < n_; ++i) {
             const float share = (float)((weight_[i] * env_[i]) / total);
             const float flat = weight_[i] > 0 ? weight_[i] / active : 0.0f;
             target_[i] = depth_ * share + (1.0f - depth_) * flat;
@@ -60,7 +64,7 @@ public:
 
         // apply, per-sample smoothed
         for (int s = 0; s < frames; ++s) out[s] = 0.0f;
-        for (int i = 0; i < n_; ++i) {
+        for (size_t i = 0; i < n_; ++i) {
             float g = gain_[i];
             const float t = target_[i];
             const float* in = inputs[i];
@@ -73,7 +77,11 @@ public:
     }
 
 private:
-    int n_ = 0;
+    bool isValidIndex(int i) const {
+        return i >= 0 && static_cast<size_t>(i) < n_;
+    }
+
+    size_t n_ = 0;
     double fs_ = 48000.0;
     std::vector<float> env_, gain_, weight_, target_;
     float depth_ = 1.0f, floor_ = 1e-5f;

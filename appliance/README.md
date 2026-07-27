@@ -78,7 +78,7 @@ cmake --build build --target BroadcastMixer
 
 ## Status — what's verified vs. scaffolded
 
-- **Verified here:** the entire `dsp/` core, via 113 assertions in `tests/test_dsp.cpp`
+- **Verified here:** the entire `dsp/` core, via 117 assertions in `tests/test_dsp.cpp`
   (filter response, +6 dB loudness scaling, the limiter never exceeding its ceiling,
   automixer gain sharing and 96 kHz acquisition/handoff timing, compressor/gate
   behavior, full-engine output under the ceiling, role-aware SAFE fallback behavior,

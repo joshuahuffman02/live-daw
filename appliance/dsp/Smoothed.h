@@ -11,7 +11,9 @@ class Smoothed {
 public:
     void reset(double sampleRate, double seconds = 0.02) {
         // one-pole coefficient for the given time constant
-        coeff_ = std::exp(-1.0 / (std::max(1e-5, seconds) * sampleRate));
+        coeff_ = static_cast<float>(
+            std::exp(-1.0 / (std::max(1e-5, seconds) * sampleRate))
+        );
     }
     void setImmediate(float v) { current_ = target_ = v; }
     void setTarget(float v) { target_ = v; }

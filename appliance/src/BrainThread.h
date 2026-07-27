@@ -75,7 +75,7 @@ inline SourceProfile profileFor(Cls c) {
         case Cls::Percussion:return {bdsp::BusId::Drums, false, 80, true, 3, 12, 10, -22, 2.5f, .008f, .16f, 6, {{{T::Bell,250,1.0f,-2.0f},{T::Bell,3000,1.0f,1.5f},{T::HighShelf,10000,0.7f,1.0f}}}, 0.3f};
         case Cls::Keys:      return {bdsp::BusId::Band, false, 60, false, 2, 10, 10, -24, 2.5f, .020f, .25f, 10, {{{T::Bell,300,1.0f,-2.0f},{T::HighShelf,8000,0.7f,1.0f},{T::LowShelf,120,0.7f,-1.5f}}}, -0.2f};
         case Cls::Playback:  return {bdsp::BusId::Band, false, 25, false, 2, 8, 10, -12, 1.5f, .030f, .30f, 8, {{{T::Bell,250,1.0f,0},{T::HighShelf,10000,0.7f,0},{T::LowShelf,80,0.7f,0}}}, 0};
-        default:             return {bdsp::BusId::Band, false, 80, false, 2, 8, 12, -24, 2.0f, .020f, .20f, 10, {{{T::Bell,1000,1,0},{T::Bell,2000,1,0},{T::Bell,4000,1,0}}}, 0};
+        case Cls::Unknown:   return {bdsp::BusId::Band, false, 80, false, 2, 8, 12, -24, 2.0f, .020f, .20f, 10, {{{T::Bell,1000,1,0},{T::Bell,2000,1,0},{T::Bell,4000,1,0}}}, 0};
     }
 }
 
@@ -527,7 +527,9 @@ private:
 
         EngineSnapshot s;
         if (!tryLoadPublishedSnapshot(seq, s)) return;
-        for (int i = 0; i < s.numCh; ++i) e.setChannelParams(i, s.ch[i]);
+        for (int i = 0; i < s.numCh; ++i) {
+            e.setChannelParams(i, s.ch[static_cast<size_t>(i)]);
+        }
         e.setMasterParams(s.master);
         e.setBypass(s.bypass);
         appliedSeq_ = seq;
@@ -725,7 +727,9 @@ private:
                 s.master.reverbDamping = 0.35f;
                 s.master.delayWetDb = -120.0f;    // delay off
                 break;
-            default:                              // Sermon / Pre / Post: dry & intelligible
+            case Scene::PreService:
+            case Scene::Sermon:
+            case Scene::PostService:              // dry and intelligible
                 s.master.reverbDecaySeconds = 1.2f;
                 s.master.reverbDamping = 0.45f;
                 s.master.delayWetDb = -120.0f;
@@ -809,7 +813,7 @@ private:
                 );
                 applied.faderDb = std::max(-80.0f, std::min(12.0f, sceneFader));
             }
-            s.ch[i] = applied;
+            s.ch[static_cast<size_t>(i)] = applied;
         }
 
         // Stereo pairs share every automated target and a conservative max-channel
@@ -836,22 +840,28 @@ private:
             autoFaderDb_[(size_t)left] = sharedFader;
             autoFaderDb_[(size_t)right] = sharedFader;
 
-            bdsp::ChannelParams shared = s.ch[left];
+            const size_t leftIndex = static_cast<size_t>(left);
+            const size_t rightIndex = static_cast<size_t>(right);
+            bdsp::ChannelParams shared = s.ch[leftIndex];
             shared.trimDb = shadow ? 0.0f : sharedTrim;
             shared.gateThreshDb = std::max(
-                s.ch[left].gateThreshDb,
-                s.ch[right].gateThreshDb
+                s.ch[leftIndex].gateThreshDb,
+                s.ch[rightIndex].gateThreshDb
             );
-            shared.faderDb = shadow ? s.ch[left].faderDb : sharedFader;
-            s.ch[left] = shared;
-            s.ch[right] = shared;
-            s.ch[left].pan = -1.0f;
-            s.ch[right].pan = 1.0f;
+            shared.faderDb = shadow ? s.ch[leftIndex].faderDb : sharedFader;
+            s.ch[leftIndex] = shared;
+            s.ch[rightIndex] = shared;
+            s.ch[leftIndex].pan = -1.0f;
+            s.ch[rightIndex].pan = 1.0f;
             ++left;
         }
 
         for (int i = 0; i < numCh; ++i) {
-            applyManual(s.ch[i], manual[(size_t)i], masks[(size_t)i]);
+            applyManual(
+                s.ch[static_cast<size_t>(i)],
+                manual[(size_t)i],
+                masks[(size_t)i]
+            );
             autoTrimPublished_[(size_t)i].store(autoTrimDb_[(size_t)i], std::memory_order_relaxed);
             autoFaderPublished_[(size_t)i].store(autoFaderDb_[(size_t)i], std::memory_order_relaxed);
         }

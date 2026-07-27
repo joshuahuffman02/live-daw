@@ -21,7 +21,7 @@ public:
         // Mutually detuned line lengths (ms) for a dense, natural tail.
         const float baseMs[kLines] = {29.7f, 37.1f, 41.3f, 43.7f};
         const float clampedSize = std::clamp(sizeMul, 0.25f, 3.0f);
-        for (int i = 0; i < kLines; ++i) {
+        for (size_t i = 0; i < kLines; ++i) {
             int len = std::max(1, (int)std::lround(baseMs[i] * clampedSize * 1e-3 * fs_));
             lines_[i].assign((size_t)len, 0.0f);
             pos_[i] = 0;
@@ -33,7 +33,7 @@ public:
 
     void setDecay(float seconds) {
         decaySeconds_ = std::max(0.05f, seconds);
-        for (int i = 0; i < kLines; ++i) {
+        for (size_t i = 0; i < kLines; ++i) {
             const double lenSec = (double)lines_[i].size() / fs_;
             // Feedback gain that reaches -60 dB after decaySeconds_ for this line length.
             fb_[i] = (float)std::pow(10.0, -3.0 * lenSec / (double)decaySeconds_);
@@ -47,17 +47,19 @@ public:
 
     void process(float in, float& outL, float& outR) {
         float d[kLines];
-        for (int i = 0; i < kLines; ++i) d[i] = lines_[i][(size_t)pos_[i]];
+        for (size_t i = 0; i < kLines; ++i) {
+            d[i] = lines_[i][static_cast<size_t>(pos_[i])];
+        }
 
         // Lossless Householder mix: H = I - 0.5 * J (orthogonal for 4 lines).
         const float s = 0.5f * (d[0] + d[1] + d[2] + d[3]);
         const float a = 1.0f - damping_;   // one-pole low-pass coefficient
-        for (int i = 0; i < kLines; ++i) {
+        for (size_t i = 0; i < kLines; ++i) {
             const float mixed = d[i] - s;
             lp_[i] += a * (mixed - lp_[i]);          // damp the tail
             float v = lp_[i] * fb_[i] + in;          // decay + inject the send
             if (!std::isfinite(v)) v = 0.0f;         // hard safety net
-            lines_[i][(size_t)pos_[i]] = v;
+            lines_[i][static_cast<size_t>(pos_[i])] = v;
             pos_[i] = (pos_[i] + 1) % (int)lines_[i].size();
         }
 
@@ -67,7 +69,7 @@ public:
     }
 
 private:
-    static constexpr int kLines = 4;
+    static constexpr size_t kLines = 4;
 
     double fs_ = 48000.0;
     float decaySeconds_ = 1.8f;

@@ -18,8 +18,12 @@ public:
         ratio_ = std::max(1.0f, ratio);
         knee_ = std::max(0.0f, kneeDb);
         makeup_ = makeupDb;
-        aAtk_ = std::exp(-1.0 / (std::max(1e-4f, attackS) * fs_));
-        aRel_ = std::exp(-1.0 / (std::max(1e-4f, releaseS) * fs_));
+        aAtk_ = static_cast<float>(
+            std::exp(-1.0 / (std::max(1e-4f, attackS) * fs_))
+        );
+        aRel_ = static_cast<float>(
+            std::exp(-1.0 / (std::max(1e-4f, releaseS) * fs_))
+        );
     }
 
     // current gain reduction (dB, <= 0) for metering

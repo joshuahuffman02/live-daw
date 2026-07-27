@@ -18,7 +18,7 @@ public:
         lagMin_ = std::max(1, (int)std::lround(fr_ * 60.0 / kMaxBpm));
         lagMax_ = std::min(windowLen_ - 1, (int)std::lround(fr_ * 60.0 / kMinBpm));
         recomputeInterval_ = std::max(1, (int)std::lround(fr_ * kRecomputeSeconds));
-        buf_.assign(windowLen_, 0.0f);
+        buf_.assign(static_cast<size_t>(windowLen_), 0.0f);
         writePos_ = 0;
         filled_ = 0;
         sinceCompute_ = 0;
@@ -29,7 +29,7 @@ public:
     // One onset-envelope sample at the configured feature rate. Allocation-free.
     void push(float onsetStrength) {
         if (buf_.empty()) return;
-        buf_[writePos_] = onsetStrength > 0.0f ? onsetStrength : 0.0f;
+        buf_[static_cast<size_t>(writePos_)] = onsetStrength > 0.0f ? onsetStrength : 0.0f;
         writePos_ = (writePos_ + 1) % windowLen_;
         if (filled_ < windowLen_) ++filled_;
         if (++sinceCompute_ >= recomputeInterval_) {
@@ -61,7 +61,7 @@ private:
         auto at = [&](int k) -> float {
             int idx = (writePos_ - N + k) % windowLen_;
             if (idx < 0) idx += windowLen_;
-            return buf_[idx];
+            return buf_[static_cast<size_t>(idx)];
         };
 
         double mean = 0.0;

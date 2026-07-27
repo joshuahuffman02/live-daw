@@ -12,10 +12,10 @@ class Gate {
 public:
     void reset(double sampleRate) {
         fs_ = sampleRate; env_ = 0; gain_ = 1; open_ = false; hold_ = 0;
-        detAtk_ = std::exp(-1.0 / (0.001 * fs_));
-        detRel_ = std::exp(-1.0 / (0.05 * fs_));
-        atk_ = std::exp(-1.0 / (0.003 * fs_));
-        rel_ = std::exp(-1.0 / (0.12 * fs_));
+        detAtk_ = static_cast<float>(std::exp(-1.0 / (0.001 * fs_)));
+        detRel_ = static_cast<float>(std::exp(-1.0 / (0.05 * fs_)));
+        atk_ = static_cast<float>(std::exp(-1.0 / (0.003 * fs_)));
+        rel_ = static_cast<float>(std::exp(-1.0 / (0.12 * fs_)));
     }
     void setParams(bool enabled, float thresholdDb, float ratio, float rangeDb,
                    float hystDb = 6.0f, float holdS = 0.08f) {
