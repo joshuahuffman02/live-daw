@@ -253,7 +253,11 @@ block's duration, and is behavior-tested for first-talker acquisition and handof
   1 dB/second within ±6 dB, ignores silence, and yields to limiter activity.
 
 ## Reverb
-Convolution with 2–3 curated impulse responses. No from-scratch algorithmic reverb.
+The current production milestone uses a deterministic, bounded stereo FDN with
+scene-specific decay/damping and no allocation after preparation. This avoids an
+external IR asset/runtime dependency on the appliance. A later curated-IR convolution
+option is acceptable only if it is prepared off the audio thread, remains
+allocation-free while processing, and does not replace the known-safe fallback.
 
 ## Scene layer (Planning Center driven)
 A scene is a snapshot of: per-channel targets, DCA group levels, automix
@@ -313,9 +317,9 @@ changes and prove that the offset does not drift over a multi-hour run.
 2. Add the gain-sharing automixer on the speech group. Spoken word runs itself.
 3. Add more brain features: measurement-driven gain staging, adaptive gates,
    conservative per-scene level riding, and the slow master loudness loop are now
-   present. Next: optional classifier labels, spectral auto-EQ to target curves,
-   and Planning Center scene driving.
-   Keep every decision off the realtime callback.
+   present. Planning Center scene driving is also present. Next candidates are
+   optional soundcheck classifier suggestions and spectral auto-EQ to target curves.
+   Keep every decision off the realtime callback and behind SHADOW promotion.
 4. v2: cross-channel masking, dynamic feedback suppression, learned scene behaviors,
    remote-monitoring polish.
 
