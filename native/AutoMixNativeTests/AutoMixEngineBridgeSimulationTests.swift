@@ -2178,6 +2178,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(profile.measuredEndToEndVideoLatencyMs, 0)
         XCTAssertEqual(profile.encoderHealthURL, "")
         XCTAssertEqual(profile.egressHealthURL, "")
+        XCTAssertEqual(profile.planningCenterServiceTypeID, "")
+        XCTAssertFalse(profile.planningCenterFollowTimedCues)
         XCTAssertEqual(profile.channelMappings.first?.inputChannelIndex, 0)
         XCTAssertEqual(profile.channelMappings.first?.faderOverrideEnabled, false)
         XCTAssertEqual(profile.channelMappings.first?.panOverrideEnabled, false)
@@ -2192,6 +2194,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             measuredEndToEndVideoLatencyMs: 55.0,
             encoderHealthURL: "http://127.0.0.1:9000/health",
             egressHealthURL: "https://status.example.test/live",
+            planningCenterServiceTypeID: "12345",
+            planningCenterFollowTimedCues: true,
             expectedInputChannels: 64,
             channelMappings: [
                 ChannelMapping(
@@ -2223,6 +2227,116 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(decoded.measuredEndToEndVideoLatencyMs, 55.0)
         XCTAssertEqual(decoded.encoderHealthURL, "http://127.0.0.1:9000/health")
         XCTAssertEqual(decoded.egressHealthURL, "https://status.example.test/live")
+        XCTAssertEqual(decoded.planningCenterServiceTypeID, "12345")
+        XCTAssertTrue(decoded.planningCenterFollowTimedCues)
+    }
+
+    func testPlanningCenterMapperBuildsOrderedTimedSceneCues() throws {
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-27T15:00:00Z"))
+        let items: [[String: Any]] = [
+            [
+                "id": "item-sermon",
+                "attributes": ["title": "Sunday Message", "item_type": "item", "sequence": 30],
+                "relationships": ["item_times": ["data": [["id": "time-sermon"]]]]
+            ],
+            [
+                "id": "item-song",
+                "attributes": ["title": "Opening Song", "item_type": "song", "sequence": 20],
+                "relationships": ["item_times": ["data": [["id": "time-song-old"], ["id": "time-song"]]]]
+            ],
+            [
+                "id": "item-note",
+                "attributes": ["title": "Volunteer note", "item_type": "item", "sequence": 10]
+            ]
+        ]
+        let included: [[String: Any]] = [
+            ["id": "time-song-old", "attributes": ["live_start_at": "2026-07-27T09:00:00Z"]],
+            ["id": "time-song", "attributes": ["live_start_at": "2026-07-27T14:55:00Z"]],
+            ["id": "time-sermon", "attributes": ["live_start_at": "2026-07-27T15:20:00Z"]]
+        ]
+
+        let cues = PlanningCenterSceneMapper.cues(
+            itemResources: items,
+            includedResources: included,
+            now: now
+        )
+
+        XCTAssertEqual(cues.map(\.id), ["item-song", "item-sermon"])
+        XCTAssertEqual(cues.map(\.scene), [.worship, .sermon])
+        XCTAssertEqual(cues[0].startsAt, ISO8601DateFormatter().date(from: "2026-07-27T14:55:00Z"))
+        XCTAssertEqual(cues[1].sequence, 30)
+    }
+
+    func testPlanningCenterSceneMapperCoversServiceVocabulary() {
+        XCTAssertEqual(PlanningCenterSceneMapper.scene(title: "Countdown"), .preService)
+        XCTAssertEqual(PlanningCenterSceneMapper.scene(title: "Great Is Thy Faithfulness", itemType: "song"), .worship)
+        XCTAssertEqual(PlanningCenterSceneMapper.scene(title: "Bible Reading"), .sermon)
+        XCTAssertEqual(PlanningCenterSceneMapper.scene(title: "Prayer and Response"), .prayer)
+        XCTAssertEqual(PlanningCenterSceneMapper.scene(title: "Walk-Out Music"), .postService)
+        XCTAssertEqual(
+            PlanningCenterSceneMapper.scene(
+                title: "Instrumental",
+                itemType: "song",
+                servicePosition: "post"
+            ),
+            .postService
+        )
+        XCTAssertEqual(PlanningCenterSceneMapper.scene(title: "Announcements"), .sermon)
+        XCTAssertNil(PlanningCenterSceneMapper.scene(title: "Technical note"))
+    }
+
+    @MainActor
+    func testPlanningCenterTimedCueDrivesNativeSceneOnlyAfterStartTime() throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(profileDirectory: profileDirectory, autoStartRemoteMonitoring: false)
+        defer {
+            model.debugStopPollingForTesting()
+            try? FileManager.default.removeItem(at: profileDirectory)
+        }
+        let now = Date(timeIntervalSince1970: 1_000)
+        let plan = PlanningCenterPlan(
+            id: "plan-1",
+            title: "Sunday",
+            serviceTypeID: "service-1",
+            serviceTypeName: "Sunday Services",
+            cues: [
+                PlanningCenterSceneCue(
+                    id: "song",
+                    title: "Worship Song",
+                    scene: .worship,
+                    startsAt: now.addingTimeInterval(-60),
+                    sequence: 1
+                ),
+                PlanningCenterSceneCue(
+                    id: "message",
+                    title: "Message",
+                    scene: .sermon,
+                    startsAt: now.addingTimeInterval(60),
+                    sequence: 2
+                )
+            ]
+        )
+        model.selectedScene = .preService
+        model.debugSetPlanningCenterFollowForTesting(true)
+        model.debugSetPlanningCenterPlanForTesting(plan)
+
+        model.debugUpdatePlanningCenterSceneForTesting(now: now)
+        XCTAssertEqual(model.selectedScene, .worship)
+        XCTAssertEqual(model.planningCenterCurrentCueIndex, 0)
+
+        model.activatePlanningCenterCue(at: 1)
+        XCTAssertEqual(model.selectedScene, .sermon)
+        model.debugUpdatePlanningCenterSceneForTesting(now: now)
+        XCTAssertEqual(
+            model.selectedScene,
+            .sermon,
+            "manual plan-cue advance must remain in control until the next timed boundary"
+        )
+
+        model.debugUpdatePlanningCenterSceneForTesting(now: now.addingTimeInterval(120))
+        XCTAssertEqual(model.selectedScene, .sermon)
+        XCTAssertEqual(model.planningCenterCurrentCueIndex, 1)
     }
 
     @MainActor

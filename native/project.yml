@@ -35,6 +35,7 @@ targets:
       - sdk: CoreAudio.framework
       - sdk: AudioToolbox.framework
       - sdk: AVFoundation.framework
+      - sdk: Security.framework
   AutoMixNativeTests:
     type: bundle.unit-test
     platform: macOS

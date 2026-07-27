@@ -433,20 +433,23 @@ realtime-safe.
 
 ### Planning Center (driving scenes from the real service plan)
 
-The scene timeline can run off your **actual** Planning Center Services plan instead of
-the built-in sample. It uses a **Personal Access Token** kept server-side — it never
-enters the browser bundle, and the browser only calls the same-origin `/pco` dev proxy
-(which also avoids CORS). In the shipping appliance the device makes these calls itself.
+AutoMix Native can run the scene timeline from the next (or most recent) real Planning
+Center Services plan. The native app makes the API calls itself; the Personal Access
+Token secret is stored in macOS Keychain and is not written to the venue profile,
+incident log, or browser bundle.
 
 1. Create a token at <https://api.planningcenteronline.com/oauth/applications> →
    *Personal Access Tokens*.
-2. `cp web/.env.example web/.env` and fill in `PCO_APP_ID` / `PCO_SECRET` (optionally pin
-   `VITE_PCO_SERVICE_TYPE_ID`). Restart `npm run dev`.
-3. In the app, click **Connect Planning Center** in the scene bar — it pulls your next
-   (or most recent) plan and maps each item to a scene (songs → Worship; message /
-   prayer / welcome → speech-forward scenes; pre/post → ambient). Mapping lives in
-   `web/src/scenes/pco.ts`.
+2. In **Planning Center Scenes**, enter the application ID and secret, optionally enter
+   the numeric service-type ID, and select **Save Credentials**.
+3. Review the recognized cues, test **Previous** / **Next**, then enable **Follow timed
+   plan cues**. Timed cues use Planning Center `ItemTime.live_start_at`; pre/post
+   `service_position` wins over title matching.
 
-No credentials handy? Click **sample** to run the exact same parser + scene-mapping on a
-bundled PCO-shaped plan (fully offline). If a live connect fails it shows a clear error
-and keeps mixing on the fallback plan — it never interrupts the program.
+The plan refreshes every five minutes. A failed refresh records a warning and retries
+without changing the current scene or interrupting audio. Manual scene selection,
+SAFE, FREEZE, SHADOW, and channel overrides remain available. See
+[`docs/PLANNING_CENTER.md`](docs/PLANNING_CENTER.md) for mapping and rehearsal steps.
+
+The browser prototype still supports its same-origin `/pco` development proxy through
+`web/.env`; it is not the credential path used by AutoMix Native.

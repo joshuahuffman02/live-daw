@@ -178,7 +178,10 @@ xcodebuild test -project native/AutoMixNative.xcodeproj \
 - ML runtime: none in the current native app. Future ONNX/Core ML work is
   control-thread-only and must not be required for the app to pass audio.
 - Appliance target: Mac mini or MacBook with Apple Silicon, using macOS Core Audio.
-- Integration: Planning Center Services API for the service plan → drives scenes.
+- Integration: the native app reads Planning Center Services plans with a
+  Keychain-protected Personal Access Token, maps service position/item vocabulary to
+  scenes, and can follow `ItemTime.live_start_at` cues. API failure holds the current
+  scene and never interrupts audio.
 
 ## Core architecture: two-rate
 - **Audio thread:** per-sample deterministic DSP. No allocation, no ML, no blocking.

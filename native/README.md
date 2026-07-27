@@ -5,8 +5,9 @@ workflow. It keeps the browser app as a prototype/reference and moves the real a
 path into a macOS `.app`:
 
 - SwiftUI operator surface for device selection, status, channel mapping, meters,
-  scenes, manual fader/pan overrides, SAFE, FREEZE, SHADOW, soundcheck recording, and
-  segmented continuous multitrack/program capture.
+  scenes, Keychain-backed Planning Center cue driving, manual fader/pan overrides,
+  SAFE, FREEZE, SHADOW, soundcheck recording, and segmented continuous
+  multitrack/program capture.
 - Objective-C++ Core Audio bridge for Dante Virtual Soundcard / Dante hardware exposed
   as Core Audio devices.
 - Existing C++ `bdsp::Engine` and `app::BrainThread` as the mixer core.

@@ -462,11 +462,13 @@ struct VenueProfile: Codable, Sendable {
     var measuredEndToEndVideoLatencyMs: Double
     var encoderHealthURL: String
     var egressHealthURL: String
+    var planningCenterServiceTypeID: String
+    var planningCenterFollowTimedCues: Bool
     var expectedInputChannels: Int
     var expectedSampleRate: Double
     var channelMappings: [ChannelMapping]
 
-    init(inputDeviceUID: String, outputDeviceUID: String, scene: MixScene = .worship, shadowMode: Bool = true, measuredEndToEndAudioLatencyMs: Double = 0, measuredEndToEndVideoLatencyMs: Double = 0, encoderHealthURL: String = "", egressHealthURL: String = "", expectedInputChannels: Int = 64, expectedSampleRate: Double = 96000, channelMappings: [ChannelMapping]) {
+    init(inputDeviceUID: String, outputDeviceUID: String, scene: MixScene = .worship, shadowMode: Bool = true, measuredEndToEndAudioLatencyMs: Double = 0, measuredEndToEndVideoLatencyMs: Double = 0, encoderHealthURL: String = "", egressHealthURL: String = "", planningCenterServiceTypeID: String = "", planningCenterFollowTimedCues: Bool = false, expectedInputChannels: Int = 64, expectedSampleRate: Double = 96000, channelMappings: [ChannelMapping]) {
         self.inputDeviceUID = inputDeviceUID
         self.outputDeviceUID = outputDeviceUID
         self.scene = scene
@@ -475,6 +477,8 @@ struct VenueProfile: Codable, Sendable {
         self.measuredEndToEndVideoLatencyMs = min(max(measuredEndToEndVideoLatencyMs, 0), 1_000)
         self.encoderHealthURL = encoderHealthURL
         self.egressHealthURL = egressHealthURL
+        self.planningCenterServiceTypeID = planningCenterServiceTypeID
+        self.planningCenterFollowTimedCues = planningCenterFollowTimedCues
         self.expectedInputChannels = min(max(expectedInputChannels, 1), 64)
         self.expectedSampleRate = BroadcastSampleRate.nearestSupported(expectedSampleRate)
         self.channelMappings = Self.normalizedChannelMappingsIfReady(
@@ -515,6 +519,14 @@ struct VenueProfile: Codable, Sendable {
         )
         encoderHealthURL = try container.decodeIfPresent(String.self, forKey: .encoderHealthURL) ?? ""
         egressHealthURL = try container.decodeIfPresent(String.self, forKey: .egressHealthURL) ?? ""
+        planningCenterServiceTypeID = try container.decodeIfPresent(
+            String.self,
+            forKey: .planningCenterServiceTypeID
+        ) ?? ""
+        planningCenterFollowTimedCues = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .planningCenterFollowTimedCues
+        ) ?? false
         expectedInputChannels = min(max(try container.decodeIfPresent(Int.self, forKey: .expectedInputChannels) ?? 64, 1), 64)
         expectedSampleRate = BroadcastSampleRate.nearestSupported(try container.decodeIfPresent(Double.self, forKey: .expectedSampleRate) ?? 96000)
         let decodedMappings = try container.decode([ChannelMapping].self, forKey: .channelMappings)

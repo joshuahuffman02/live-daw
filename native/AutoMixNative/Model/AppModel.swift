@@ -1,6 +1,404 @@
 import AVFoundation
 import Foundation
+import Security
 import SwiftUI
+
+struct PlanningCenterCredentials: Codable, Equatable, Sendable {
+    var applicationID: String
+    var secret: String
+}
+
+enum PlanningCenterCredentialStore {
+    private static let service = "com.livedaw.automixnative.planning-center"
+    private static let account = "personal-access-token"
+
+    static func load() -> PlanningCenterCredentials? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data
+        else { return nil }
+        return try? JSONDecoder().decode(PlanningCenterCredentials.self, from: data)
+    }
+
+    static func save(_ credentials: PlanningCenterCredentials) throws {
+        let data = try JSONEncoder().encode(credentials)
+        let identity: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let status = SecItemUpdate(identity as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = identity
+            add.merge(attributes) { _, new in new }
+            let addStatus = SecItemAdd(add as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw PlanningCenterError.keychain(addStatus)
+            }
+        } else if status != errSecSuccess {
+            throw PlanningCenterError.keychain(status)
+        }
+    }
+
+    static func remove() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw PlanningCenterError.keychain(status)
+        }
+    }
+}
+
+enum PlanningCenterError: LocalizedError, Equatable {
+    case invalidCredentials
+    case invalidServiceTypeID
+    case http(Int)
+    case invalidResponse
+    case noServiceTypes
+    case noPlans
+    case keychain(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidCredentials:
+            return "Enter a Planning Center Personal Access Token application ID and secret."
+        case .invalidServiceTypeID:
+            return "Planning Center service type ID contains unsupported characters."
+        case let .http(status):
+            return "Planning Center returned HTTP \(status)."
+        case .invalidResponse:
+            return "Planning Center returned an unreadable response."
+        case .noServiceTypes:
+            return "No Planning Center Services service types were found."
+        case .noPlans:
+            return "No future or recent Planning Center plan was found."
+        case let .keychain(status):
+            return "Could not update Planning Center credentials in Keychain (OSStatus \(status))."
+        }
+    }
+}
+
+struct PlanningCenterSceneCue: Identifiable, Codable, Equatable, Sendable {
+    var id: String
+    var title: String
+    var scene: MixScene
+    var startsAt: Date?
+    var sequence: Int
+}
+
+struct PlanningCenterPlan: Codable, Equatable, Sendable {
+    var id: String
+    var title: String
+    var serviceTypeID: String
+    var serviceTypeName: String
+    var cues: [PlanningCenterSceneCue]
+}
+
+enum PlanningCenterSceneMapper {
+    static func scene(
+        title: String,
+        itemType: String? = nil,
+        servicePosition: String? = nil
+    ) -> MixScene? {
+        switch servicePosition?.lowercased() {
+        case "pre":
+            return .preService
+        case "post":
+            return .postService
+        default:
+            break
+        }
+        let normalized = "\(itemType ?? "") \(title)"
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+
+        if containsAny(normalized, [
+            "pre-service", "preservice", "prelude", "countdown", "doors", "walk-in"
+        ]) {
+            return .preService
+        }
+        if containsAny(normalized, [
+            "post-service", "postservice", "postlude", "dismissal", "walk-out", "walkout"
+        ]) {
+            return .postService
+        }
+        if containsAny(normalized, [
+            "message", "sermon", "teaching", "homily", "scripture", "bible reading",
+            "welcome", "announcement", "offering"
+        ]) {
+            return .sermon
+        }
+        if containsAny(normalized, [
+            "prayer", "intercession", "altar", "response", "communion"
+        ]) {
+            return .prayer
+        }
+        if containsAny(normalized, [
+            "song", "worship", "praise", "music", "hymn", "special"
+        ]) {
+            return .worship
+        }
+        return nil
+    }
+
+    private static func containsAny(_ value: String, _ candidates: [String]) -> Bool {
+        candidates.contains { value.contains($0) }
+    }
+
+    static func cues(
+        itemResources: [[String: Any]],
+        includedResources: [[String: Any]],
+        now: Date
+    ) -> [PlanningCenterSceneCue] {
+        var includedByID: [String: [String: Any]] = [:]
+        for resource in includedResources {
+            if let id = string(resource["id"]) {
+                includedByID[id] = resource
+            }
+        }
+
+        return itemResources.compactMap { resource -> PlanningCenterSceneCue? in
+            guard let id = string(resource["id"]) else { return nil }
+            let attributes = self.attributes(resource)
+            let title = (attributes["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ??
+                (attributes["description"] as? String).flatMap { $0.isEmpty ? nil : $0 } ??
+                "Plan Item"
+            let itemType = attributes["item_type"] as? String
+            let servicePosition = attributes["service_position"] as? String
+            guard let scene = scene(
+                title: title,
+                itemType: itemType,
+                servicePosition: servicePosition
+            ) else { return nil }
+            let sequence = int(attributes["sequence"]) ?? Int.max
+            let itemTimes = relationshipIDs(resource, name: "item_times")
+                .compactMap { includedByID[$0] }
+                .compactMap { itemTime -> Date? in
+                    let itemTimeAttributes = self.attributes(itemTime)
+                    guard itemTimeAttributes["exclude"] as? Bool != true else { return nil }
+                    let value = itemTimeAttributes["live_start_at"] as? String ??
+                        itemTimeAttributes["starts_at"] as? String
+                    return value.flatMap(parseDate)
+                }
+            let serviceWindowStart = now.addingTimeInterval(-4 * 60 * 60)
+            let startsAt = itemTimes.filter { $0 >= serviceWindowStart }.min() ?? itemTimes.max()
+            return PlanningCenterSceneCue(
+                id: id,
+                title: title,
+                scene: scene,
+                startsAt: startsAt,
+                sequence: sequence
+            )
+        }
+        .sorted {
+            if $0.sequence != $1.sequence { return $0.sequence < $1.sequence }
+            return ($0.startsAt ?? .distantFuture) < ($1.startsAt ?? .distantFuture)
+        }
+    }
+
+    private static func string(_ value: Any?) -> String? {
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func int(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
+        return nil
+    }
+
+    private static func attributes(_ resource: [String: Any]) -> [String: Any] {
+        resource["attributes"] as? [String: Any] ?? [:]
+    }
+
+    private static func relationshipIDs(_ resource: [String: Any], name: String) -> [String] {
+        guard let relationships = resource["relationships"] as? [String: Any],
+              let relationship = relationships[name] as? [String: Any],
+              let data = relationship["data"]
+        else { return [] }
+        if let one = data as? [String: Any], let id = string(one["id"]) {
+            return [id]
+        }
+        return (data as? [[String: Any]] ?? []).compactMap { string($0["id"]) }
+    }
+
+    private static func parseDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
+actor PlanningCenterAPIClient {
+    private let credentials: PlanningCenterCredentials
+    private let session: URLSession
+    private let baseURL: URL
+
+    init(
+        credentials: PlanningCenterCredentials,
+        session: URLSession = .shared,
+        baseURL: URL = URL(string: "https://api.planningcenteronline.com/services/v2/")!
+    ) {
+        self.credentials = credentials
+        self.session = session
+        self.baseURL = baseURL
+    }
+
+    func fetchPlan(serviceTypeID explicitServiceTypeID: String?) async throws -> PlanningCenterPlan {
+        guard !credentials.applicationID.isEmpty, !credentials.secret.isEmpty else {
+            throw PlanningCenterError.invalidCredentials
+        }
+
+        let serviceTypeID: String
+        let serviceTypeName: String
+        if let explicit = explicitServiceTypeID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !explicit.isEmpty {
+            guard Self.validID(explicit) else { throw PlanningCenterError.invalidServiceTypeID }
+            serviceTypeID = explicit
+            let types = try await resources(path: "service_types?per_page=100")
+            serviceTypeName = types.data.first(where: { Self.string($0["id"]) == explicit })
+                .flatMap { Self.attributes($0)["name"] as? String } ?? "Service Type \(explicit)"
+        } else {
+            let types = try await resources(path: "service_types?per_page=100")
+            guard let first = types.data.first,
+                  let id = Self.string(first["id"])
+            else { throw PlanningCenterError.noServiceTypes }
+            serviceTypeID = id
+            serviceTypeName = Self.attributes(first)["name"] as? String ?? "Service Type \(id)"
+        }
+
+        var plans = try await resources(
+            path: "service_types/\(serviceTypeID)/plans?filter=future&per_page=1&order=sort_date",
+            maxPages: 1
+        )
+        if plans.data.isEmpty {
+            plans = try await resources(
+                path: "service_types/\(serviceTypeID)/plans?per_page=1&order=-sort_date",
+                maxPages: 1
+            )
+        }
+        guard let planResource = plans.data.first,
+              let planID = Self.string(planResource["id"])
+        else { throw PlanningCenterError.noPlans }
+        let planAttributes = Self.attributes(planResource)
+        let planTitle = (planAttributes["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ??
+            (planAttributes["dates"] as? String).flatMap { $0.isEmpty ? nil : $0 } ??
+            "Plan \(planID)"
+
+        let items = try await resources(
+            path: "service_types/\(serviceTypeID)/plans/\(planID)/items?per_page=100&include=item_times"
+        )
+        let cues = PlanningCenterSceneMapper.cues(
+            itemResources: items.data,
+            includedResources: items.included,
+            now: Date()
+        )
+
+        return PlanningCenterPlan(
+            id: planID,
+            title: planTitle,
+            serviceTypeID: serviceTypeID,
+            serviceTypeName: serviceTypeName,
+            cues: cues
+        )
+    }
+
+    private struct Resources {
+        var data: [[String: Any]]
+        var included: [[String: Any]]
+    }
+
+    private func resources(path: String, maxPages: Int = 100) async throws -> Resources {
+        guard let firstURL = URL(string: path, relativeTo: baseURL) else {
+            throw PlanningCenterError.invalidResponse
+        }
+        var nextURL: URL? = firstURL
+        var allData: [[String: Any]] = []
+        var allIncluded: [[String: Any]] = []
+        var pageCount = 0
+
+        while let url = nextURL, pageCount < maxPages {
+            guard url.scheme == baseURL.scheme, url.host == baseURL.host else {
+                throw PlanningCenterError.invalidResponse
+            }
+            let page = try await resourcePage(url: url)
+            allData.append(contentsOf: page.data)
+            allIncluded.append(contentsOf: page.included)
+            nextURL = page.next
+            pageCount += 1
+        }
+
+        return Resources(data: allData, included: allIncluded)
+    }
+
+    private func resourcePage(url: URL) async throws -> (
+        data: [[String: Any]],
+        included: [[String: Any]],
+        next: URL?
+    ) {
+        var request = URLRequest(url: url)
+        let token = Data("\(credentials.applicationID):\(credentials.secret)".utf8)
+            .base64EncodedString()
+        request.setValue("Basic \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 10
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw PlanningCenterError.invalidResponse
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw PlanningCenterError.http(http.statusCode)
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let resources = root["data"] as? [[String: Any]]
+        else {
+            throw PlanningCenterError.invalidResponse
+        }
+        let nextString = (root["links"] as? [String: Any])?["next"] as? String
+        let nextURL = nextString.flatMap { URL(string: $0, relativeTo: url) }
+        return (
+            data: resources,
+            included: root["included"] as? [[String: Any]] ?? [],
+            next: nextURL
+        )
+    }
+
+    private static func validID(_ id: String) -> Bool {
+        !id.isEmpty && id.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_")).contains($0)
+        }
+    }
+
+    private static func string(_ value: Any?) -> String? {
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func attributes(_ resource: [String: Any]) -> [String: Any] {
+        resource["attributes"] as? [String: Any] ?? [:]
+    }
+
+}
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -152,6 +550,33 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var encoderHealth: StreamEndpointHealth = .disabled
     @Published private(set) var egressHealth: StreamEndpointHealth = .disabled
+    @Published var planningCenterApplicationID = ""
+    @Published var planningCenterSecret = ""
+    @Published var planningCenterServiceTypeID = "" {
+        didSet {
+            if oldValue != planningCenterServiceTypeID {
+                planningCenterPlan = nil
+                planningCenterCurrentCueIndex = nil
+                nextPlanningCenterRefreshMs = 0
+            }
+            saveProfile()
+        }
+    }
+    @Published var planningCenterFollowTimedCues = false {
+        didSet {
+            saveProfile()
+            guard !loadingProfile else { return }
+            if planningCenterFollowTimedCues {
+                refreshPlanningCenterPlan()
+            } else {
+                planningCenterStatus = planningCenterPlan == nil ? "not following" : "plan loaded · manual"
+            }
+        }
+    }
+    @Published private(set) var planningCenterCredentialStored = false
+    @Published private(set) var planningCenterStatus = "not connected"
+    @Published private(set) var planningCenterPlan: PlanningCenterPlan?
+    @Published private(set) var planningCenterCurrentCueIndex: Int?
     @Published var stabilityMonitorDurationSeconds = 300.0 {
         didSet {
             let clamped = min(max(stabilityMonitorDurationSeconds, 30.0), 14_400.0)
@@ -234,6 +659,10 @@ final class AppModel: ObservableObject {
     private var streamHealthTask: Task<Void, Never>?
     private var nextStreamHealthProbeMs: Int64 = 0
     private var resumingAutonomousSession = false
+    private var planningCenterCredentials: PlanningCenterCredentials?
+    private var planningCenterTask: Task<Void, Never>?
+    private var nextPlanningCenterRefreshMs: Int64 = 0
+    private var planningCenterLastAppliedCueID: String?
     private var previousRecordingDroppedFrameCount: UInt = 0
     private var previousOutputClockWarning = false
     private var previousWatchdogSafeActive = false
@@ -254,12 +683,16 @@ final class AppModel: ObservableObject {
     init(profileDirectory: URL? = nil, autoStartRemoteMonitoring: Bool = true) {
         self.profileDirectoryOverride = profileDirectory
         loadProfile()
+        loadPlanningCenterCredentials()
         refreshDevices()
         refreshAudioInputPermission()
         startPolling()
         monitorBridge = MonitorBridge(appModel: self)
         remoteMonitoringEnabled = autoStartRemoteMonitoring
         resumeAutonomousSessionIfNeeded()
+        if planningCenterFollowTimedCues {
+            refreshPlanningCenterPlan()
+        }
     }
 
     private func applyRemoteMonitoringState() {
@@ -269,6 +702,152 @@ final class AppModel: ObservableObject {
         } else {
             monitorBridge.stop()
         }
+    }
+
+    func savePlanningCenterCredentials() {
+        let credentials = PlanningCenterCredentials(
+            applicationID: planningCenterApplicationID.trimmingCharacters(in: .whitespacesAndNewlines),
+            secret: planningCenterSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        guard !credentials.applicationID.isEmpty, !credentials.secret.isEmpty else {
+            planningCenterStatus = PlanningCenterError.invalidCredentials.localizedDescription
+            return
+        }
+        do {
+            try PlanningCenterCredentialStore.save(credentials)
+            planningCenterCredentials = credentials
+            planningCenterCredentialStored = true
+            planningCenterSecret = ""
+            planningCenterStatus = "credentials saved in Keychain"
+            refreshPlanningCenterPlan()
+        } catch {
+            planningCenterStatus = error.localizedDescription
+        }
+    }
+
+    func disconnectPlanningCenter() {
+        do {
+            try PlanningCenterCredentialStore.remove()
+        } catch {
+            planningCenterStatus = error.localizedDescription
+            return
+        }
+        planningCenterTask?.cancel()
+        planningCenterTask = nil
+        planningCenterCredentials = nil
+        planningCenterCredentialStored = false
+        planningCenterApplicationID = ""
+        planningCenterSecret = ""
+        planningCenterPlan = nil
+        planningCenterCurrentCueIndex = nil
+        planningCenterLastAppliedCueID = nil
+        planningCenterFollowTimedCues = false
+        planningCenterStatus = "disconnected"
+    }
+
+    func refreshPlanningCenterPlan() {
+        guard planningCenterTask == nil else { return }
+        guard let credentials = planningCenterCredentials else {
+            planningCenterStatus = "save Planning Center credentials first"
+            return
+        }
+        planningCenterStatus = "loading service plan"
+        let serviceTypeID = planningCenterServiceTypeID
+        let client = PlanningCenterAPIClient(credentials: credentials)
+        planningCenterTask = Task { [weak self] in
+            do {
+                let plan = try await client.fetchPlan(serviceTypeID: serviceTypeID)
+                guard !Task.isCancelled else { return }
+                self?.finishPlanningCenterRefresh(plan: plan)
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.finishPlanningCenterRefresh(error: error)
+            }
+        }
+    }
+
+    func activatePlanningCenterCue(at index: Int) {
+        guard let plan = planningCenterPlan, plan.cues.indices.contains(index) else { return }
+        applyPlanningCenterCue(plan.cues[index], index: index, source: "operator")
+    }
+
+    func advancePlanningCenterCue() {
+        guard let plan = planningCenterPlan, !plan.cues.isEmpty else { return }
+        let next = min((planningCenterCurrentCueIndex ?? -1) + 1, plan.cues.count - 1)
+        activatePlanningCenterCue(at: next)
+    }
+
+    func previousPlanningCenterCue() {
+        guard let plan = planningCenterPlan, !plan.cues.isEmpty else { return }
+        let previous = max((planningCenterCurrentCueIndex ?? 1) - 1, 0)
+        activatePlanningCenterCue(at: previous)
+    }
+
+    private func loadPlanningCenterCredentials() {
+        guard let credentials = PlanningCenterCredentialStore.load() else { return }
+        planningCenterCredentials = credentials
+        planningCenterApplicationID = credentials.applicationID
+        planningCenterCredentialStored = true
+        planningCenterStatus = "credentials loaded from Keychain"
+    }
+
+    private func finishPlanningCenterRefresh(plan: PlanningCenterPlan) {
+        planningCenterTask = nil
+        planningCenterServiceTypeID = plan.serviceTypeID
+        planningCenterPlan = plan
+        nextPlanningCenterRefreshMs = Int64(Date().timeIntervalSince1970 * 1_000) + 300_000
+        planningCenterStatus = plan.cues.isEmpty
+            ? "\(plan.title) loaded · no recognized scene cues"
+            : "\(plan.title) · \(plan.cues.count) scene cues"
+        updatePlanningCenterScene(now: Date())
+    }
+
+    private func finishPlanningCenterRefresh(error: Error) {
+        planningCenterTask = nil
+        nextPlanningCenterRefreshMs = Int64(Date().timeIntervalSince1970 * 1_000) + 60_000
+        planningCenterStatus = error.localizedDescription
+        recordRuntimeIncident(
+            kind: "planning-center-refresh-failed",
+            severity: .warning,
+            message: error.localizedDescription,
+            details: ["serviceTypeID": planningCenterServiceTypeID]
+        )
+    }
+
+    private func updatePlanningCenterScene(now: Date) {
+        guard planningCenterFollowTimedCues, let plan = planningCenterPlan else { return }
+        let eligible = plan.cues.enumerated().filter { _, cue in
+            guard let startsAt = cue.startsAt else { return false }
+            return startsAt <= now
+        }
+        guard let latest = eligible.max(by: {
+            ($0.element.startsAt ?? .distantPast) < ($1.element.startsAt ?? .distantPast)
+        }) else { return }
+        guard latest.element.id != planningCenterLastAppliedCueID else { return }
+        applyPlanningCenterCue(latest.element, index: latest.offset, source: "timed plan")
+    }
+
+    private func applyPlanningCenterCue(
+        _ cue: PlanningCenterSceneCue,
+        index: Int,
+        source: String
+    ) {
+        planningCenterCurrentCueIndex = index
+        if source == "timed plan" {
+            planningCenterLastAppliedCueID = cue.id
+        }
+        selectedScene = cue.scene
+        planningCenterStatus = "\(cue.title) → \(cue.scene.label) · \(source)"
+        recordRuntimeIncident(
+            kind: "planning-center-scene-applied",
+            severity: .info,
+            message: "\(cue.title) mapped to \(cue.scene.label)",
+            details: [
+                "cueID": cue.id,
+                "scene": cue.scene.rawValue,
+                "source": source
+            ]
+        )
     }
 
     private func applyAutomaticRecoveryState() {
@@ -1026,6 +1605,12 @@ final class AppModel: ObservableObject {
         updateRuntimeIncidentTransitions(nowMs: nowMs)
         updateAutomaticRecovery(nowMs: nowMs)
         updateStreamHealthMonitoring(nowMs: nowMs)
+        updatePlanningCenterScene(now: Date(timeIntervalSince1970: Double(nowMs) / 1_000))
+        if planningCenterFollowTimedCues,
+           planningCenterTask == nil,
+           nowMs >= nextPlanningCenterRefreshMs {
+            refreshPlanningCenterPlan()
+        }
         monitorBridge?.captureAndPublish(nowMs: nowMs)
     }
 
@@ -1601,6 +2186,8 @@ final class AppModel: ObservableObject {
         measuredEndToEndVideoLatencyMs = profile.measuredEndToEndVideoLatencyMs
         encoderHealthURL = profile.encoderHealthURL
         egressHealthURL = profile.egressHealthURL
+        planningCenterServiceTypeID = profile.planningCenterServiceTypeID
+        planningCenterFollowTimedCues = profile.planningCenterFollowTimedCues
         expectedInputChannels = profile.expectedInputChannels
         expectedSampleRate = profile.expectedSampleRate
         channelMappings = profile.channelMappings.isEmpty ? ChannelMapping.defaults(count: 32) : profile.channelMappings
@@ -1618,6 +2205,8 @@ final class AppModel: ObservableObject {
             measuredEndToEndVideoLatencyMs: measuredEndToEndVideoLatencyMs,
             encoderHealthURL: encoderHealthURL,
             egressHealthURL: egressHealthURL,
+            planningCenterServiceTypeID: planningCenterServiceTypeID,
+            planningCenterFollowTimedCues: planningCenterFollowTimedCues,
             expectedInputChannels: expectedInputChannels,
             expectedSampleRate: expectedSampleRate,
             channelMappings: channelMappings
@@ -2037,6 +2626,22 @@ final class AppModel: ObservableObject {
     }
 
 #if DEBUG
+    func debugSetPlanningCenterPlanForTesting(_ plan: PlanningCenterPlan) {
+        planningCenterPlan = plan
+        planningCenterCurrentCueIndex = nil
+        planningCenterLastAppliedCueID = nil
+    }
+
+    func debugSetPlanningCenterFollowForTesting(_ enabled: Bool) {
+        loadingProfile = true
+        planningCenterFollowTimedCues = enabled
+        loadingProfile = false
+    }
+
+    func debugUpdatePlanningCenterSceneForTesting(now: Date) {
+        updatePlanningCenterScene(now: now)
+    }
+
     func debugAutonomousSessionIntentForTesting() -> (active: Bool, continuousRecording: Bool)? {
         guard let url = try? autonomousSessionIntentURL(),
               let data = try? Data(contentsOf: url),

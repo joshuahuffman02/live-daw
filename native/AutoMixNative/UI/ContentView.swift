@@ -160,6 +160,123 @@ private struct DeviceControlPanel: View {
                     .padding(.vertical, 4)
                 }
 
+                GroupBox("Planning Center Scenes") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField(
+                            "Personal Access Token application ID",
+                            text: $model.planningCenterApplicationID
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        SecureField(
+                            model.planningCenterCredentialStored
+                                ? "Secret saved in Keychain"
+                                : "Personal Access Token secret",
+                            text: $model.planningCenterSecret
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        TextField(
+                            "Service type ID (blank = first)",
+                            text: $model.planningCenterServiceTypeID
+                        )
+                        .textFieldStyle(.roundedBorder)
+
+                        HStack {
+                            Button("Save Credentials") {
+                                model.savePlanningCenterCredentials()
+                            }
+                            .disabled(
+                                model.planningCenterApplicationID.trimmingCharacters(
+                                    in: .whitespacesAndNewlines
+                                ).isEmpty ||
+                                    model.planningCenterSecret.trimmingCharacters(
+                                        in: .whitespacesAndNewlines
+                                    ).isEmpty
+                            )
+
+                            Button("Refresh Plan") {
+                                model.refreshPlanningCenterPlan()
+                            }
+                            .disabled(!model.planningCenterCredentialStored)
+
+                            if model.planningCenterCredentialStored {
+                                Button("Disconnect", role: .destructive) {
+                                    model.disconnectPlanningCenter()
+                                }
+                            }
+                        }
+                        .font(.caption)
+
+                        Toggle(
+                            "Follow timed plan cues",
+                            isOn: $model.planningCenterFollowTimedCues
+                        )
+                        .toggleStyle(.switch)
+                        .disabled(
+                            !model.planningCenterCredentialStored ||
+                                model.planningCenterPlan == nil
+                        )
+                        .help("Only timed, recognized plan items drive scenes. Manual scene selection, SAFE, FREEZE, and channel overrides remain available.")
+
+                        StatusRow(
+                            label: "Plan",
+                            value: model.planningCenterStatus,
+                            warning: model.planningCenterStatus.localizedCaseInsensitiveContains("failed") ||
+                                model.planningCenterStatus.localizedCaseInsensitiveContains("error")
+                        )
+
+                        if let plan = model.planningCenterPlan {
+                            Text("\(plan.serviceTypeName) · \(plan.title)")
+                                .font(.caption.weight(.semibold))
+                            HStack {
+                                Button {
+                                    model.previousPlanningCenterCue()
+                                } label: {
+                                    Label("Previous", systemImage: "backward.end")
+                                }
+                                Button {
+                                    model.advancePlanningCenterCue()
+                                } label: {
+                                    Label("Next", systemImage: "forward.end")
+                                }
+                            }
+                            .font(.caption)
+                            .disabled(plan.cues.isEmpty)
+
+                            ForEach(Array(plan.cues.prefix(16).enumerated()), id: \.element.id) { index, cue in
+                                Button {
+                                    model.activatePlanningCenterCue(at: index)
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: model.planningCenterCurrentCueIndex == index
+                                              ? "play.circle.fill"
+                                              : "circle")
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(cue.title)
+                                                .lineLimit(1)
+                                            Text("\(cue.scene.label)\(planningCenterCueTime(cue))")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            if plan.cues.count > 16 {
+                                Text("+\(plan.cues.count - 16) more cues")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Text("Credentials are stored only in macOS Keychain. Scene changes use the existing smoothed 1–2 second DSP transition path.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 if let bridge = model.monitorBridge {
                     RemoteMonitoringPanel(model: model, bridge: bridge)
                 }
@@ -648,6 +765,11 @@ private struct DeviceControlPanel: View {
             return model.detectedBufferFrames > 0 ? "waiting / max \(model.detectedBufferFrames)" : "waiting"
         }
         return "\(model.lastCallbackFrames) last / \(model.maxObservedCallbackFrames) max"
+    }
+
+    private func planningCenterCueTime(_ cue: PlanningCenterSceneCue) -> String {
+        guard let startsAt = cue.startsAt else { return " · manual cue" }
+        return " · \(startsAt.formatted(date: .omitted, time: .shortened))"
     }
 
     private var callbackAgeSummary: String {
