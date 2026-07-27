@@ -26,8 +26,17 @@ function render(s) {
 
   $("runDot").className = "dot " + (s.isRunning ? "run" : "stop");
   $("runText").textContent = s.isRunning ? "Auto mix running" : "Engine stopped";
+  const pipeline = s.pipeline || {};
+  const pipelineParts = [];
+  if (pipeline.encoderState && pipeline.encoderState !== "disabled") {
+    pipelineParts.push(`encoder ${pipeline.encoderState}`);
+  }
+  if (pipeline.egressState && pipeline.egressState !== "disabled") {
+    pipelineParts.push(`egress ${pipeline.egressState}`);
+  }
   $("subStatus").textContent =
-    `${s.safe ? "SAFE on" : "SAFE off"} · ${s.freeze ? "FREEZE on" : "FREEZE off"} · ${s.inputChannelCount} ch @ ${Math.round(s.sampleRate / 1000)}k`;
+    `${s.safe ? "SAFE on" : "SAFE off"} · ${s.freeze ? "FREEZE on" : "FREEZE off"} · ${s.inputChannelCount} ch @ ${Math.round(s.sampleRate / 1000)}k` +
+    (pipelineParts.length ? ` · ${pipelineParts.join(" · ")}` : "");
 
   setMeter("meterL", "dbL", s.stream.l);
   setMeter("meterR", "dbR", s.stream.r);

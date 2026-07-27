@@ -122,7 +122,15 @@ final class MonitorBridge: ObservableObject {
             integratedLufs: model.integratedLufs,
             counters: counters,
             routeHealthy: model.remoteRouteHealthy,
-            channels: alertChannels
+            channels: alertChannels,
+            inputCallbackAgeMs: model.inputCallbackAgeMs,
+            outputCallbackAgeMs: model.outputCallbackAgeMs,
+            outputClockCorrectionPpm: model.outputClockCorrectionPpm,
+            outputRingFillFrames: model.separateOutputRingFillFrames,
+            outputRingTargetFrames: model.separateOutputPrebufferFrames,
+            recordingDroppedFrames: model.continuousRecordingDroppedFrameCount,
+            encoderHealth: model.encoderHealth,
+            egressHealth: model.egressHealth
         )
         let (alerts, severity) = evaluator.step(alertInput, nowMs: nowMs)
 
@@ -141,6 +149,12 @@ final class MonitorBridge: ObservableObject {
             bpmConfidence: model.bpmConfidence,
             stream: stream,
             counters: counters,
+            pipeline: PipelineTelemetry(
+                encoderState: model.encoderHealth.state,
+                encoderDetail: model.encoderHealth.detail,
+                egressState: model.egressHealth.state,
+                egressDetail: model.egressHealth.detail
+            ),
             channels: TelemetryAssembler.channelTelemetry(model.channelMappings, levelsDb: levels),
             alerts: alerts,
             severity: severity

@@ -185,6 +185,12 @@ Current native milestone:
   exposes captured frames, segment count, output folder, and drop telemetry; storage
   sizing and recovery limits are documented in
   [`docs/CONTINUOUS_RECORDING.md`](docs/CONTINUOUS_RECORDING.md);
+- detects route loss and callback stalls, retries the exact configured route with
+  verification and bounded backoff, restores continuous-capture intent, and writes
+  ordered durable incident JSONL; optional encoder-ingest and public-egress endpoints
+  provide fresh-payload verification to the desktop and remote alert path, with the
+  crash-relaunch/session-resume procedure documented in
+  [`docs/RUNTIME_RESILIENCE.md`](docs/RUNTIME_RESILIENCE.md);
 - enforces SAFE bypass directly from the audio callback so the next render enters the
   curated role-aware raw-input mix even while FREEZE is holding control-thread
   targets; the fallback gives speech priority, attenuates instruments/unknown patch

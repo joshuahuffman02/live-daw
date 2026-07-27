@@ -409,6 +409,13 @@ The app does not configure the Midas console. It expects Dante to already exist:
   queue, rotates 60-second raw-input-plus-program float WAVs, checkpoints the open
   header about once per second, exposes segment/captured/drop counters, and sacrifices
   recorder frames rather than stream continuity if storage falls behind.
+- Automatic Audio Recovery watches exact route readiness and callback age, retries
+  with grace/verification/backoff, reapplies the live state, and resumes continuous
+  capture in a new segment directory. Runtime incidents are durable JSONL. Optional
+  encoder-ingest and public-egress probes require fresh structured health rather than
+  treating a generic HTTP 200 as proof. See
+  [`../docs/RUNTIME_RESILIENCE.md`](../docs/RUNTIME_RESILIENCE.md) for the LaunchAgent,
+  session-resume contract, and kill-test procedure.
 - The Soundcheck controls expose each phase explicitly: recording frames, saving the
   WAV file, then analyzing the saved payload for the report.
 - Stability Monitor runs a longer non-recording validation from the control side and

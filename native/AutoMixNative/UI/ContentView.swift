@@ -128,6 +128,34 @@ private struct DeviceControlPanel: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        Divider()
+                        Toggle("Automatic Audio Recovery", isOn: $model.automaticRecoveryEnabled)
+                            .toggleStyle(.switch)
+                            .help("Restart the exact configured Core Audio route after a sustained route failure or callback stall. Operator Stop always disarms recovery.")
+                        StatusRow(
+                            label: "Recovery",
+                            value: model.automaticRecoveryStatus,
+                            warning: model.automaticRecoveryWarning
+                        )
+                        if model.automaticRecoveryAttemptCount > 0 {
+                            StatusRow(
+                                label: "Restart Attempts",
+                                value: "\(model.automaticRecoveryAttemptCount)"
+                            )
+                        }
+                        if let incident = model.lastRuntimeIncident {
+                            Text(incident)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let url = model.incidentLogURL {
+                            Label(url.path, systemImage: "doc.text")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                        }
                     }
                     .padding(.vertical, 4)
                 }
@@ -195,6 +223,16 @@ private struct DeviceControlPanel: View {
                         StatusRow(label: "Profile Channels", value: "\(model.channelMappings.count)")
                         StatusRow(label: "Input Map", value: model.channelMapCoverage.summary, warning: !model.channelMapCoverage.isReady)
                         StatusRow(label: "Callback Frames", value: callbackFrameSummary)
+                        StatusRow(
+                            label: "Callback Age",
+                            value: callbackAgeSummary,
+                            warning: model.callbackHealthWarning
+                        )
+                        StatusRow(
+                            label: "Output Clock",
+                            value: outputClockSummary,
+                            warning: model.outputClockWarning
+                        )
                         StatusRow(label: "Dropouts", value: "\(model.dropoutCount)", warning: model.dropoutCount > 0)
                         StatusRow(label: "Callback Overruns", value: "\(model.callbackOverrunCount)", warning: model.callbackOverrunCount > 0)
                         StatusRow(label: "Deadline Misses", value: "\(model.renderDeadlineMissCount)", warning: model.renderDeadlineMissCount > 0)
@@ -293,6 +331,30 @@ private struct DeviceControlPanel: View {
                     .padding(.vertical, 4)
                 }
 
+                GroupBox("Livestream Health") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("Encoder health URL", text: $model.encoderHealthURL)
+                            .textFieldStyle(.roundedBorder)
+                        StatusRow(
+                            label: "Encoder / Ingest",
+                            value: model.encoderHealth.summary,
+                            warning: model.encoderHealth.isFailure
+                        )
+                        TextField("Public egress health URL", text: $model.egressHealthURL)
+                            .textFieldStyle(.roundedBorder)
+                        StatusRow(
+                            label: "Public Egress",
+                            value: model.egressHealth.summary,
+                            warning: model.egressHealth.isFailure
+                        )
+                        Text("Each optional endpoint must return fresh JSON: {\"healthy\":true,\"streaming\":true,\"audioActive\":true,\"timestampMs\":…}. Use token-free health URLs; configured URLs are stored in the local venue profile.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 GroupBox("Continuous Capture") {
                     VStack(alignment: .leading, spacing: 12) {
                         if model.continuousRecordingActive {
@@ -387,6 +449,21 @@ private struct DeviceControlPanel: View {
                         StatusRow(label: "Deadline Miss Delta", value: "\(model.stabilityRenderDeadlineMissDelta)", warning: model.stabilityRenderDeadlineMissDelta > 0)
                         StatusRow(label: "Output Underrun Delta", value: "\(model.stabilityOutputUnderrunDelta)", warning: model.stabilityOutputUnderrunDelta > 0)
                         StatusRow(label: "Output Overrun Delta", value: "\(model.stabilityOutputOverrunDelta)", warning: model.stabilityOutputOverrunDelta > 0)
+                        if model.stabilityOutputRingTargetFrames > 0 {
+                            StatusRow(
+                                label: "Clock Correction",
+                                value: String(format: "%.0f ppm max", model.stabilityMaxAbsOutputClockCorrectionPpm),
+                                warning: model.stabilityMaxAbsOutputClockCorrectionPpm >= 900
+                            )
+                            StatusRow(
+                                label: "Clock Ring",
+                                value: "\(model.stabilityMinOutputRingFillFrames)...\(model.stabilityMaxOutputRingFillFrames) / \(model.stabilityOutputRingTargetFrames)",
+                                warning: model.stabilityMinOutputRingFillFrames <
+                                    max(1, model.stabilityOutputRingTargetFrames / 4) ||
+                                    model.stabilityMaxOutputRingFillFrames >
+                                    model.stabilityOutputRingTargetFrames * 3
+                            )
+                        }
                         StatusRow(label: "Min Stream", value: stabilityMinSummary, warning: stabilityLevelWarning)
                         StatusRow(label: "Max Stream", value: stabilityMaxSummary, warning: stabilityLevelWarning)
                         StatusRow(label: "Momentary Range", value: stabilityLoudnessSummary, warning: stabilityLoudnessWarning)
@@ -571,6 +648,29 @@ private struct DeviceControlPanel: View {
             return model.detectedBufferFrames > 0 ? "waiting / max \(model.detectedBufferFrames)" : "waiting"
         }
         return "\(model.lastCallbackFrames) last / \(model.maxObservedCallbackFrames) max"
+    }
+
+    private var callbackAgeSummary: String {
+        guard model.inputCallbackAgeMs >= 0, model.outputCallbackAgeMs >= 0 else {
+            return model.isRunning ? "waiting" : "stopped"
+        }
+        return String(
+            format: "input %.1f ms / output %.1f ms",
+            model.inputCallbackAgeMs,
+            model.outputCallbackAgeMs
+        )
+    }
+
+    private var outputClockSummary: String {
+        guard model.separateOutputPrebufferFrames > 0 else {
+            return "shared Core Audio callback"
+        }
+        return String(
+            format: "%+.0f ppm · %d / %d frames",
+            model.outputClockCorrectionPpm,
+            model.separateOutputRingFillFrames,
+            model.separateOutputPrebufferFrames
+        )
     }
 
     private var recordingFrameSummary: String {

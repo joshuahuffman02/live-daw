@@ -153,6 +153,10 @@ struct AutoMixNativeApp: App {
             var minMomentaryLufs = finiteOrSilence(bridge.momentaryLufs)
             var maxMomentaryLufs = minMomentaryLufs
             var minLimiterGainReductionDb = finiteOrSilence(bridge.limiterGainReductionDb)
+            let outputRingTargetFrames = bridge.separateOutputPrebufferFrames
+            var minOutputRingFillFrames = bridge.separateOutputRingFillFrames
+            var maxOutputRingFillFrames = bridge.separateOutputRingFillFrames
+            var maxAbsOutputClockCorrectionPpm = abs(bridge.outputClockCorrectionPpm)
 
             let startedAt = Date()
             while Date().timeIntervalSince(startedAt) < durationSeconds {
@@ -172,6 +176,20 @@ struct AutoMixNativeApp: App {
                 }
                 if bridge.limiterGainReductionDb.isFinite {
                     minLimiterGainReductionDb = min(minLimiterGainReductionDb, bridge.limiterGainReductionDb)
+                }
+                if outputRingTargetFrames > 0 {
+                    minOutputRingFillFrames = min(
+                        minOutputRingFillFrames,
+                        bridge.separateOutputRingFillFrames
+                    )
+                    maxOutputRingFillFrames = max(
+                        maxOutputRingFillFrames,
+                        bridge.separateOutputRingFillFrames
+                    )
+                    maxAbsOutputClockCorrectionPpm = max(
+                        maxAbsOutputClockCorrectionPpm,
+                        abs(bridge.outputClockCorrectionPpm)
+                    )
                 }
                 Thread.sleep(forTimeInterval: 0.1)
             }
@@ -199,6 +217,10 @@ struct AutoMixNativeApp: App {
                 renderDeadlineMissDelta: renderDeadlineMissDelta,
                 outputUnderrunDelta: outputUnderrunDelta,
                 outputOverrunDelta: outputOverrunDelta,
+                outputRingTargetFrames: outputRingTargetFrames,
+                minOutputRingFillFrames: minOutputRingFillFrames,
+                maxOutputRingFillFrames: maxOutputRingFillFrames,
+                maxAbsOutputClockCorrectionPpm: maxAbsOutputClockCorrectionPpm,
                 watchdogSafeActive: bridge.watchdogSafeActive,
                 safeBypassEnabled: false,
                 frozen: false,
@@ -667,6 +689,10 @@ struct AutoMixNativeApp: App {
         var minMomentaryLufs = finiteOrSilence(bridge.momentaryLufs)
         var maxMomentaryLufs = minMomentaryLufs
         var minLimiterGainReductionDb = finiteOrSilence(bridge.limiterGainReductionDb)
+        let outputRingTargetFrames = bridge.separateOutputPrebufferFrames
+        var minOutputRingFillFrames = bridge.separateOutputRingFillFrames
+        var maxOutputRingFillFrames = bridge.separateOutputRingFillFrames
+        var maxAbsOutputClockCorrectionPpm = abs(bridge.outputClockCorrectionPpm)
 
         let startedAt = Date()
         while Date().timeIntervalSince(startedAt) < options.stabilitySeconds {
@@ -686,6 +712,20 @@ struct AutoMixNativeApp: App {
             }
             if bridge.limiterGainReductionDb.isFinite {
                 minLimiterGainReductionDb = min(minLimiterGainReductionDb, bridge.limiterGainReductionDb)
+            }
+            if outputRingTargetFrames > 0 {
+                minOutputRingFillFrames = min(
+                    minOutputRingFillFrames,
+                    bridge.separateOutputRingFillFrames
+                )
+                maxOutputRingFillFrames = max(
+                    maxOutputRingFillFrames,
+                    bridge.separateOutputRingFillFrames
+                )
+                maxAbsOutputClockCorrectionPpm = max(
+                    maxAbsOutputClockCorrectionPpm,
+                    abs(bridge.outputClockCorrectionPpm)
+                )
             }
             Thread.sleep(forTimeInterval: 0.1)
         }
@@ -718,6 +758,10 @@ struct AutoMixNativeApp: App {
             renderDeadlineMissDelta: renderDeadlineMissDelta,
             outputUnderrunDelta: outputUnderrunDelta,
             outputOverrunDelta: outputOverrunDelta,
+            outputRingTargetFrames: outputRingTargetFrames,
+            minOutputRingFillFrames: minOutputRingFillFrames,
+            maxOutputRingFillFrames: maxOutputRingFillFrames,
+            maxAbsOutputClockCorrectionPpm: maxAbsOutputClockCorrectionPpm,
             watchdogSafeActive: bridge.watchdogSafeActive,
             safeBypassEnabled: false,
             frozen: false,

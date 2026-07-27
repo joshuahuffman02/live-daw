@@ -963,6 +963,10 @@ struct StabilityMonitorReport: Codable, Equatable, Sendable {
     var renderDeadlineMissDelta: UInt?
     var outputUnderrunDelta: UInt
     var outputOverrunDelta: UInt?
+    var outputRingTargetFrames: Int?
+    var minOutputRingFillFrames: Int?
+    var maxOutputRingFillFrames: Int?
+    var maxAbsOutputClockCorrectionPpm: Double?
     var watchdogSafeActive: Bool
     var safeBypassEnabled: Bool?
     var frozen: Bool?
@@ -998,6 +1002,10 @@ struct StabilityMonitorReport: Codable, Equatable, Sendable {
         renderDeadlineMissDelta: UInt = 0,
         outputUnderrunDelta: UInt,
         outputOverrunDelta: UInt = 0,
+        outputRingTargetFrames: Int = 0,
+        minOutputRingFillFrames: Int = 0,
+        maxOutputRingFillFrames: Int = 0,
+        maxAbsOutputClockCorrectionPpm: Double = 0,
         watchdogSafeActive: Bool,
         safeBypassEnabled: Bool = false,
         frozen: Bool = false,
@@ -1038,6 +1046,23 @@ struct StabilityMonitorReport: Codable, Equatable, Sendable {
         )
         let sourceRoleCoverage = SourceRoleCoverage.make(channelMappings: channelMappings)
         let manualOverrideCoverage = ManualOverrideCoverage.make(channelMappings: channelMappings)
+        let separateClockPath = inputDevice.uid != outputDevice.uid &&
+            !inputDevice.uid.isEmpty &&
+            !outputDevice.uid.isEmpty
+        let clockFollowerPassed = !separateClockPath ||
+            (outputRingTargetFrames > 0 &&
+             minOutputRingFillFrames >= max(1, outputRingTargetFrames / 4) &&
+             maxOutputRingFillFrames <= outputRingTargetFrames * 3 &&
+             maxAbsOutputClockCorrectionPpm < 900)
+        let clockFollowerObserved = separateClockPath
+            ? String(
+                format: "max |%.0f| ppm · ring %d...%d / %d target frames",
+                maxAbsOutputClockCorrectionPpm,
+                minOutputRingFillFrames,
+                maxOutputRingFillFrames,
+                outputRingTargetFrames
+            )
+            : "shared Core Audio callback"
         let checks = [
             SoundcheckCheck(
                 name: "Duration",
@@ -1143,6 +1168,12 @@ struct StabilityMonitorReport: Codable, Equatable, Sendable {
                 passed: outputOverrunDelta == 0
             ),
             SoundcheckCheck(
+                name: "Output Clock Drift",
+                expected: "shared callback or bounded follower below 900 ppm with ring in range",
+                observed: clockFollowerObserved,
+                passed: clockFollowerPassed
+            ),
+            SoundcheckCheck(
                 name: "Watchdog SAFE",
                 expected: "inactive",
                 observed: watchdogSafeActive ? "active" : "inactive",
@@ -1198,6 +1229,10 @@ struct StabilityMonitorReport: Codable, Equatable, Sendable {
             renderDeadlineMissDelta: renderDeadlineMissDelta,
             outputUnderrunDelta: outputUnderrunDelta,
             outputOverrunDelta: outputOverrunDelta,
+            outputRingTargetFrames: outputRingTargetFrames,
+            minOutputRingFillFrames: minOutputRingFillFrames,
+            maxOutputRingFillFrames: maxOutputRingFillFrames,
+            maxAbsOutputClockCorrectionPpm: maxAbsOutputClockCorrectionPpm,
             watchdogSafeActive: watchdogSafeActive,
             safeBypassEnabled: safeBypassEnabled,
             frozen: frozen,

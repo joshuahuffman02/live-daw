@@ -27,6 +27,12 @@ final class MonitorWireContractTests: XCTestCase {
                 outputUnderruns: 0, outputOverruns: 0,
                 lastCallbackFrames: 256, maxCallbackFrames: 256
             ),
+            pipeline: PipelineTelemetry(
+                encoderState: .healthy,
+                encoderDetail: "ingest live",
+                egressState: .healthy,
+                egressDetail: "public playback live"
+            ),
             channels: [
                 ChannelTelemetry(
                     idx: 0, name: "Pastor", role: "speech", levelDb: -22.0,
@@ -59,12 +65,14 @@ final class MonitorWireContractTests: XCTestCase {
         for key in ["ts", "venueName", "isRunning", "safe", "freeze", "watchdogSafe",
                     "scene", "scenes", "sampleRate", "inputChannelCount", "bpm",
                     "bpmConfidence", "stream",
-                    "counters", "channels", "alerts", "fault", "severity"] {
+                    "counters", "pipeline", "channels", "alerts", "fault", "severity"] {
             XCTAssertNotNil(object[key], "missing top-level key \(key)")
         }
         let stream = try XCTUnwrap(object["stream"] as? [String: Any])
         XCTAssertNotNil(stream["momentaryLufs"])
         XCTAssertNotNil(stream["limiterGrDb"])
+        let pipeline = try XCTUnwrap(object["pipeline"] as? [String: Any])
+        XCTAssertEqual(pipeline["encoderState"] as? String, "healthy")
     }
 
     func testAlertSeverityIsComparableForMaxEscalation() {

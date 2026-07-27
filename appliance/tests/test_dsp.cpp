@@ -6,6 +6,7 @@
 #include "../dsp/Loudness.h"
 #include "../dsp/Limiter.h"
 #include "../dsp/Automixer.h"
+#include "../dsp/AsyncOutputClock.h"
 #include "../dsp/Compressor.h"
 #include "../dsp/Gate.h"
 #include "../dsp/Engine.h"
@@ -942,6 +943,44 @@ static void testTempoDelayNoAllocationInProcess() {
     CHECK(g_allocationsWhileGuarded.load() == 0, "delay process does not allocate");
 }
 
+static void testAsyncOutputClock() {
+    std::printf("AsyncOutputClock (bounded separate-device drift correction)\n");
+    bdsp::AsyncOutputClock clock;
+    clock.prepare(4096, 256, 1000.0f);
+    CHECK(std::fabs(clock.update(4096) - 1.0f) < 1.0e-7f,
+          "clock follower is unity at target fill");
+
+    float ratio = 1.0f;
+    for (int i = 0; i < 500; ++i) ratio = clock.update(5200);
+    CHECK(ratio > 1.0f && ratio <= 1.00101f,
+          "overfilled ring makes output consume slightly faster within bound");
+
+    clock.reset();
+    for (int i = 0; i < 500; ++i) ratio = clock.update(3000);
+    CHECK(ratio < 1.0f && ratio >= 0.99899f,
+          "underfilled ring makes output consume slightly slower within bound");
+
+    // Simulate a producer clock that is 200 ppm faster than the output clock for
+    // hundreds of seconds. Without correction this would walk thousands of frames.
+    clock.prepare(4096, 256, 1000.0f);
+    double fill = 4096.0;
+    for (int block = 0; block < 200000; ++block) {
+        const float consumerRatio = clock.update((uint64_t)std::llround(fill));
+        fill += 256.0 * 1.0002 - 256.0 * consumerRatio;
+    }
+    CHECK(fill > 4096.0 && fill < 5000.0,
+          "clock follower keeps a +200 ppm producer bounded near target");
+    CHECK(std::fabs(clock.correctionPpm() - 200.0f) < 15.0f,
+          "clock follower converges to the producer clock error");
+
+    {
+        AllocationGuard guard;
+        for (int i = 0; i < 4096; ++i) (void)clock.update((uint64_t)fill);
+    }
+    CHECK(g_allocationsWhileGuarded.load() == 0,
+          "clock follower update does not allocate");
+}
+
 int main() {
     std::printf("=== Broadcast DSP core — correctness tests ===\n");
     testDefaultSampleRate();
@@ -970,6 +1009,7 @@ int main() {
     testTempoDelay();
     testTempoDelaySyncAndFeedbackSafety();
     testTempoDelayNoAllocationInProcess();
+    testAsyncOutputClock();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

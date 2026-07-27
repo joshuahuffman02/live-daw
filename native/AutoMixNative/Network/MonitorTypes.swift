@@ -4,7 +4,7 @@ import Foundation
 // These types ARE the JSON the phone receives (TelemetrySnapshot) and sends
 // (RemoteCommand). Keys here must stay in sync with RemoteWeb/app.js.
 
-enum AlertSeverity: String, Codable, Comparable, CaseIterable {
+enum AlertSeverity: String, Codable, Comparable, CaseIterable, Sendable {
     case none
     case info
     case warning
@@ -59,6 +59,20 @@ struct CounterTelemetry: Codable, Equatable {
     let maxCallbackFrames: Int
 }
 
+struct PipelineTelemetry: Codable, Equatable {
+    let encoderState: StreamHealthState
+    let encoderDetail: String
+    let egressState: StreamHealthState
+    let egressDetail: String
+
+    static let disabled = PipelineTelemetry(
+        encoderState: .disabled,
+        encoderDetail: "not configured",
+        egressState: .disabled,
+        egressDetail: "not configured"
+    )
+}
+
 struct ChannelTelemetry: Codable, Equatable {
     let idx: Int
     let name: String
@@ -86,6 +100,7 @@ struct TelemetrySnapshot: Codable, Equatable {
     let bpmConfidence: Double
     let stream: StreamTelemetry
     let counters: CounterTelemetry
+    let pipeline: PipelineTelemetry
     let channels: [ChannelTelemetry]
     let alerts: [Alert]
     let fault: Bool

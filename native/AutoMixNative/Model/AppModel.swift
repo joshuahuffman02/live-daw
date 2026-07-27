@@ -118,6 +118,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var renderDeadlineMissCount: UInt = 0
     @Published private(set) var outputUnderrunCount: UInt = 0
     @Published private(set) var outputOverrunCount: UInt = 0
+    @Published private(set) var separateOutputRingFillFrames = 0
+    @Published private(set) var outputClockCorrectionPpm = 0.0
+    @Published private(set) var inputCallbackAgeMs = -1.0
+    @Published private(set) var outputCallbackAgeMs = -1.0
     @Published private(set) var watchdogSafeActive = false
     @Published private(set) var recordingSaveInProgress = false
     @Published private(set) var recordedFrameCount: UInt = 0
@@ -127,6 +131,27 @@ final class AppModel: ObservableObject {
     @Published private(set) var continuousRecordingDroppedFrameCount: UInt = 0
     @Published private(set) var continuousRecordingSegmentCount: UInt = 0
     @Published private(set) var continuousRecordingDirectoryURL: URL?
+    @Published var automaticRecoveryEnabled = true {
+        didSet { applyAutomaticRecoveryState() }
+    }
+    @Published private(set) var automaticRecoveryStatus = "disarmed"
+    @Published private(set) var automaticRecoveryAttemptCount = 0
+    @Published private(set) var lastRuntimeIncident: String?
+    @Published private(set) var incidentLogURL: URL?
+    @Published var encoderHealthURL = "" {
+        didSet {
+            resetStreamHealthMonitoring()
+            saveProfile()
+        }
+    }
+    @Published var egressHealthURL = "" {
+        didSet {
+            resetStreamHealthMonitoring()
+            saveProfile()
+        }
+    }
+    @Published private(set) var encoderHealth: StreamEndpointHealth = .disabled
+    @Published private(set) var egressHealth: StreamEndpointHealth = .disabled
     @Published var stabilityMonitorDurationSeconds = 300.0 {
         didSet {
             let clamped = min(max(stabilityMonitorDurationSeconds, 30.0), 1_800.0)
@@ -144,6 +169,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var stabilityRenderDeadlineMissDelta: UInt = 0
     @Published private(set) var stabilityOutputUnderrunDelta: UInt = 0
     @Published private(set) var stabilityOutputOverrunDelta: UInt = 0
+    @Published private(set) var stabilityOutputRingTargetFrames = 0
+    @Published private(set) var stabilityMinOutputRingFillFrames = 0
+    @Published private(set) var stabilityMaxOutputRingFillFrames = 0
+    @Published private(set) var stabilityMaxAbsOutputClockCorrectionPpm = 0.0
     @Published private(set) var stabilityMinStreamOutputLevelsDb: [Double] = [-100.0, -100.0]
     @Published private(set) var stabilityMaxStreamOutputLevelsDb: [Double] = [-100.0, -100.0]
     @Published private(set) var stabilityMaxActiveInputChannelCount = 0
@@ -195,6 +224,20 @@ final class AppModel: ObservableObject {
     private var stabilityStartOutputOverruns: UInt = 0
     private var runningRouteSnapshot: CoreAudioRouteSnapshot?
     private let profileDirectoryOverride: URL?
+    private var runtimeRecoveryCoordinator = RuntimeRecoveryCoordinator()
+    private var automaticRecoveryArmed = false
+    private var recoveryInFlight = false
+    private var incidentJournal: RuntimeIncidentJournal?
+    private var incidentWriteTask: Task<Void, Never>?
+    private var continuousRecordingRequested = false
+    private let streamHealthProbe = StreamHealthProbe()
+    private var streamHealthTask: Task<Void, Never>?
+    private var nextStreamHealthProbeMs: Int64 = 0
+    private var resumingAutonomousSession = false
+    private var previousRecordingDroppedFrameCount: UInt = 0
+    private var previousOutputClockWarning = false
+    private var previousWatchdogSafeActive = false
+    private var previousRuntimeRouteHealthy = true
 
     // Rehearsal/monitor mode: relaxes the broadcast go-live gates so the operator can
     // verify signal flow before the rig is fully configured. Not broadcast-safe.
@@ -216,6 +259,7 @@ final class AppModel: ObservableObject {
         startPolling()
         monitorBridge = MonitorBridge(appModel: self)
         remoteMonitoringEnabled = autoStartRemoteMonitoring
+        resumeAutonomousSessionIfNeeded()
     }
 
     private func applyRemoteMonitoringState() {
@@ -225,6 +269,23 @@ final class AppModel: ObservableObject {
         } else {
             monitorBridge.stop()
         }
+    }
+
+    private func applyAutomaticRecoveryState() {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        guard automaticRecoveryEnabled, engine.running, !operatorStoppedEngine else {
+            automaticRecoveryArmed = false
+            runtimeRecoveryCoordinator.disarm()
+            automaticRecoveryStatus = "disarmed"
+            if !automaticRecoveryEnabled {
+                clearAutonomousSessionIntent()
+            }
+            return
+        }
+        automaticRecoveryArmed = true
+        runtimeRecoveryCoordinator.arm(nowMs: nowMs)
+        automaticRecoveryStatus = "armed · verifying"
+        saveAutonomousSessionIntent()
     }
 
     // Whether the running Core Audio route still matches HD96/Dante proof criteria.
@@ -273,6 +334,7 @@ final class AppModel: ObservableObject {
     }
     var algorithmicLatencyMs: Double { engine.algorithmicLatencyMs }
     var estimatedOneWayAudioLatencyMs: Double { engine.estimatedOneWayLatencyMs }
+    var separateOutputPrebufferFrames: Int { engine.separateOutputPrebufferFrames }
     var lipSyncAudioLatencyReferenceMs: Double {
         measuredEndToEndAudioLatencyMs > 0
             ? measuredEndToEndAudioLatencyMs
@@ -290,6 +352,29 @@ final class AppModel: ObservableObject {
             return String(format: "Delay video %.1f ms", offset)
         }
         return String(format: "Delay audio %.1f ms", -offset)
+    }
+
+    var callbackHealthWarning: Bool {
+        guard isRunning else { return false }
+        return inputCallbackAgeMs < 0 ||
+            outputCallbackAgeMs < 0 ||
+            inputCallbackAgeMs > 1_000 ||
+            outputCallbackAgeMs > 1_000
+    }
+
+    var outputClockWarning: Bool {
+        guard isRunning, separateOutputPrebufferFrames > 0 else { return false }
+        let lowerBound = max(detectedBufferFrames * 2, 1)
+        let upperBound = max(separateOutputPrebufferFrames * 2, lowerBound)
+        return separateOutputRingFillFrames < lowerBound ||
+            separateOutputRingFillFrames > upperBound ||
+            abs(outputClockCorrectionPpm) >= 900
+    }
+
+    var automaticRecoveryWarning: Bool {
+        automaticRecoveryEnabled &&
+            (automaticRecoveryStatus.contains("failed") ||
+                automaticRecoveryStatus.contains("restarting"))
     }
 
     var sampleRateState: SampleRateState {
@@ -413,6 +498,8 @@ final class AppModel: ObservableObject {
 
     func startEngine() {
         operatorStoppedEngine = false
+        resumingAutonomousSession = false
+        continuousRecordingRequested = false
         Task { @MainActor in
             await startEngineAfterPermissionCheck()
         }
@@ -445,6 +532,7 @@ final class AppModel: ObservableObject {
         guard !inputUID.isEmpty else {
             lastError = "Select a Core Audio input device."
             statusText = lastError ?? statusText
+            armRelaunchRetryIfNeeded()
             return
         }
         guard !outputUID.isEmpty else {
@@ -452,6 +540,7 @@ final class AppModel: ObservableObject {
                 ? "Select a separate output device (built-in speakers, BlackHole, or an Aggregate) to monitor the rehearsal mix."
                 : "Select a stream encoder, virtual, capture, or Aggregate Device output."
             statusText = lastError ?? statusText
+            armRelaunchRetryIfNeeded()
             return
         }
 
@@ -463,16 +552,33 @@ final class AppModel: ObservableObject {
         guard startGate.isAllowed else {
             lastError = startGate.failureMessage
             statusText = startGate.failureMessage
+            armRelaunchRetryIfNeeded()
             return
         }
 
         guard await ensureAudioInputPermission() else {
             lastError = audioInputPermission.deniedMessage
             statusText = lastError ?? statusText
+            armRelaunchRetryIfNeeded()
+            return
+        }
+        guard !operatorStoppedEngine else {
+            statusText = "Start canceled by operator"
             return
         }
 
         do {
+            if let failure = automaticRecoveryPreflightFailure(
+                inputUID: inputUID,
+                outputUID: outputUID,
+                rehearsal: rehearsalMode
+            ) {
+                throw NSError(
+                    domain: "AutoMixRuntimeRecovery",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: failure]
+                )
+            }
             try engine.start(
                 withInputDeviceUID: inputUID,
                 outputDeviceUID: outputUID,
@@ -489,14 +595,64 @@ final class AppModel: ObservableObject {
             engine.setShadowMode(shadowMode)
             applyAllManualOverrides()
             statusText = engine.status
+            nextStreamHealthProbeMs = 0
+            armAutomaticRecoveryAfterSuccessfulStart(nowMs: Int64(Date().timeIntervalSince1970 * 1_000))
+            if resumingAutonomousSession && continuousRecordingRequested {
+                resumeContinuousRecordingAfterRecovery(nowMs: Int64(Date().timeIntervalSince1970 * 1_000))
+            }
+            recordRuntimeIncident(
+                kind: resumingAutonomousSession ? "engine-resumed-after-relaunch" : "engine-started",
+                severity: .info,
+                message: resumingAutonomousSession
+                    ? "Core Audio engine resumed from the autonomous-session marker"
+                    : "Core Audio engine started",
+                details: runtimeRouteDetails()
+            )
+            resumingAutonomousSession = false
         } catch {
             lastError = error.localizedDescription
             statusText = error.localizedDescription
+            recordRuntimeIncident(
+                kind: "engine-start-failed",
+                severity: .warning,
+                message: error.localizedDescription,
+                details: [
+                    "inputUID": inputUID,
+                    "outputUID": outputUID
+                ]
+            )
+            if resumingAutonomousSession && automaticRecoveryEnabled {
+                let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+                automaticRecoveryArmed = true
+                runtimeRecoveryCoordinator.arm(nowMs: nowMs)
+                automaticRecoveryStatus = "relaunch resume failed · retrying"
+            }
         }
     }
 
     func stopEngine() {
         operatorStoppedEngine = true
+        automaticRecoveryArmed = false
+        runtimeRecoveryCoordinator.disarm()
+        automaticRecoveryStatus = "disarmed by operator"
+        continuousRecordingRequested = false
+        resumingAutonomousSession = false
+        clearAutonomousSessionIntent()
+        streamHealthTask?.cancel()
+        streamHealthTask = nil
+        nextStreamHealthProbeMs = 0
+        encoderHealth = encoderHealth.isConfigured
+            ? StreamEndpointHealth(state: .checking, detail: "engine stopped", checkedAtMs: nil, observedAtMs: nil)
+            : .disabled
+        egressHealth = egressHealth.isConfigured
+            ? StreamEndpointHealth(state: .checking, detail: "engine stopped", checkedAtMs: nil, observedAtMs: nil)
+            : .disabled
+        recordRuntimeIncident(
+            kind: "engine-stopped-by-operator",
+            severity: .info,
+            message: "Operator stopped the Core Audio engine",
+            details: runtimeRouteDetails()
+        )
         cancelStabilityMonitor()
         engine.stop()
         runningInRehearsal = false
@@ -564,6 +720,8 @@ final class AppModel: ObservableObject {
             let directory = try nextContinuousRecordingDirectory()
             try engine.startContinuousRecording(atDirectoryURL: directory)
             continuousRecordingDirectoryURL = directory
+            continuousRecordingRequested = true
+            saveAutonomousSessionIntent()
             lastError = nil
             pollEngine()
         } catch {
@@ -573,6 +731,8 @@ final class AppModel: ObservableObject {
     }
 
     func stopContinuousRecording() {
+        continuousRecordingRequested = false
+        saveAutonomousSessionIntent()
         engine.stopContinuousRecording()
         pollEngine()
     }
@@ -623,6 +783,10 @@ final class AppModel: ObservableObject {
         stabilityRenderDeadlineMissDelta = 0
         stabilityOutputUnderrunDelta = 0
         stabilityOutputOverrunDelta = 0
+        stabilityOutputRingTargetFrames = separateOutputPrebufferFrames
+        stabilityMinOutputRingFillFrames = separateOutputRingFillFrames
+        stabilityMaxOutputRingFillFrames = separateOutputRingFillFrames
+        stabilityMaxAbsOutputClockCorrectionPpm = abs(outputClockCorrectionPpm)
         let levels = normalizedStreamOutputLevels()
         stabilityMinStreamOutputLevelsDb = levels
         stabilityMaxStreamOutputLevelsDb = levels
@@ -809,6 +973,10 @@ final class AppModel: ObservableObject {
         update(\.renderDeadlineMissCount, engine.renderDeadlineMissCount)
         update(\.outputUnderrunCount, engine.outputUnderrunCount)
         update(\.outputOverrunCount, engine.outputOverrunCount)
+        update(\.separateOutputRingFillFrames, engine.separateOutputRingFillFrames)
+        update(\.outputClockCorrectionPpm, engine.outputClockCorrectionPpm)
+        update(\.inputCallbackAgeMs, engine.inputCallbackAgeMs)
+        update(\.outputCallbackAgeMs, engine.outputCallbackAgeMs)
         update(\.watchdogSafeActive, engine.watchdogSafeActive)
         update(\.lastCallbackFrames, engine.lastCallbackFrameCount)
         update(\.maxObservedCallbackFrames, engine.maxObservedCallbackFrameCount)
@@ -854,7 +1022,448 @@ final class AppModel: ObservableObject {
             finishedRecordingURL = url
             scheduleSoundcheckReport(for: url)
         }
-        monitorBridge?.captureAndPublish(nowMs: Int64(Date().timeIntervalSince1970 * 1000))
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        updateRuntimeIncidentTransitions(nowMs: nowMs)
+        updateAutomaticRecovery(nowMs: nowMs)
+        updateStreamHealthMonitoring(nowMs: nowMs)
+        monitorBridge?.captureAndPublish(nowMs: nowMs)
+    }
+
+    private func resetStreamHealthMonitoring() {
+        streamHealthTask?.cancel()
+        streamHealthTask = nil
+        nextStreamHealthProbeMs = 0
+        encoderHealth = encoderHealthURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? .disabled
+            : StreamEndpointHealth(state: .checking, detail: "waiting", checkedAtMs: nil, observedAtMs: nil)
+        egressHealth = egressHealthURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? .disabled
+            : StreamEndpointHealth(state: .checking, detail: "waiting", checkedAtMs: nil, observedAtMs: nil)
+    }
+
+    private func updateStreamHealthMonitoring(nowMs: Int64) {
+        guard engine.running else { return }
+        guard streamHealthTask == nil, nowMs >= nextStreamHealthProbeMs else { return }
+        let encoderURL = encoderHealthURL
+        let egressURL = egressHealthURL
+        guard !encoderURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                !egressURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+
+        nextStreamHealthProbeMs = nowMs + 2_000
+        if !encoderURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           encoderHealth.checkedAtMs == nil {
+            encoderHealth = StreamEndpointHealth(
+                state: .checking,
+                detail: encoderHealth.detail,
+                checkedAtMs: encoderHealth.checkedAtMs,
+                observedAtMs: encoderHealth.observedAtMs
+            )
+        }
+        if !egressURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           egressHealth.checkedAtMs == nil {
+            egressHealth = StreamEndpointHealth(
+                state: .checking,
+                detail: egressHealth.detail,
+                checkedAtMs: egressHealth.checkedAtMs,
+                observedAtMs: egressHealth.observedAtMs
+            )
+        }
+
+        let probe = streamHealthProbe
+        streamHealthTask = Task { [weak self] in
+            async let encoderResult = probe.probe(urlString: encoderURL, nowMs: nowMs)
+            async let egressResult = probe.probe(urlString: egressURL, nowMs: nowMs)
+            let results = await (encoderResult, egressResult)
+            guard !Task.isCancelled else { return }
+            self?.finishStreamHealthProbe(
+                encoder: results.0,
+                egress: results.1,
+                nowMs: nowMs
+            )
+        }
+    }
+
+    private func finishStreamHealthProbe(
+        encoder: StreamEndpointHealth,
+        egress: StreamEndpointHealth,
+        nowMs: Int64
+    ) {
+        let previousEncoderFailure = encoderHealth.isFailure
+        let previousEgressFailure = egressHealth.isFailure
+        encoderHealth = encoder
+        egressHealth = egress
+        streamHealthTask = nil
+
+        if encoder.isFailure && !previousEncoderFailure {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "encoder-health-failed",
+                severity: .critical,
+                message: encoder.detail,
+                details: ["probe": "encoder"]
+            )
+        }
+        if egress.isFailure && !previousEgressFailure {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "egress-health-failed",
+                severity: .critical,
+                message: egress.detail,
+                details: ["probe": "public-egress"]
+            )
+        }
+        if encoder.state == .healthy && previousEncoderFailure {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "encoder-health-recovered",
+                severity: .info,
+                message: encoder.detail,
+                details: ["probe": "encoder"]
+            )
+        }
+        if egress.state == .healthy && previousEgressFailure {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "egress-health-recovered",
+                severity: .info,
+                message: egress.detail,
+                details: ["probe": "public-egress"]
+            )
+        }
+    }
+
+    private func armAutomaticRecoveryAfterSuccessfulStart(nowMs: Int64) {
+        guard automaticRecoveryEnabled, !operatorStoppedEngine else {
+            automaticRecoveryArmed = false
+            runtimeRecoveryCoordinator.disarm()
+            automaticRecoveryStatus = "disarmed"
+            return
+        }
+        automaticRecoveryArmed = true
+        runtimeRecoveryCoordinator.arm(nowMs: nowMs)
+        automaticRecoveryStatus = "armed · verifying"
+        saveAutonomousSessionIntent()
+        previousRuntimeRouteHealthy = true
+        previousOutputClockWarning = false
+        previousWatchdogSafeActive = false
+        previousRecordingDroppedFrameCount = engine.continuousRecordingDroppedFrameCount
+    }
+
+    private func updateAutomaticRecovery(nowMs: Int64) {
+        guard !recoveryInFlight else { return }
+        let routeHealthy = runtimeRouteHealthy()
+        let sample = RuntimeHealthSample(
+            nowMs: nowMs,
+            armed: automaticRecoveryArmed && automaticRecoveryEnabled,
+            operatorStopped: operatorStoppedEngine,
+            isRunning: engine.running,
+            routeHealthy: routeHealthy,
+            inputCallbackAgeMs: engine.inputCallbackAgeMs,
+            outputCallbackAgeMs: engine.outputCallbackAgeMs
+        )
+
+        switch runtimeRecoveryCoordinator.step(sample) {
+        case .none:
+            if automaticRecoveryArmed,
+               engine.running,
+               routeHealthy,
+               engine.inputCallbackAgeMs >= 0,
+               engine.outputCallbackAgeMs >= 0,
+               engine.inputCallbackAgeMs < 1_000,
+               engine.outputCallbackAgeMs < 1_000 {
+                update(\.automaticRecoveryStatus, "armed · healthy")
+            }
+        case let .attemptRestart(reason):
+            attemptAutomaticRecovery(reason: reason, nowMs: nowMs)
+        }
+    }
+
+    private func attemptAutomaticRecovery(reason: String, nowMs: Int64) {
+        guard automaticRecoveryEnabled,
+              automaticRecoveryArmed,
+              !operatorStoppedEngine,
+              !recoveryInFlight
+        else { return }
+
+        recoveryInFlight = true
+        automaticRecoveryAttemptCount += 1
+        automaticRecoveryStatus = "restarting · attempt \(automaticRecoveryAttemptCount)"
+        let shouldResumeContinuousRecording = continuousRecordingRequested
+        let rehearsal = runningInRehearsal
+        let inputUID = selectedInputUID
+        let outputUID = selectedOutputUID
+
+        recordRuntimeIncident(
+            timestampMs: nowMs,
+            kind: "automatic-restart-attempt",
+            severity: .critical,
+            message: reason,
+            details: runtimeRouteDetails().merging([
+                "attempt": "\(automaticRecoveryAttemptCount)",
+                "resumeContinuousRecording": "\(shouldResumeContinuousRecording)"
+            ]) { _, new in new }
+        )
+
+        invalidateValidationEvidence()
+        engine.stop()
+        runningRouteSnapshot = nil
+
+        do {
+            if let failure = automaticRecoveryPreflightFailure(
+                inputUID: inputUID,
+                outputUID: outputUID,
+                rehearsal: rehearsal
+            ) {
+                throw NSError(
+                    domain: "AutoMixRuntimeRecovery",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: failure]
+                )
+            }
+            try engine.start(
+                withInputDeviceUID: inputUID,
+                outputDeviceUID: outputUID,
+                channelRoles: channelMappings.map(\.role.rawValue),
+                inputChannelIndices: channelInputIndexNumbers(),
+                rehearsal: rehearsal
+            )
+            runningInRehearsal = rehearsal
+            syncChannelCount(engine.inputChannelCount)
+            engine.setSceneName(selectedScene.rawValue)
+            engine.setSafeBypass(safeBypass)
+            engine.setFrozen(frozen)
+            engine.setShadowMode(shadowMode)
+            applyAllManualOverrides()
+            runningRouteSnapshot = liveRouteSnapshot()
+            runtimeRecoveryCoordinator.noteAttemptResult(success: true, nowMs: nowMs)
+            automaticRecoveryStatus = "restarted · verifying"
+            statusText = engine.status
+            lastError = nil
+
+            if shouldResumeContinuousRecording {
+                resumeContinuousRecordingAfterRecovery(nowMs: nowMs)
+            }
+
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "automatic-restart-succeeded",
+                severity: .info,
+                message: "Core Audio engine restarted and entered verification",
+                details: runtimeRouteDetails()
+            )
+        } catch {
+            runtimeRecoveryCoordinator.noteAttemptResult(success: false, nowMs: nowMs)
+            automaticRecoveryStatus = "restart failed · retry scheduled"
+            lastError = "Automatic audio recovery failed: \(error.localizedDescription)"
+            statusText = lastError ?? statusText
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "automatic-restart-failed",
+                severity: .critical,
+                message: error.localizedDescription,
+                details: runtimeRouteDetails().merging([
+                    "attempt": "\(automaticRecoveryAttemptCount)"
+                ]) { _, new in new }
+            )
+        }
+        recoveryInFlight = false
+    }
+
+    private func armRelaunchRetryIfNeeded() {
+        guard resumingAutonomousSession,
+              automaticRecoveryEnabled,
+              !operatorStoppedEngine
+        else { return }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        automaticRecoveryArmed = true
+        runtimeRecoveryCoordinator.arm(nowMs: nowMs)
+        automaticRecoveryStatus = "relaunch resume blocked · retrying"
+    }
+
+    private func automaticRecoveryPreflightFailure(
+        inputUID: String,
+        outputUID: String,
+        rehearsal: Bool
+    ) -> String? {
+        let currentDevices = engine.availableDevices()
+        guard let input = currentDevices.first(where: { $0.uid == inputUID }) else {
+            return "Configured Core Audio input is not available"
+        }
+        guard let output = currentDevices.first(where: { $0.uid == outputUID }) else {
+            return "Configured Core Audio output is not available"
+        }
+        if rehearsal {
+            guard input.inputChannels > 0, output.outputChannels >= 2 else {
+                return "Configured rehearsal route no longer has the required channels"
+            }
+            return nil
+        }
+
+        let health = HD96RunningRouteHealth.make(
+            inputDevice: input,
+            outputDevice: output,
+            expectedInputChannels: expectedInputChannels,
+            detectedInputChannels: input.inputChannels,
+            detectedSampleRate: input.sampleRate
+        )
+        return health.isReady ? nil : health.warningMessage
+    }
+
+    private func resumeContinuousRecordingAfterRecovery(nowMs: Int64) {
+        do {
+            let directory = try nextContinuousRecordingDirectory()
+            try engine.startContinuousRecording(atDirectoryURL: directory)
+            continuousRecordingDirectoryURL = directory
+            continuousRecordingRequested = true
+            saveAutonomousSessionIntent()
+        } catch {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "recording-resume-failed",
+                severity: .critical,
+                message: error.localizedDescription,
+                details: runtimeRouteDetails()
+            )
+            lastError = "Audio recovered, but continuous recording did not resume: \(error.localizedDescription)"
+        }
+    }
+
+    private func updateRuntimeIncidentTransitions(nowMs: Int64) {
+        let droppedFrames = engine.continuousRecordingDroppedFrameCount
+        if droppedFrames > previousRecordingDroppedFrameCount {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "recording-frames-dropped",
+                severity: .warning,
+                message: "Continuous recording dropped \(droppedFrames - previousRecordingDroppedFrameCount) frames",
+                details: [
+                    "totalDroppedFrames": "\(droppedFrames)",
+                    "recordingDirectory": continuousRecordingDirectoryURL?.path ?? ""
+                ]
+            )
+        }
+        previousRecordingDroppedFrameCount = droppedFrames
+
+        let clockWarning = outputClockWarning
+        if clockWarning && !previousOutputClockWarning {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "output-clock-risk",
+                severity: .warning,
+                message: "Separate output clock follower is near its safe operating limit",
+                details: [
+                    "correctionPpm": String(format: "%.1f", outputClockCorrectionPpm),
+                    "ringFillFrames": "\(separateOutputRingFillFrames)",
+                    "ringTargetFrames": "\(separateOutputPrebufferFrames)"
+                ]
+            )
+        }
+        previousOutputClockWarning = clockWarning
+
+        if watchdogSafeActive && !previousWatchdogSafeActive {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "watchdog-safe-engaged",
+                severity: .critical,
+                message: "Realtime watchdog forced the role-aware SAFE path",
+                details: runtimeRouteDetails()
+            )
+        }
+        previousWatchdogSafeActive = watchdogSafeActive
+
+        let routeHealthy = runtimeRouteHealthy()
+        if automaticRecoveryArmed && !routeHealthy && previousRuntimeRouteHealthy {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "runtime-route-unhealthy",
+                severity: .warning,
+                message: "The running Core Audio route no longer satisfies the configured route",
+                details: runtimeRouteDetails()
+            )
+        }
+        previousRuntimeRouteHealthy = routeHealthy
+    }
+
+    private func runtimeRouteHealthy() -> Bool {
+        guard engine.running else { return false }
+        if runningInRehearsal {
+            guard let input = engine.runningInputDeviceInfo(),
+                  let output = engine.runningOutputDeviceInfo()
+            else { return false }
+            return input.uid == selectedInputUID &&
+                output.uid == selectedOutputUID &&
+                input.inputChannels > 0 &&
+                output.outputChannels >= 2 &&
+                engine.sampleRate > 0
+        }
+        return HD96RunningRouteHealth.make(
+            inputDevice: engine.runningInputDeviceInfo(),
+            outputDevice: engine.runningOutputDeviceInfo(),
+            expectedInputChannels: expectedInputChannels,
+            detectedInputChannels: engine.inputChannelCount,
+            detectedSampleRate: engine.sampleRate
+        ).isReady
+    }
+
+    private func liveRouteSnapshot() -> CoreAudioRouteSnapshot {
+        CoreAudioRouteSnapshot(
+            inputDevice: engine.runningInputDeviceInfo().map { SoundcheckDeviceSnapshot(device: $0) } ??
+                snapshot(for: selectedInputDevice),
+            outputDevice: engine.runningOutputDeviceInfo().map { SoundcheckDeviceSnapshot(device: $0) } ??
+                snapshot(for: selectedOutputDevice)
+        )
+    }
+
+    private func runtimeRouteDetails() -> [String: String] {
+        [
+            "inputUID": engine.runningInputDeviceInfo()?.uid ?? selectedInputUID,
+            "outputUID": engine.runningOutputDeviceInfo()?.uid ?? selectedOutputUID,
+            "sampleRate": String(format: "%.1f", engine.sampleRate),
+            "inputChannels": "\(engine.inputChannelCount)",
+            "inputCallbackAgeMs": String(format: "%.1f", engine.inputCallbackAgeMs),
+            "outputCallbackAgeMs": String(format: "%.1f", engine.outputCallbackAgeMs)
+        ]
+    }
+
+    private func recordRuntimeIncident(
+        timestampMs: Int64 = Int64(Date().timeIntervalSince1970 * 1_000),
+        kind: String,
+        severity: AlertSeverity,
+        message: String,
+        details: [String: String]
+    ) {
+        let incident = RuntimeIncident(
+            timestampMs: timestampMs,
+            kind: kind,
+            severity: severity,
+            message: message,
+            details: details
+        )
+        lastRuntimeIncident = "\(kind): \(message)"
+
+        do {
+            let journal: RuntimeIncidentJournal
+            if let incidentJournal {
+                journal = incidentJournal
+            } else {
+                let directory = try appSupportDirectory()
+                    .appendingPathComponent("Incidents", isDirectory: true)
+                let created = try RuntimeIncidentJournal(directory: directory)
+                incidentJournal = created
+                incidentLogURL = created.fileURL
+                journal = created
+            }
+            let previousWrite = incidentWriteTask
+            incidentWriteTask = Task {
+                if let previousWrite {
+                    await previousWrite.value
+                }
+                _ = try? await journal.append(incident)
+            }
+        } catch {
+            lastRuntimeIncident = "incident journal unavailable: \(error.localizedDescription)"
+        }
     }
 
     private func runningRouteHealthStatus(baseStatus: String) -> String {
@@ -918,6 +1527,64 @@ final class AppModel: ObservableObject {
         return appDirectory
     }
 
+    private struct AutonomousSessionIntent: Codable, Equatable {
+        var active: Bool
+        var continuousRecording: Bool
+        var armedAtMs: Int64
+    }
+
+    private func autonomousSessionIntentURL() throws -> URL {
+        try appSupportDirectory()
+            .appendingPathComponent("AutonomousSession.json", conformingTo: .json)
+    }
+
+    private func saveAutonomousSessionIntent() {
+        guard automaticRecoveryEnabled, automaticRecoveryArmed, !operatorStoppedEngine else {
+            return
+        }
+        let intent = AutonomousSessionIntent(
+            active: true,
+            continuousRecording: continuousRecordingRequested,
+            armedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+        guard let data = try? JSONEncoder().encode(intent),
+              let url = try? autonomousSessionIntentURL()
+        else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private func clearAutonomousSessionIntent() {
+        guard let url = try? autonomousSessionIntentURL(),
+              FileManager.default.fileExists(atPath: url.path)
+        else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    private func resumeAutonomousSessionIfNeeded() {
+        guard let url = try? autonomousSessionIntentURL(),
+              let data = try? Data(contentsOf: url),
+              let intent = try? JSONDecoder().decode(AutonomousSessionIntent.self, from: data),
+              intent.active
+        else { return }
+
+        operatorStoppedEngine = false
+        continuousRecordingRequested = intent.continuousRecording
+        resumingAutonomousSession = true
+        automaticRecoveryStatus = "resuming after relaunch"
+        recordRuntimeIncident(
+            kind: "relaunch-resume-requested",
+            severity: .warning,
+            message: "A persisted autonomous session requested engine recovery",
+            details: [
+                "continuousRecording": "\(intent.continuousRecording)",
+                "previouslyArmedAtMs": "\(intent.armedAtMs)"
+            ]
+        )
+        Task { @MainActor in
+            await startEngineAfterPermissionCheck()
+        }
+    }
+
     private func loadProfile() {
         loadingProfile = true
         defer { loadingProfile = false }
@@ -932,6 +1599,8 @@ final class AppModel: ObservableObject {
         shadowMode = profile.shadowMode
         measuredEndToEndAudioLatencyMs = profile.measuredEndToEndAudioLatencyMs
         measuredEndToEndVideoLatencyMs = profile.measuredEndToEndVideoLatencyMs
+        encoderHealthURL = profile.encoderHealthURL
+        egressHealthURL = profile.egressHealthURL
         expectedInputChannels = profile.expectedInputChannels
         expectedSampleRate = profile.expectedSampleRate
         channelMappings = profile.channelMappings.isEmpty ? ChannelMapping.defaults(count: 32) : profile.channelMappings
@@ -947,6 +1616,8 @@ final class AppModel: ObservableObject {
             shadowMode: shadowMode,
             measuredEndToEndAudioLatencyMs: measuredEndToEndAudioLatencyMs,
             measuredEndToEndVideoLatencyMs: measuredEndToEndVideoLatencyMs,
+            encoderHealthURL: encoderHealthURL,
+            egressHealthURL: egressHealthURL,
             expectedInputChannels: expectedInputChannels,
             expectedSampleRate: expectedSampleRate,
             channelMappings: channelMappings
@@ -1147,6 +1818,20 @@ final class AppModel: ObservableObject {
         stabilityRenderDeadlineMissDelta = renderDeadlineMissCount >= stabilityStartRenderDeadlineMisses ? renderDeadlineMissCount - stabilityStartRenderDeadlineMisses : 0
         stabilityOutputUnderrunDelta = outputUnderrunCount >= stabilityStartOutputUnderruns ? outputUnderrunCount - stabilityStartOutputUnderruns : 0
         stabilityOutputOverrunDelta = outputOverrunCount >= stabilityStartOutputOverruns ? outputOverrunCount - stabilityStartOutputOverruns : 0
+        if stabilityOutputRingTargetFrames > 0 {
+            stabilityMinOutputRingFillFrames = min(
+                stabilityMinOutputRingFillFrames,
+                separateOutputRingFillFrames
+            )
+            stabilityMaxOutputRingFillFrames = max(
+                stabilityMaxOutputRingFillFrames,
+                separateOutputRingFillFrames
+            )
+            stabilityMaxAbsOutputClockCorrectionPpm = max(
+                stabilityMaxAbsOutputClockCorrectionPpm,
+                abs(outputClockCorrectionPpm)
+            )
+        }
 
         for index in 0..<2 {
             stabilityMinStreamOutputLevelsDb[index] = min(stabilityMinStreamOutputLevelsDb[index], levels[index])
@@ -1186,6 +1871,10 @@ final class AppModel: ObservableObject {
         stabilityStartRenderDeadlineMisses = renderDeadlineMissCount
         stabilityStartOutputUnderruns = outputUnderrunCount
         stabilityStartOutputOverruns = outputOverrunCount
+        stabilityOutputRingTargetFrames = separateOutputPrebufferFrames
+        stabilityMinOutputRingFillFrames = separateOutputRingFillFrames
+        stabilityMaxOutputRingFillFrames = separateOutputRingFillFrames
+        stabilityMaxAbsOutputClockCorrectionPpm = abs(outputClockCorrectionPpm)
         stabilityMinStreamOutputLevelsDb = levels
         stabilityMaxStreamOutputLevelsDb = levels
         stabilityMaxActiveInputChannelCount = activeInputChannelCount()
@@ -1224,6 +1913,10 @@ final class AppModel: ObservableObject {
             renderDeadlineMissDelta: stabilityRenderDeadlineMissDelta,
             outputUnderrunDelta: stabilityOutputUnderrunDelta,
             outputOverrunDelta: stabilityOutputOverrunDelta,
+            outputRingTargetFrames: stabilityOutputRingTargetFrames,
+            minOutputRingFillFrames: stabilityMinOutputRingFillFrames,
+            maxOutputRingFillFrames: stabilityMaxOutputRingFillFrames,
+            maxAbsOutputClockCorrectionPpm: stabilityMaxAbsOutputClockCorrectionPpm,
             watchdogSafeActive: watchdogSafeActive,
             safeBypassEnabled: safeBypass,
             frozen: frozen,
@@ -1344,6 +2037,49 @@ final class AppModel: ObservableObject {
     }
 
 #if DEBUG
+    func debugAutonomousSessionIntentForTesting() -> (active: Bool, continuousRecording: Bool)? {
+        guard let url = try? autonomousSessionIntentURL(),
+              let data = try? Data(contentsOf: url),
+              let intent = try? JSONDecoder().decode(AutonomousSessionIntent.self, from: data)
+        else { return nil }
+        return (intent.active, intent.continuousRecording)
+    }
+
+    func debugStartSimulatedForRecoveryTesting(nowMs: Int64 = 0) throws {
+        let uid = "com.livedaw.automix.simulated-hd96-dante"
+        operatorStoppedEngine = false
+        selectedInputUID = uid
+        selectedOutputUID = uid
+        expectedInputChannels = 64
+        expectedSampleRate = 96_000
+        try engine.start(
+            withInputDeviceUID: uid,
+            outputDeviceUID: uid,
+            channelRoles: channelMappings.map(\.role.rawValue),
+            inputChannelIndices: channelInputIndexNumbers(),
+            rehearsal: false
+        )
+        runningInRehearsal = false
+        runningRouteSnapshot = liveRouteSnapshot()
+        armAutomaticRecoveryAfterSuccessfulStart(nowMs: nowMs)
+        pollEngine()
+    }
+
+    func debugForceUnexpectedEngineStopForTesting() {
+        engine.stop()
+    }
+
+    func debugEvaluateAutomaticRecoveryForTesting(nowMs: Int64) {
+        updateAutomaticRecovery(nowMs: nowMs)
+        if engine.running {
+            pollEngine()
+        }
+    }
+
+    func debugWaitForIncidentWritesForTesting() async {
+        await incidentWriteTask?.value
+    }
+
     func debugActivateStabilityMonitorForInvalidationProbe() {
         stabilityMonitorActive = true
         stabilityMonitorWaitingForStream = true

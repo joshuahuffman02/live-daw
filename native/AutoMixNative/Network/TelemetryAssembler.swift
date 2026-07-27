@@ -35,6 +35,7 @@ enum TelemetryAssembler {
         bpmConfidence: Double,
         stream: StreamTelemetry,
         counters: CounterTelemetry,
+        pipeline: PipelineTelemetry = .disabled,
         channels: [ChannelTelemetry],
         alerts: [Alert],
         severity: AlertSeverity
@@ -54,6 +55,7 @@ enum TelemetryAssembler {
             bpmConfidence: bpmConfidence,
             stream: stream,
             counters: counters,
+            pipeline: pipeline,
             channels: channels,
             alerts: alerts,
             fault: severity == .critical,

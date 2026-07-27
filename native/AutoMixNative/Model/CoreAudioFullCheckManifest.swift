@@ -609,8 +609,10 @@ enum CoreAudioFullCheckVerifier {
         decodeProof(name: "Stability Report Semantics", path: manifest.stabilityReportPath, manifestURL: manifestURL) { (report: StabilityMonitorReport) in
             let durationFloor = max(30.0, manifest.stabilitySeconds * 0.95)
             let reportCheckNames = Set(report.checks.map(\.name))
-            let hasProofControlChecks = reportCheckNames.contains("SAFE Bypass") &&
-                reportCheckNames.contains("FREEZE")
+            let hasRequiredProofChecks =
+                reportCheckNames.contains("SAFE Bypass") &&
+                reportCheckNames.contains("FREEZE") &&
+                reportCheckNames.contains("Output Clock Drift")
             let reportChecksPassed = report.checks.allSatisfy(\.passed)
             let passed = report.passed &&
                 reportChecksPassed &&
@@ -627,7 +629,7 @@ enum CoreAudioFullCheckVerifier {
                 report.expectedInputChannels == manifest.expectedInputChannels &&
                 report.detectedInputChannels == manifest.expectedInputChannels &&
                 abs(report.detectedSampleRate - 96_000.0) < 1.0 &&
-                hasProofControlChecks &&
+                hasRequiredProofChecks &&
                 report.safeBypassEnabled == false &&
                 report.frozen == false &&
                 report.durationSeconds >= durationFloor

@@ -62,6 +62,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(bridge.outputHardwareLatencyFrames, 0)
         XCTAssertEqual(bridge.separateOutputPrebufferFrames, 0)
         XCTAssertEqual(bridge.estimatedOneWayLatencyMs, 6.833, accuracy: 0.01)
+        XCTAssertTrue(waitUntil(timeout: 1.0) {
+            self.bridge.inputCallbackAgeMs >= 0 &&
+                self.bridge.outputCallbackAgeMs >= 0
+        })
 
         bridge.stop()
         try bridge.startSimulatedSeparateOutput(
@@ -74,6 +78,12 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         )
         XCTAssertEqual(bridge.separateOutputPrebufferFrames, 8_192)
         XCTAssertEqual(bridge.estimatedOneWayLatencyMs, 94.833, accuracy: 0.01)
+        XCTAssertTrue(waitUntil(timeout: 1.0) {
+            self.bridge.separateOutputRingFillFrames > 0 &&
+                self.bridge.inputCallbackAgeMs >= 0 &&
+                self.bridge.outputCallbackAgeMs >= 0
+        })
+        XCTAssertLessThanOrEqual(abs(bridge.outputClockCorrectionPpm), 1_000.1)
     }
 
     func testBridgeOutputIsolationHelperMatchesHD96RouteSafety() {
@@ -1564,6 +1574,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.12)
         _ = bridge.inputLevelsDb()
 
+        XCTAssertGreaterThan(bridge.separateOutputRingFillFrames, 0)
+        XCTAssertLessThanOrEqual(abs(bridge.outputClockCorrectionPpm), 1_000.1)
+        XCTAssertGreaterThanOrEqual(bridge.inputCallbackAgeMs, 0)
+        XCTAssertGreaterThanOrEqual(bridge.outputCallbackAgeMs, 0)
         XCTAssertEqual(bridge.outputUnderrunCount, 0)
         XCTAssertEqual(bridge.dropoutCount, 0)
     }
@@ -2161,6 +2175,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertTrue(profile.shadowMode)
         XCTAssertEqual(profile.measuredEndToEndAudioLatencyMs, 0)
         XCTAssertEqual(profile.measuredEndToEndVideoLatencyMs, 0)
+        XCTAssertEqual(profile.encoderHealthURL, "")
+        XCTAssertEqual(profile.egressHealthURL, "")
         XCTAssertEqual(profile.channelMappings.first?.inputChannelIndex, 0)
         XCTAssertEqual(profile.channelMappings.first?.faderOverrideEnabled, false)
         XCTAssertEqual(profile.channelMappings.first?.panOverrideEnabled, false)
@@ -2173,6 +2189,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             shadowMode: false,
             measuredEndToEndAudioLatencyMs: 37.5,
             measuredEndToEndVideoLatencyMs: 55.0,
+            encoderHealthURL: "http://127.0.0.1:9000/health",
+            egressHealthURL: "https://status.example.test/live",
             expectedInputChannels: 64,
             channelMappings: [
                 ChannelMapping(
@@ -2202,6 +2220,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertFalse(decoded.shadowMode)
         XCTAssertEqual(decoded.measuredEndToEndAudioLatencyMs, 37.5)
         XCTAssertEqual(decoded.measuredEndToEndVideoLatencyMs, 55.0)
+        XCTAssertEqual(decoded.encoderHealthURL, "http://127.0.0.1:9000/health")
+        XCTAssertEqual(decoded.egressHealthURL, "https://status.example.test/live")
     }
 
     @MainActor
@@ -2221,6 +2241,49 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
 
         model.measuredEndToEndVideoLatencyMs = 70.5
         XCTAssertEqual(model.lipSyncRecommendation, "Aligned within 1.0 ms")
+    }
+
+    @MainActor
+    func testAppModelAutomaticallyRestartsUnexpectedEngineStopAndResumesContinuousCapture() async throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(profileDirectory: profileDirectory, autoStartRemoteMonitoring: false)
+        model.debugStopPollingForTesting()
+
+        try model.debugStartSimulatedForRecoveryTesting(nowMs: 0)
+        XCTAssertTrue(model.isRunning)
+        XCTAssertEqual(model.automaticRecoveryStatus, "armed · healthy")
+        XCTAssertEqual(model.debugAutonomousSessionIntentForTesting()?.active, true)
+        XCTAssertEqual(model.debugAutonomousSessionIntentForTesting()?.continuousRecording, false)
+
+        model.startContinuousRecording()
+        let firstRecordingDirectory = try XCTUnwrap(model.continuousRecordingDirectoryURL)
+        XCTAssertTrue(model.continuousRecordingActive)
+        XCTAssertEqual(model.debugAutonomousSessionIntentForTesting()?.continuousRecording, true)
+
+        model.debugForceUnexpectedEngineStopForTesting()
+        XCTAssertFalse(model.isRunning)
+        model.debugEvaluateAutomaticRecoveryForTesting(nowMs: 3_100)
+        XCTAssertFalse(model.isRunning, "unhealthy grace must elapse before restart")
+        model.debugEvaluateAutomaticRecoveryForTesting(nowMs: 5_200)
+
+        XCTAssertTrue(model.isRunning)
+        XCTAssertTrue(model.continuousRecordingActive)
+        XCTAssertEqual(model.automaticRecoveryAttemptCount, 1)
+        XCTAssertNotEqual(model.continuousRecordingDirectoryURL, firstRecordingDirectory)
+        XCTAssertEqual(model.automaticRecoveryStatus, "armed · healthy")
+
+        await model.debugWaitForIncidentWritesForTesting()
+        let incidentURL = try XCTUnwrap(model.incidentLogURL)
+        let incidentKinds = try String(contentsOf: incidentURL, encoding: .utf8)
+        XCTAssertTrue(incidentKinds.contains("automatic-restart-attempt"))
+        XCTAssertTrue(incidentKinds.contains("automatic-restart-succeeded"))
+
+        model.stopEngine()
+        await model.debugWaitForIncidentWritesForTesting()
+        XCTAssertNil(model.debugAutonomousSessionIntentForTesting())
+        model.debugStopPollingForTesting()
+        try FileManager.default.removeItem(at: profileDirectory)
     }
 
     func testVenueProfileNormalizesReadyChannelMapByMixerIndex() throws {
@@ -3058,6 +3121,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             maxObservedCallbackFrames: 256,
             dropoutDelta: 0,
             outputUnderrunDelta: 0,
+            outputRingTargetFrames: 4_096,
+            minOutputRingFillFrames: 3_500,
+            maxOutputRingFillFrames: 4_500,
+            maxAbsOutputClockCorrectionPpm: 120,
             watchdogSafeActive: false,
             channelMappings: simulatedMappings(count: 64),
             minStreamOutputLevelsDb: [-42.0, -41.0],
@@ -3565,6 +3632,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             maxObservedCallbackFrames: 256,
             dropoutDelta: 0,
             outputUnderrunDelta: 0,
+            outputRingTargetFrames: 4_096,
+            minOutputRingFillFrames: 3_500,
+            maxOutputRingFillFrames: 4_500,
+            maxAbsOutputClockCorrectionPpm: 120,
             watchdogSafeActive: false,
             channelMappings: simulatedMappings(count: 64),
             minStreamOutputLevelsDb: [-42.0, -41.0],
@@ -3580,6 +3651,64 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertFalse(routeClock.passed)
         XCTAssertEqual(routeClock.observed, "input 96000 Hz / output 48000 Hz")
         XCTAssertEqual(Set(report.checks.filter { !$0.passed }.map(\.name)), ["Route Clock"])
+    }
+
+    func testStabilityMonitorReportRejectsSeparateOutputClockAtCorrectionLimit() throws {
+        let input = SoundcheckDeviceSnapshot(
+            uid: "dante.input",
+            name: "Dante Virtual Soundcard",
+            inputChannels: 64,
+            outputChannels: 0,
+            sampleRate: 96_000,
+            inputFormatSummary: "32-bit little-endian float PCM",
+            outputFormatSummary: "no output streams",
+            inputFormatSupported: true,
+            outputFormatSupported: false
+        )
+        let output = SoundcheckDeviceSnapshot(
+            uid: "stream.output",
+            name: "Stream Encoder Output",
+            inputChannels: 0,
+            outputChannels: 2,
+            sampleRate: 96_000,
+            inputFormatSummary: "no input streams",
+            outputFormatSummary: "32-bit little-endian float PCM",
+            inputFormatSupported: false,
+            outputFormatSupported: true
+        )
+
+        let report = StabilityMonitorReport.make(
+            generatedAt: Date(timeIntervalSince1970: 0),
+            durationSeconds: 300,
+            inputDevice: input,
+            outputDevice: output,
+            scene: .worship,
+            expectedInputChannels: 64,
+            detectedInputChannels: 64,
+            detectedSampleRate: 96_000,
+            bufferFrameSize: 256,
+            lastCallbackFrames: 256,
+            maxObservedCallbackFrames: 256,
+            dropoutDelta: 0,
+            outputUnderrunDelta: 0,
+            outputRingTargetFrames: 4_096,
+            minOutputRingFillFrames: 3_200,
+            maxOutputRingFillFrames: 5_000,
+            maxAbsOutputClockCorrectionPpm: 950,
+            watchdogSafeActive: false,
+            channelMappings: simulatedMappings(count: 64),
+            minStreamOutputLevelsDb: [-42.0, -41.0],
+            maxStreamOutputLevelsDb: [-12.0, -11.0],
+            maxActiveInputChannelCount: 12,
+            minMomentaryLufs: -34.0,
+            maxMomentaryLufs: -18.0,
+            minLimiterGainReductionDb: -2.0
+        )
+
+        let drift = try XCTUnwrap(report.checks.first { $0.name == "Output Clock Drift" })
+        XCTAssertFalse(report.passed)
+        XCTAssertFalse(drift.passed)
+        XCTAssertEqual(Set(report.checks.filter { !$0.passed }.map(\.name)), ["Output Clock Drift"])
     }
 
     func testStabilityMonitorReportFlagsFormatAndInputMapProblems() throws {
@@ -4383,6 +4512,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             maxObservedCallbackFrames: 256,
             dropoutDelta: 0,
             outputUnderrunDelta: 0,
+            outputRingTargetFrames: 4_096,
+            minOutputRingFillFrames: 3_500,
+            maxOutputRingFillFrames: 4_600,
+            maxAbsOutputClockCorrectionPpm: 150,
             watchdogSafeActive: false,
             channelMappings: mappings,
             minStreamOutputLevelsDb: [-42.0, -41.0],

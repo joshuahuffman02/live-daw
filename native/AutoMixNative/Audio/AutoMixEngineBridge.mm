@@ -2,6 +2,7 @@
 
 #include "Engine.h"
 #include "BrainThread.h"
+#include "AsyncOutputClock.h"
 
 #import <AudioToolbox/AudioToolbox.h>
 #import <CoreAudio/CoreAudio.h>
@@ -167,7 +168,11 @@ struct AMRealtimeAllocationGuard {
     std::vector<float> _silence;
     std::vector<float> _outputRingL;
     std::vector<float> _outputRingR;
+    std::vector<float> _separateOutputScratchL;
+    std::vector<float> _separateOutputScratchR;
     uint64_t _outputRingFrameCapacity;
+    double _outputRingReadPosition;
+    bdsp::AsyncOutputClock _outputClock;
     std::unique_ptr<std::atomic<float>[]> _meterDb;
     std::atomic<float> _outputMeterDbL;
     std::atomic<float> _outputMeterDbR;
@@ -200,6 +205,10 @@ struct AMRealtimeAllocationGuard {
     std::atomic<uint64_t> _outputOverrunCountAtomic;
     std::atomic<uint64_t> _outputRingReadFrameAtomic;
     std::atomic<uint64_t> _outputRingWriteFrameAtomic;
+    std::atomic<uint64_t> _separateOutputRingFillFramesAtomic;
+    std::atomic<float> _outputClockCorrectionPpmAtomic;
+    std::atomic<uint64_t> _lastInputCallbackTicksAtomic;
+    std::atomic<uint64_t> _lastOutputCallbackTicksAtomic;
     std::atomic<uint32_t> _lastCallbackFramesAtomic;
     std::atomic<uint32_t> _maxObservedCallbackFramesAtomic;
 
@@ -246,6 +255,10 @@ struct AMRealtimeAllocationGuard {
 - (BOOL)openNextContinuousSegmentOnFileQueue;
 - (void)checkpointContinuousSegmentOnFileQueue:(BOOL)force;
 - (void)closeContinuousSegmentOnFileQueue;
+- (void)writeStereoOutputBufferList:(AudioBufferList *)output
+                               left:(const float *)left
+                              right:(const float *)right
+                             frames:(UInt32)frames;
 @end
 
 @implementation AutoMixEngineBridge
@@ -309,9 +322,14 @@ struct AMRealtimeAllocationGuard {
         _outputOverrunCountAtomic.store(0);
         _outputRingReadFrameAtomic.store(0);
         _outputRingWriteFrameAtomic.store(0);
+        _separateOutputRingFillFramesAtomic.store(0);
+        _outputClockCorrectionPpmAtomic.store(0.0f);
+        _lastInputCallbackTicksAtomic.store(0);
+        _lastOutputCallbackTicksAtomic.store(0);
         _lastCallbackFramesAtomic.store(0);
         _maxObservedCallbackFramesAtomic.store(0);
         _outputRingFrameCapacity = 0;
+        _outputRingReadPosition = 0.0;
         _inputChannelCount = 0;
         _outputChannelCount = 0;
         _bufferFrameSize = 0;
@@ -383,6 +401,32 @@ struct AMRealtimeAllocationGuard {
 - (NSInteger)inputHardwareLatencyFrames { return _inputHardwareLatencyFrames; }
 - (NSInteger)outputHardwareLatencyFrames { return _outputHardwareLatencyFrames; }
 - (NSInteger)separateOutputPrebufferFrames { return _separateOutputPrebufferFrames; }
+- (NSInteger)separateOutputRingFillFrames {
+    return (NSInteger)_separateOutputRingFillFramesAtomic.load(std::memory_order_relaxed);
+}
+- (double)outputClockCorrectionPpm {
+    return (double)_outputClockCorrectionPpmAtomic.load(std::memory_order_relaxed);
+}
+- (double)inputCallbackAgeMs {
+    if (!_runningAtomic.load(std::memory_order_acquire)) return -1.0;
+    const uint64_t ticks = _lastInputCallbackTicksAtomic.load(std::memory_order_acquire);
+    if (ticks == 0) return -1.0;
+    const uint64_t now = mach_absolute_time();
+    if (now <= ticks) return 0.0;
+    const double elapsedNs =
+        (double)(now - ticks) * (double)_machTimeNumer / (double)_machTimeDenom;
+    return elapsedNs / 1000000.0;
+}
+- (double)outputCallbackAgeMs {
+    if (!_runningAtomic.load(std::memory_order_acquire)) return -1.0;
+    const uint64_t ticks = _lastOutputCallbackTicksAtomic.load(std::memory_order_acquire);
+    if (ticks == 0) return -1.0;
+    const uint64_t now = mach_absolute_time();
+    if (now <= ticks) return 0.0;
+    const double elapsedNs =
+        (double)(now - ticks) * (double)_machTimeNumer / (double)_machTimeDenom;
+    return elapsedNs / 1000000.0;
+}
 - (double)estimatedOneWayLatencyMs {
     if (_sampleRate <= 0) return 0.0;
     const NSInteger frames =
@@ -1622,6 +1666,10 @@ struct AMRealtimeAllocationGuard {
         return;
     }
     const uint64_t startTicks = mach_absolute_time();
+    _lastInputCallbackTicksAtomic.store(startTicks, std::memory_order_release);
+    if (!_separateOutputMode) {
+        _lastOutputCallbackTicksAtomic.store(startTicks, std::memory_order_release);
+    }
     [self noteCallbackFrames:frames];
     if (frames > (UInt32)_bufferFrameSize) {
         _dropoutCountAtomic.fetch_add(1, std::memory_order_relaxed);
@@ -1646,6 +1694,10 @@ struct AMRealtimeAllocationGuard {
 - (void)renderSimulatedFrames:(UInt32)frames {
     if (!_runningAtomic.load()) return;
     const uint64_t startTicks = mach_absolute_time();
+    _lastInputCallbackTicksAtomic.store(startTicks, std::memory_order_release);
+    if (!_separateOutputMode) {
+        _lastOutputCallbackTicksAtomic.store(startTicks, std::memory_order_release);
+    }
     [self noteCallbackFrames:frames];
     const int chCount = (int)_inputChannelCount;
     const UInt32 safeFrames = std::min<UInt32>(frames, (UInt32)_bufferFrameSize);
@@ -1762,11 +1814,17 @@ struct AMRealtimeAllocationGuard {
     _outputRingFrameCapacity = std::max<uint64_t>(halfSecond, blockFloor);
     _outputRingL.assign((size_t)_outputRingFrameCapacity, 0.0f);
     _outputRingR.assign((size_t)_outputRingFrameCapacity, 0.0f);
+    _separateOutputScratchL.assign((size_t)std::max<NSInteger>(1, outputFrames), 0.0f);
+    _separateOutputScratchR.assign((size_t)std::max<NSInteger>(1, outputFrames), 0.0f);
     const uint64_t prebuffer = std::min<uint64_t>(_outputRingFrameCapacity / 2u,
                                                   (uint64_t)std::max<NSInteger>(inputFrames, outputFrames) * 16u);
     _separateOutputPrebufferFrames = (NSInteger)prebuffer;
+    _outputRingReadPosition = 0.0;
+    _outputClock.prepare(prebuffer, (uint32_t)std::max<NSInteger>(1, outputFrames));
     _outputRingReadFrameAtomic.store(0, std::memory_order_release);
     _outputRingWriteFrameAtomic.store(prebuffer, std::memory_order_release);
+    _separateOutputRingFillFramesAtomic.store(prebuffer, std::memory_order_release);
+    _outputClockCorrectionPpmAtomic.store(0.0f, std::memory_order_release);
 }
 
 - (void)writeSeparateOutputRingFrames:(UInt32)frames {
@@ -1795,7 +1853,10 @@ struct AMRealtimeAllocationGuard {
         [self clearOutputBufferList:output];
         return;
     }
-    if (_outputRingFrameCapacity == 0 || _outputRingL.empty() || _outputRingR.empty()) {
+    _lastOutputCallbackTicksAtomic.store(mach_absolute_time(), std::memory_order_release);
+    if (_outputRingFrameCapacity == 0 || _outputRingL.empty() || _outputRingR.empty() ||
+        frames > _separateOutputScratchL.size() ||
+        frames > _separateOutputScratchR.size()) {
         [self clearOutputBufferList:output];
         if (!_simulationMode) {
             _dropoutCountAtomic.fetch_add(1, std::memory_order_relaxed);
@@ -1804,15 +1865,51 @@ struct AMRealtimeAllocationGuard {
         return;
     }
 
-    uint64_t readFrame = _outputRingReadFrameAtomic.load(std::memory_order_relaxed);
+    const uint64_t publishedRead =
+        _outputRingReadFrameAtomic.load(std::memory_order_acquire);
+    if (_outputRingReadPosition < (double)publishedRead) {
+        _outputRingReadPosition = (double)publishedRead;
+    }
     const uint64_t writeFrame = _outputRingWriteFrameAtomic.load(std::memory_order_acquire);
-    const uint64_t available = writeFrame > readFrame ? writeFrame - readFrame : 0;
-    const UInt32 framesToRead = (UInt32)std::min<uint64_t>(frames, available);
+    const uint64_t integerRead = (uint64_t)std::floor(_outputRingReadPosition);
+    const uint64_t available = writeFrame > integerRead ? writeFrame - integerRead : 0;
+    const float ratio = _outputClock.update(available);
+    _separateOutputRingFillFramesAtomic.store(available, std::memory_order_relaxed);
+    _outputClockCorrectionPpmAtomic.store(_outputClock.correctionPpm(),
+                                          std::memory_order_relaxed);
 
-    [self writeSeparateOutputBufferList:output readFrame:readFrame frames:frames framesToRead:framesToRead];
-    _outputRingReadFrameAtomic.store(readFrame + framesToRead, std::memory_order_release);
+    UInt32 renderedFrames = 0;
+    for (; renderedFrames < frames; ++renderedFrames) {
+        const uint64_t baseFrame = (uint64_t)std::floor(_outputRingReadPosition);
+        if (baseFrame >= writeFrame) break;
+        const uint64_t nextFrame =
+            baseFrame + 1u < writeFrame ? baseFrame + 1u : baseFrame;
+        const float fraction =
+            (float)(_outputRingReadPosition - (double)baseFrame);
+        const size_t baseIndex = (size_t)(baseFrame % _outputRingFrameCapacity);
+        const size_t nextIndex = (size_t)(nextFrame % _outputRingFrameCapacity);
+        _separateOutputScratchL[(size_t)renderedFrames] =
+            _outputRingL[baseIndex] +
+            fraction * (_outputRingL[nextIndex] - _outputRingL[baseIndex]);
+        _separateOutputScratchR[(size_t)renderedFrames] =
+            _outputRingR[baseIndex] +
+            fraction * (_outputRingR[nextIndex] - _outputRingR[baseIndex]);
+        _outputRingReadPosition += (double)ratio;
+    }
+    for (UInt32 frame = renderedFrames; frame < frames; ++frame) {
+        _separateOutputScratchL[(size_t)frame] = 0.0f;
+        _separateOutputScratchR[(size_t)frame] = 0.0f;
+    }
 
-    if (framesToRead < frames) {
+    const uint64_t advancedRead =
+        std::min<uint64_t>((uint64_t)std::floor(_outputRingReadPosition), writeFrame);
+    _outputRingReadFrameAtomic.store(advancedRead, std::memory_order_release);
+    [self writeStereoOutputBufferList:output
+                                 left:_separateOutputScratchL.data()
+                                right:_separateOutputScratchR.data()
+                               frames:frames];
+
+    if (renderedFrames < frames) {
         if (!_simulationMode) {
             _dropoutCountAtomic.fetch_add(1, std::memory_order_relaxed);
             _outputUnderrunCountAtomic.fetch_add(1, std::memory_order_relaxed);
@@ -1909,12 +2006,26 @@ struct AMRealtimeAllocationGuard {
 }
 
 - (void)writeOutputBufferList:(AudioBufferList *)output frames:(UInt32)frames {
+    [self writeStereoOutputBufferList:output
+                                 left:_outL.data()
+                                right:_outR.data()
+                               frames:frames];
+}
+
+- (void)writeStereoOutputBufferList:(AudioBufferList *)output
+                               left:(const float *)left
+                              right:(const float *)right
+                             frames:(UInt32)frames {
     if (!output) return;
+    if (!left || !right) {
+        [self clearOutputBufferList:output];
+        return;
+    }
     if (output->mNumberBuffers >= 2 &&
         output->mBuffers[0].mNumberChannels == 1 &&
         output->mBuffers[1].mNumberChannels == 1) {
-        std::memcpy(output->mBuffers[0].mData, _outL.data(), sizeof(float) * frames);
-        std::memcpy(output->mBuffers[1].mData, _outR.data(), sizeof(float) * frames);
+        std::memcpy(output->mBuffers[0].mData, left, sizeof(float) * frames);
+        std::memcpy(output->mBuffers[1].mData, right, sizeof(float) * frames);
         for (UInt32 b = 2; b < output->mNumberBuffers; ++b) {
             AudioBuffer &buffer = output->mBuffers[b];
             if (buffer.mData) std::memset(buffer.mData, 0, buffer.mDataByteSize);
@@ -1929,7 +2040,8 @@ struct AMRealtimeAllocationGuard {
         float *data = (float *)buffer.mData;
         for (UInt32 s = 0; s < frames; ++s) {
             for (UInt32 c = 0; c < channels; ++c) {
-                data[(size_t)s * channels + c] = c == 0 ? _outL[s] : (c == 1 ? _outR[s] : 0.0f);
+                data[(size_t)s * channels + c] =
+                    c == 0 ? left[s] : (c == 1 ? right[s] : 0.0f);
             }
         }
     }
@@ -1963,6 +2075,10 @@ struct AMRealtimeAllocationGuard {
     _outputOverrunCountAtomic.store(0, std::memory_order_relaxed);
     _outputRingReadFrameAtomic.store(0, std::memory_order_relaxed);
     _outputRingWriteFrameAtomic.store(0, std::memory_order_relaxed);
+    _separateOutputRingFillFramesAtomic.store(0, std::memory_order_relaxed);
+    _outputClockCorrectionPpmAtomic.store(0.0f, std::memory_order_relaxed);
+    _lastInputCallbackTicksAtomic.store(0, std::memory_order_relaxed);
+    _lastOutputCallbackTicksAtomic.store(0, std::memory_order_relaxed);
     _lastCallbackFramesAtomic.store(0, std::memory_order_relaxed);
     _maxObservedCallbackFramesAtomic.store(0, std::memory_order_relaxed);
     _outputMeterDbL.store(-100.0f, std::memory_order_relaxed);
