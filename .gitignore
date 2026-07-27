@@ -1,0 +1,26 @@
+.DS_Store
+*.log
+
+# Local browser/test captures
+.playwright-mcp/
+
+# Web build products and credentials
+web/node_modules/
+web/dist/
+web/.vite/
+web/.env
+web/.env.local
+web/.env.*
+!web/.env.example
+
+# Native/C++ local build products
+appliance/build/
+native/build/
+DerivedData/
+*.xcresult
+*.xcuserstate
+**/xcuserdata/
+
+# Hardware-validation recordings and generated proof bundles
+validation-artifacts/
+*.wav

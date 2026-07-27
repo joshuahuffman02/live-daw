@@ -1,0 +1,51 @@
+name: Live DAW CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: live-daw-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: DSP, web, and native
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+
+      - name: Build and test deterministic DSP
+        run: |
+          clang++ -std=c++17 -O2 \
+            -Iappliance/dsp -Iappliance/src \
+            appliance/tests/test_dsp.cpp \
+            -o "${RUNNER_TEMP}/live-daw-test-dsp"
+          "${RUNNER_TEMP}/live-daw-test-dsp"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Verify browser proof
+        working-directory: web
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npm run typecheck
+          npm run build
+
+      - name: Build and test native macOS app
+        run: |
+          xcodebuild test \
+            -project native/AutoMixNative.xcodeproj \
+            -scheme AutoMixNative \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGNING_ALLOWED=NO

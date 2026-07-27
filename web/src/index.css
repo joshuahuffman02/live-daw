@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0a0b0e;
+  color: #e7e9ee;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* tabular numerals for meters/readouts */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* thin scrollbars in the channel rack */
+.rack::-webkit-scrollbar { height: 10px; width: 10px; }
+.rack::-webkit-scrollbar-thumb { background: #2a2e37; border-radius: 6px; }
+.rack::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes pulse-rec {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.rec-dot { animation: pulse-rec 1.4s ease-in-out infinite; }

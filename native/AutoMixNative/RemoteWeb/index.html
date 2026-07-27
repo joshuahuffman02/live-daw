@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0b0c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="AutoMix">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="stylesheet" href="/style.css">
+<title>AutoMix Remote</title>
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="venue"><span id="venue">AutoMix</span> · <span id="conn" class="conn-down">connecting</span></div>
+    <button id="alarmStop" class="hidden" type="button">Silence</button>
+  </header>
+
+  <section id="fault" class="hidden" aria-live="assertive"></section>
+
+  <main id="main" class="hidden">
+    <section class="card status">
+      <div class="statusline"><span id="runDot" class="dot"></span><span id="runText">—</span></div>
+      <div class="substatus" id="subStatus">—</div>
+    </section>
+
+    <section class="card stream">
+      <div class="card-title">Stream mix</div>
+      <div class="meter"><span class="mlabel">L</span><div class="bar"><div id="meterL" class="fill"></div></div><span id="dbL" class="db">—</span></div>
+      <div class="meter"><span class="mlabel">R</span><div class="bar"><div id="meterR" class="fill"></div></div><span id="dbR" class="db">—</span></div>
+      <div class="metrics"><span id="lufs">— LUFS</span><span id="gr">lim —</span><span id="tempo">— BPM</span><span id="drops">0 drops</span></div>
+    </section>
+
+    <section class="card scenes">
+      <div class="card-title">Scene</div>
+      <div id="scenes" class="pills"></div>
+    </section>
+
+    <section class="card channels">
+      <div class="card-title">Channels</div>
+      <div id="channels" class="chlist"></div>
+    </section>
+  </main>
+
+  <footer id="footer" class="hidden">
+    <button id="safeBtn" type="button" class="safe">Engage SAFE</button>
+  </footer>
+
+  <section id="pair" class="hidden">
+    <div class="pair-card">
+      <h1>Pair to control</h1>
+      <p>Monitoring is live. Enter the 6-digit code shown on the AutoMix Mac to mute channels, change scenes, and engage SAFE.</p>
+      <input id="pairCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+      <button id="pairBtn" type="button">Pair this device</button>
+      <div id="pairMsg" class="pairmsg"></div>
+      <button id="pairSkip" type="button" class="link">Just monitor (view only)</button>
+    </div>
+  </section>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
