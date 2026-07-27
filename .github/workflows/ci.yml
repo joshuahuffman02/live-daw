@@ -23,6 +23,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Lint deployment contracts
+        run: |
+          zsh -n scripts/*.sh
+          plutil -lint native/AutoMixNative/AutoMixNative.entitlements
+          plutil -lint native/launchd/com.livedaw.automixnative.plist.template
+
       - name: Verify generated Xcode project
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"

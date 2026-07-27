@@ -56,10 +56,11 @@ NOTARY_KEYCHAIN_PROFILE="automix-notary" \
 ./scripts/build-notarized-release.sh
 ```
 
-The release builder refuses dirty source, unsigned output, failed notarization, and
-Gatekeeper rejection. It writes the notarized app, ZIP, SHA-256 digest, build
-metadata, and notary result under `native/build/release/`. Install the app at its
-permanent path, then enable crash relaunch:
+The release builder refuses dirty source, unsigned output, a missing audio-input
+entitlement, failed notarization, and Gatekeeper rejection. It writes the notarized
+app, ZIP, SHA-256 digest, build metadata, extracted signed entitlements, and notary
+result under `native/build/release/`. Install the app at its permanent path, then
+enable crash relaunch:
 
 ```bash
 sudo ditto "/exact/release/path/AutoMix Native.app" "/Applications/AutoMix Native.app"

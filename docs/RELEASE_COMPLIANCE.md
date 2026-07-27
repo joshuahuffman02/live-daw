@@ -41,7 +41,8 @@ notarize, install, or run `AutoMix Native.app`.
 
 ## Evidence to retain
 
-- `build-metadata.json`, `notary-result.json`, ZIP SHA-256, and the stapled app;
+- `build-metadata.json`, `notary-result.json`, `signed-entitlements.plist`, ZIP
+  SHA-256, and the stapled app;
 - the exact source commit and CI run used for the build;
 - Apple, DVS, and any JUCE licence/account records that apply;
 - the venue profile and signed sermon/worship acceptance bundles, with secrets

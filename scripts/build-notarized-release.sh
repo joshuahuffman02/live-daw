@@ -70,6 +70,19 @@ staged_app="${build_root}/AutoMix Native.app"
   --sign "${signing_identity}" \
   "${staged_app}"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "${staged_app}"
+signed_entitlements="${build_root}/signed-entitlements.plist"
+/usr/bin/codesign --display \
+  --entitlements "${signed_entitlements}" \
+  --xml \
+  "${staged_app}"
+/usr/bin/plutil -lint "${signed_entitlements}"
+audio_input_entitlement="$(/usr/bin/plutil \
+  -extract 'com\.apple\.security\.device\.audio-input' \
+  raw -o - "${signed_entitlements}" 2>/dev/null || true)"
+if [[ "${audio_input_entitlement}" != "true" ]]; then
+  print -u2 "Signed app is missing the required CoreAudio input entitlement."
+  exit 5
+fi
 
 submission_zip="${build_root}/AutoMix-Native-notary-submission.zip"
 /usr/bin/ditto \
@@ -107,6 +120,7 @@ fi
 final_app="${release_dir}/AutoMix Native.app"
 /usr/bin/ditto "${staged_app}" "${final_app}"
 /bin/cp "${notary_result}" "${release_dir}/notary-result.json"
+/bin/cp "${signed_entitlements}" "${release_dir}/signed-entitlements.plist"
 
 metadata_plist="${build_root}/build-metadata.plist"
 /usr/bin/plutil -create xml1 "${metadata_plist}"
@@ -116,8 +130,16 @@ metadata_plist="${build_root}/build-metadata.plist"
   "${metadata_plist}"
 /usr/bin/plutil -insert commit -string "$(git -C "${repo_root}" rev-parse HEAD)" "${metadata_plist}"
 /usr/bin/plutil -insert builtAtUTC -string "${timestamp}" "${metadata_plist}"
+/usr/bin/plutil -insert bundleIdentifier -string \
+  "$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "${final_app}/Contents/Info.plist")" \
+  "${metadata_plist}"
+/usr/bin/plutil -insert minimumSystemVersion -string \
+  "$(/usr/bin/plutil -extract LSMinimumSystemVersion raw -o - "${final_app}/Contents/Info.plist")" \
+  "${metadata_plist}"
+/usr/bin/plutil -insert signingIdentity -string "${signing_identity}" "${metadata_plist}"
 /usr/bin/plutil -insert hardenedRuntime -bool true "${metadata_plist}"
 /usr/bin/plutil -insert notarized -bool true "${metadata_plist}"
+/usr/bin/plutil -insert audioInputEntitlement -bool true "${metadata_plist}"
 /usr/bin/plutil -convert json -o "${release_dir}/build-metadata.json" "${metadata_plist}"
 
 archive="${release_dir}/AutoMix-Native-${version}.zip"
