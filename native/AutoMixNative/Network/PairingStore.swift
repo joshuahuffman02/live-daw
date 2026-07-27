@@ -18,6 +18,8 @@ final class PairingStore {
     // keyspace cannot be enumerated over the LAN during a service.
     static let maxFailedAttempts = 10
     static let lockoutSeconds: TimeInterval = 30
+    static let maxPairedClients = 16
+    static let maxClientLabelCharacters = 64
 
     let code: String
 
@@ -66,8 +68,17 @@ final class PairingStore {
         }
         failedAttempts = 0
         lockoutUntil = nil
+        if clientsByToken.count >= Self.maxPairedClients,
+           let oldestToken = clientsByToken.min(by: {
+               $0.value.firstSeen < $1.value.firstSeen
+           })?.key {
+            clientsByToken.removeValue(forKey: oldestToken)
+        }
         let token = Self.randomToken()
-        clientsByToken[token] = PairedClient(label: label, firstSeen: now())
+        clientsByToken[token] = PairedClient(
+            label: Self.normalizedLabel(label),
+            firstSeen: now()
+        )
         return token
     }
 
@@ -99,6 +110,13 @@ final class PairingStore {
     private static func randomCode() -> String {
         let value = secureRandomUInt32() % 1_000_000
         return String(format: "%06u", value)
+    }
+
+    private static func normalizedLabel(_ label: String) -> String {
+        let withoutControls = label.components(separatedBy: .controlCharacters).joined()
+        let trimmed = withoutControls.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bounded = String(trimmed.prefix(maxClientLabelCharacters))
+        return bounded.isEmpty ? "device" : bounded
     }
 
     private static func randomToken() -> String {

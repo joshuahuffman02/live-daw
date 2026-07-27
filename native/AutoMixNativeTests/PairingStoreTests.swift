@@ -47,6 +47,34 @@ final class PairingStoreTests: XCTestCase {
         XCTAssertEqual(Set(store.pairedClients.map(\.label)), ["iPhone", "iPad"])
     }
 
+    func testClientLabelsAreBoundedAndControlCharactersRemoved() {
+        let store = PairingStore(code: "424242")
+        let label = "  phone\n" + String(repeating: "x", count: 100)
+        _ = store.pair(code: "424242", label: label)
+        let stored = store.pairedClients.first?.label ?? ""
+        XCTAssertFalse(stored.contains("\n"))
+        XCTAssertLessThanOrEqual(stored.count, PairingStore.maxClientLabelCharacters)
+        XCTAssertTrue(stored.hasPrefix("phonex"))
+    }
+
+    func testPairedClientStoreEvictsOldestAtCapacity() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let store = PairingStore(code: "424242", now: { clock })
+        var firstToken = ""
+        for index in 0..<PairingStore.maxPairedClients {
+            let token = store.pair(code: "424242", label: "device-\(index)")!
+            if index == 0 { firstToken = token }
+            clock = clock.addingTimeInterval(1)
+        }
+        XCTAssertEqual(store.pairedClientCount, PairingStore.maxPairedClients)
+        XCTAssertTrue(store.isValid(token: firstToken))
+
+        _ = store.pair(code: "424242", label: "newest")
+        XCTAssertEqual(store.pairedClientCount, PairingStore.maxPairedClients)
+        XCTAssertFalse(store.isValid(token: firstToken))
+        XCTAssertTrue(store.pairedClients.contains { $0.label == "newest" })
+    }
+
     func testLockoutAfterRepeatedWrongCodesBlocksEvenTheCorrectCode() {
         var clock = Date(timeIntervalSince1970: 1_000)
         let store = PairingStore(code: "424242", now: { clock })
