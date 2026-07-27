@@ -163,8 +163,10 @@ The **Continuous Capture** panel writes raw inputs in physical Core Audio/Dante 
 plus final stream L/R to unique, checkpointed 60-second float-WAV segments. Its
 two-second preallocated ring and dedicated file queue prevent disk I/O from blocking
 the audio callback; any recorder overflow is counted and shown as `Dropped Frames`.
-At 64 inputs and 96 kHz this is about 91.2 GB/hour, so use a proven local SSD and plan
-retention explicitly. See
+The app can start capture with the engine, requires planned-duration capacity plus a
+free-space reserve, monitors that reserve every 30 seconds, and can move only cleanly
+completed expired sessions to Trash. At 64 inputs and 96 kHz this is about
+91.2 GB/hour, so use a proven local SSD and plan retention explicitly. See
 [`../docs/CONTINUOUS_RECORDING.md`](../docs/CONTINUOUS_RECORDING.md).
 
 The headless `--write-service-profile` command writes only an AutoMix Native profile:
@@ -408,8 +410,11 @@ The app does not configure the Midas console. It expects Dante to already exist:
   channel-map/manual-override/SAFE-bypass evidence.
 - Continuous recording uses a preallocated two-second SPSC ring and a dedicated file
   queue, rotates 60-second raw-input-plus-program float WAVs, checkpoints the open
-  header about once per second, exposes segment/captured/drop counters, and sacrifices
-  recorder frames rather than stream continuity if storage falls behind.
+  header about once per second, exposes segment/captured/drop/capacity state, starts
+  automatically when configured, gates planned capture against free space, preserves a
+  minimum live reserve, and sacrifices recorder frames rather than stream continuity
+  if storage falls behind. Optional retention moves cleanly completed sessions to
+  Trash rather than hard-deleting them.
 - Automatic Audio Recovery watches exact route readiness and callback age, retries
   with grace/verification/backoff, reapplies the live state, and resumes continuous
   capture in a new segment directory. Runtime incidents are durable JSONL. Optional

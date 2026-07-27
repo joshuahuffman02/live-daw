@@ -2180,6 +2180,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(profile.egressHealthURL, "")
         XCTAssertEqual(profile.planningCenterServiceTypeID, "")
         XCTAssertFalse(profile.planningCenterFollowTimedCues)
+        XCTAssertTrue(profile.automaticContinuousRecordingEnabled)
+        XCTAssertEqual(profile.plannedRecordingDurationHours, 3)
+        XCTAssertEqual(profile.recordingMinimumReserveGB, 20)
+        XCTAssertEqual(profile.recordingRetentionDays, 0)
         XCTAssertEqual(profile.channelMappings.first?.inputChannelIndex, 0)
         XCTAssertEqual(profile.channelMappings.first?.faderOverrideEnabled, false)
         XCTAssertEqual(profile.channelMappings.first?.panOverrideEnabled, false)
@@ -2196,6 +2200,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             egressHealthURL: "https://status.example.test/live",
             planningCenterServiceTypeID: "12345",
             planningCenterFollowTimedCues: true,
+            automaticContinuousRecordingEnabled: false,
+            plannedRecordingDurationHours: 4,
+            recordingMinimumReserveGB: 50,
+            recordingRetentionDays: 14,
             expectedInputChannels: 64,
             channelMappings: [
                 ChannelMapping(
@@ -2229,6 +2237,94 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(decoded.egressHealthURL, "https://status.example.test/live")
         XCTAssertEqual(decoded.planningCenterServiceTypeID, "12345")
         XCTAssertTrue(decoded.planningCenterFollowTimedCues)
+        XCTAssertFalse(decoded.automaticContinuousRecordingEnabled)
+        XCTAssertEqual(decoded.plannedRecordingDurationHours, 4)
+        XCTAssertEqual(decoded.recordingMinimumReserveGB, 50)
+        XCTAssertEqual(decoded.recordingRetentionDays, 14)
+    }
+
+    func testContinuousRecordingStorageEstimateIncludesProgramAndReserve() {
+        let estimate = ContinuousRecordingStorageEstimate(
+            inputChannelCount: 64,
+            sampleRate: 96_000,
+            plannedDurationHours: 1,
+            minimumReserveBytes: 20_000_000_000
+        )
+
+        XCTAssertEqual(estimate.recordingBytes, 91_238_400_000)
+        XCTAssertEqual(estimate.requiredFreeBytes, 111_238_400_000)
+        XCTAssertFalse(estimate.canStart(availableBytes: 111_238_399_999))
+        XCTAssertTrue(estimate.canStart(availableBytes: 111_238_400_000))
+
+        let ready = ContinuousRecordingStorageReport(
+            availableBytes: estimate.requiredFreeBytes,
+            estimate: estimate,
+            movedToTrashCount: 0
+        )
+        XCTAssertEqual(
+            ready.decision(recordingActive: false, recordingRequested: true),
+            .startRecording
+        )
+        XCTAssertEqual(
+            ready.decision(recordingActive: true, recordingRequested: true),
+            .continueRecording
+        )
+
+        let low = ContinuousRecordingStorageReport(
+            availableBytes: estimate.minimumReserveBytes - 1,
+            estimate: estimate,
+            movedToTrashCount: 0
+        )
+        XCTAssertEqual(
+            low.decision(recordingActive: false, recordingRequested: true),
+            .waitForCapacity
+        )
+        XCTAssertEqual(
+            low.decision(recordingActive: true, recordingRequested: true),
+            .stopForMinimumReserve
+        )
+    }
+
+    func testRecordingRetentionSelectsOnlyExpiredCleanlyCompletedSessions() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let expiredComplete = root.appendingPathComponent("expired-complete", isDirectory: true)
+        let expiredIncomplete = root.appendingPathComponent("expired-incomplete", isDirectory: true)
+        let recentComplete = root.appendingPathComponent("recent-complete", isDirectory: true)
+        for directory in [expiredComplete, expiredIncomplete, recentComplete] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        }
+        for directory in [expiredComplete, recentComplete] {
+            try Data("{}".utf8).write(
+                to: directory.appendingPathComponent(
+                    ContinuousRecordingStorageManager.completionMarkerName
+                )
+            )
+        }
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let old = now.addingTimeInterval(-10 * 86_400)
+        for directory in [expiredComplete, expiredIncomplete] {
+            try FileManager.default.setAttributes(
+                [.modificationDate: old],
+                ofItemAtPath: directory.path
+            )
+        }
+        try FileManager.default.setAttributes(
+            [.modificationDate: now],
+            ofItemAtPath: recentComplete.path
+        )
+
+        let candidates = try await ContinuousRecordingStorageManager().retentionCandidates(
+            root: root,
+            retentionDays: 7,
+            now: now
+        )
+
+        XCTAssertEqual(candidates.map(\.lastPathComponent), ["expired-complete"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expiredIncomplete.path))
     }
 
     func testPlanningCenterMapperBuildsOrderedTimedSceneCues() throws {
@@ -2380,6 +2476,8 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let model = AppModel(profileDirectory: profileDirectory, autoStartRemoteMonitoring: false)
         model.debugStopPollingForTesting()
+        model.debugSetRecordingAvailableCapacityForTesting(1_000_000_000_000)
+        model.automaticContinuousRecordingEnabled = false
 
         try model.debugStartSimulatedForRecoveryTesting(nowMs: 0)
         XCTAssertTrue(model.isRunning)
@@ -2388,6 +2486,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(model.debugAutonomousSessionIntentForTesting()?.continuousRecording, false)
 
         model.startContinuousRecording()
+        await model.debugWaitForRecordingStorageForTesting()
         let firstRecordingDirectory = try XCTUnwrap(model.continuousRecordingDirectoryURL)
         XCTAssertTrue(model.continuousRecordingActive)
         XCTAssertEqual(model.debugAutonomousSessionIntentForTesting()?.continuousRecording, true)
@@ -2397,6 +2496,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         model.debugEvaluateAutomaticRecoveryForTesting(nowMs: 3_100)
         XCTAssertFalse(model.isRunning, "unhealthy grace must elapse before restart")
         model.debugEvaluateAutomaticRecoveryForTesting(nowMs: 5_200)
+        await model.debugWaitForRecordingStorageForTesting()
 
         XCTAssertTrue(model.isRunning)
         XCTAssertTrue(model.continuousRecordingActive)
@@ -2413,6 +2513,55 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         model.stopEngine()
         await model.debugWaitForIncidentWritesForTesting()
         XCTAssertNil(model.debugAutonomousSessionIntentForTesting())
+        model.debugStopPollingForTesting()
+        try FileManager.default.removeItem(at: profileDirectory)
+    }
+
+    @MainActor
+    func testAppModelAutomaticallyStartsCapacityGatedContinuousCapture() async throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(profileDirectory: profileDirectory, autoStartRemoteMonitoring: false)
+        model.debugStopPollingForTesting()
+        model.debugSetRecordingAvailableCapacityForTesting(1_000_000_000_000)
+        model.automaticContinuousRecordingEnabled = true
+
+        try model.debugStartSimulatedForRecoveryTesting(nowMs: 0)
+        await model.debugWaitForRecordingStorageForTesting()
+
+        XCTAssertTrue(model.isRunning)
+        XCTAssertTrue(model.continuousRecordingRequested)
+        XCTAssertTrue(model.continuousRecordingActive)
+        XCTAssertNotNil(model.continuousRecordingDirectoryURL)
+        XCTAssertTrue(model.recordingStorageStatus.contains("recording"))
+        XCTAssertEqual(model.debugAutonomousSessionIntentForTesting()?.continuousRecording, true)
+
+        model.stopEngine()
+        await model.debugWaitForIncidentWritesForTesting()
+        model.debugStopPollingForTesting()
+        try FileManager.default.removeItem(at: profileDirectory)
+    }
+
+    @MainActor
+    func testAppModelKeepsMixRunningWhenRecordingCapacityGateFails() async throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(profileDirectory: profileDirectory, autoStartRemoteMonitoring: false)
+        model.debugStopPollingForTesting()
+        model.debugSetRecordingAvailableCapacityForTesting(1)
+        model.automaticContinuousRecordingEnabled = true
+
+        try model.debugStartSimulatedForRecoveryTesting(nowMs: 0)
+        await model.debugWaitForRecordingStorageForTesting()
+
+        XCTAssertTrue(model.isRunning, "recording capacity must never interrupt the live mix")
+        XCTAssertTrue(model.continuousRecordingRequested)
+        XCTAssertFalse(model.continuousRecordingActive)
+        XCTAssertTrue(model.recordingStorageStatus.contains("insufficient"))
+        XCTAssertNil(model.continuousRecordingDirectoryURL)
+
+        model.stopEngine()
+        await model.debugWaitForIncidentWritesForTesting()
         model.debugStopPollingForTesting()
         try FileManager.default.removeItem(at: profileDirectory)
     }

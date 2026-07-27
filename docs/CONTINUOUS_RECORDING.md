@@ -18,9 +18,13 @@ review; it is separate from the bounded 10-second soundcheck proof.
   checkpoint may require WAV repair.
 - Stopping continuous capture drains the queued audio and finalizes the open WAV before
   returning.
+- A clean stop writes `.automix-session-complete.json` into the session directory.
+  Retention never touches a session without that marker, so a capture left incomplete
+  by a crash or storage fault remains available for repair and investigation.
 
-The app never deletes or overwrites prior sessions. Retention remains an operator
-responsibility.
+The app never overwrites a prior session and never hard-deletes one. If retention is
+enabled, only cleanly completed sessions older than the configured age are moved to
+macOS Trash before a new capture starts. Retention is disabled by default.
 
 ## Real-time safety
 
@@ -50,16 +54,43 @@ For a 64-input service:
 
 Use a fast local SSD with enough free space for the entire service and margin. Do not
 record this payload to a network share or removable device without first proving its
-sustained write behavior. Automatic free-space gating, retention, and archive
-rotation are not implemented yet.
+sustained write behavior.
+
+Before capture, the app calculates:
+
+`planned recording bytes + configured minimum reserve`
+
+using the opened route's actual input-channel count and sample rate. Capture waits
+instead of arming if the volume cannot satisfy that requirement. During capture the
+app rechecks free space every 30 seconds. If free space falls below the reserve, it
+cleanly stops the recorder, logs a critical incident, and leaves the live mix running.
+
+The venue profile defaults to automatic capture, a three-hour plan, a 20 GB reserve,
+and disabled retention. Set the planned duration to cover the entire service plus
+run-over. The four-hour hardware proof therefore needs a plan of at least four hours.
+
+## Archival
+
+Archival is deliberately a post-service operator workflow rather than an automatic
+live transfer. After a clean stop:
+
+1. Confirm `Dropped Frames` is zero and the completion marker exists.
+2. Copy the entire session directory to the approved archive volume or object store.
+3. Verify file counts and checksums before treating the archive as authoritative.
+4. Only then allow the local retention window to move the original to Trash.
+
+Automatic upload during a live service is avoided because it can contend for disk and
+network bandwidth with the recorder and encoder.
 
 ## Operator workflow
 
-1. Start and verify the Core Audio route.
-2. In **Continuous Capture**, select **Start Continuous Recording**. The app creates a
-   unique session folder under its Application Support directory.
-3. Confirm `Captured` advances, `Segments` is nonzero, and `Dropped Frames` remains
-   zero.
+1. Before the service, set planned duration, minimum reserve, and the optional
+   retention age. Confirm **Storage** reports the planned capture fits.
+2. Leave **Automatically record when the engine starts** enabled, then start and verify
+   the Core Audio route. The app creates a unique session folder after the capacity
+   gate passes. An operator can also request capture manually.
+3. Confirm `State` is `recording`, `Captured` advances, `Segments` is nonzero, and
+   `Dropped Frames` remains zero.
 4. Stop capture after the service. Wait for the stop action to return before removing
    storage or quitting the app.
 5. Keep the session folder together when using the files for replay evaluation.

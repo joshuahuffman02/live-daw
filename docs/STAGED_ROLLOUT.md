@@ -14,7 +14,9 @@ first because speech automation has fewer interacting sources than a worship mix
   observed.
 - The signed app is installed at its permanent path; the LaunchAgent is installed.
 - Continuous recording has adequate free space (about 91.2 GB/hour at 64+2 channels,
-  96 kHz float).
+  96 kHz float). Set its planned duration at least as long as the service/proof, keep
+  automatic start enabled for the supervised app run, and confirm the capacity gate
+  passes before program begins.
 
 ## Phase 1 — sermon
 

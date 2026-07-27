@@ -474,11 +474,59 @@ private struct DeviceControlPanel: View {
 
                 GroupBox("Continuous Capture") {
                     VStack(alignment: .leading, spacing: 12) {
-                        if model.continuousRecordingActive {
+                        Toggle(
+                            "Automatically record when the engine starts",
+                            isOn: $model.automaticContinuousRecordingEnabled
+                        )
+                        .toggleStyle(.switch)
+
+                        Stepper(
+                            value: $model.plannedRecordingDurationHours,
+                            in: 0.25...12,
+                            step: 0.25
+                        ) {
+                            Text(
+                                String(
+                                    format: "Planned capture %.2g hours",
+                                    model.plannedRecordingDurationHours
+                                )
+                            )
+                        }
+                        .font(.caption)
+
+                        Stepper(
+                            value: $model.recordingMinimumReserveGB,
+                            in: 5...500,
+                            step: 5
+                        ) {
+                            Text(
+                                String(
+                                    format: "Keep at least %.0f GB free",
+                                    model.recordingMinimumReserveGB
+                                )
+                            )
+                        }
+                        .font(.caption)
+
+                        Stepper(value: $model.recordingRetentionDays, in: 0...365) {
+                            Text(
+                                model.recordingRetentionDays == 0
+                                    ? "Retention cleanup disabled"
+                                    : "Move completed captures older than \(model.recordingRetentionDays) day(s) to Trash"
+                            )
+                        }
+                        .font(.caption)
+
+                        if model.continuousRecordingActive || model.continuousRecordingRequested {
                             Button(role: .cancel) {
                                 model.stopContinuousRecording()
                             } label: {
-                                Label("Stop Continuous Recording", systemImage: "stop.circle.fill")
+                                Label(
+                                    model.continuousRecordingActive
+                                        ? "Stop Continuous Recording"
+                                        : "Cancel Recording Request",
+                                    systemImage: "stop.circle.fill"
+                                )
                             }
                         } else {
                             Button {
@@ -496,7 +544,18 @@ private struct DeviceControlPanel: View {
 
                         StatusRow(
                             label: "State",
-                            value: model.continuousRecordingActive ? "recording" : "stopped"
+                            value: model.continuousRecordingActive
+                                ? "recording"
+                                : (model.continuousRecordingRequested ? "waiting to record" : "stopped")
+                        )
+                        StatusRow(
+                            label: "Storage",
+                            value: model.recordingStorageStatus,
+                            warning: recordingStorageWarning
+                        )
+                        StatusRow(
+                            label: "Capacity",
+                            value: "\(byteCount(model.recordingAvailableCapacityBytes)) free · \(byteCount(model.recordingEstimatedSessionBytes)) planned"
                         )
                         StatusRow(
                             label: "Captured",
@@ -519,7 +578,7 @@ private struct DeviceControlPanel: View {
                                 .lineLimit(2)
                                 .textSelection(.enabled)
                         } else {
-                            Text("Writes raw inputs in Dante channel order plus stream L/R to checkpointed 60-second float WAV segments. Disk I/O never runs on the audio callback.")
+                            Text("Before capture, the app requires enough free space for the planned duration plus the reserve. It rechecks every 30 seconds while recording and stops capture before consuming the reserve. Optional retention moves expired completed sessions to Trash; it never hard-deletes them.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -806,6 +865,19 @@ private struct DeviceControlPanel: View {
         }
         let seconds = Double(model.continuousRecordingFrameCount) / model.detectedSampleRate
         return "\(formatDuration(seconds)) · \(model.continuousRecordingFrameCount) frames"
+    }
+
+    private var recordingStorageWarning: Bool {
+        let status = model.recordingStorageStatus.lowercased()
+        return status.contains("insufficient") ||
+            status.contains("exceeds") ||
+            status.contains("failed") ||
+            status.contains("minimum free-space")
+    }
+
+    private func byteCount(_ value: Int64) -> String {
+        guard value > 0 else { return "unknown" }
+        return ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 
     private var soundcheckButtonTitle: String {

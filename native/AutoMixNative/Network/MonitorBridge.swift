@@ -128,6 +128,9 @@ final class MonitorBridge: ObservableObject {
             outputClockCorrectionPpm: model.outputClockCorrectionPpm,
             outputRingFillFrames: model.separateOutputRingFillFrames,
             outputRingTargetFrames: model.separateOutputPrebufferFrames,
+            recordingRequested: model.continuousRecordingRequested,
+            recordingActive: model.continuousRecordingActive,
+            recordingStorageStatus: model.recordingStorageStatus,
             recordingDroppedFrames: model.continuousRecordingDroppedFrameCount,
             encoderHealth: model.encoderHealth,
             egressHealth: model.egressHealth

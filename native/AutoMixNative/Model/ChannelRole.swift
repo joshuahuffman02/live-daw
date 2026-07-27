@@ -464,11 +464,15 @@ struct VenueProfile: Codable, Sendable {
     var egressHealthURL: String
     var planningCenterServiceTypeID: String
     var planningCenterFollowTimedCues: Bool
+    var automaticContinuousRecordingEnabled: Bool
+    var plannedRecordingDurationHours: Double
+    var recordingMinimumReserveGB: Double
+    var recordingRetentionDays: Int
     var expectedInputChannels: Int
     var expectedSampleRate: Double
     var channelMappings: [ChannelMapping]
 
-    init(inputDeviceUID: String, outputDeviceUID: String, scene: MixScene = .worship, shadowMode: Bool = true, measuredEndToEndAudioLatencyMs: Double = 0, measuredEndToEndVideoLatencyMs: Double = 0, encoderHealthURL: String = "", egressHealthURL: String = "", planningCenterServiceTypeID: String = "", planningCenterFollowTimedCues: Bool = false, expectedInputChannels: Int = 64, expectedSampleRate: Double = 96000, channelMappings: [ChannelMapping]) {
+    init(inputDeviceUID: String, outputDeviceUID: String, scene: MixScene = .worship, shadowMode: Bool = true, measuredEndToEndAudioLatencyMs: Double = 0, measuredEndToEndVideoLatencyMs: Double = 0, encoderHealthURL: String = "", egressHealthURL: String = "", planningCenterServiceTypeID: String = "", planningCenterFollowTimedCues: Bool = false, automaticContinuousRecordingEnabled: Bool = true, plannedRecordingDurationHours: Double = 3, recordingMinimumReserveGB: Double = 20, recordingRetentionDays: Int = 0, expectedInputChannels: Int = 64, expectedSampleRate: Double = 96000, channelMappings: [ChannelMapping]) {
         self.inputDeviceUID = inputDeviceUID
         self.outputDeviceUID = outputDeviceUID
         self.scene = scene
@@ -479,6 +483,10 @@ struct VenueProfile: Codable, Sendable {
         self.egressHealthURL = egressHealthURL
         self.planningCenterServiceTypeID = planningCenterServiceTypeID
         self.planningCenterFollowTimedCues = planningCenterFollowTimedCues
+        self.automaticContinuousRecordingEnabled = automaticContinuousRecordingEnabled
+        self.plannedRecordingDurationHours = min(max(plannedRecordingDurationHours, 0.25), 12)
+        self.recordingMinimumReserveGB = min(max(recordingMinimumReserveGB, 5), 500)
+        self.recordingRetentionDays = min(max(recordingRetentionDays, 0), 365)
         self.expectedInputChannels = min(max(expectedInputChannels, 1), 64)
         self.expectedSampleRate = BroadcastSampleRate.nearestSupported(expectedSampleRate)
         self.channelMappings = Self.normalizedChannelMappingsIfReady(
@@ -527,6 +535,22 @@ struct VenueProfile: Codable, Sendable {
             Bool.self,
             forKey: .planningCenterFollowTimedCues
         ) ?? false
+        automaticContinuousRecordingEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .automaticContinuousRecordingEnabled
+        ) ?? true
+        plannedRecordingDurationHours = min(
+            max(try container.decodeIfPresent(Double.self, forKey: .plannedRecordingDurationHours) ?? 3, 0.25),
+            12
+        )
+        recordingMinimumReserveGB = min(
+            max(try container.decodeIfPresent(Double.self, forKey: .recordingMinimumReserveGB) ?? 20, 5),
+            500
+        )
+        recordingRetentionDays = min(
+            max(try container.decodeIfPresent(Int.self, forKey: .recordingRetentionDays) ?? 0, 0),
+            365
+        )
         expectedInputChannels = min(max(try container.decodeIfPresent(Int.self, forKey: .expectedInputChannels) ?? 64, 1), 64)
         expectedSampleRate = BroadcastSampleRate.nearestSupported(try container.decodeIfPresent(Double.self, forKey: .expectedSampleRate) ?? 96000)
         let decodedMappings = try container.decode([ChannelMapping].self, forKey: .channelMappings)

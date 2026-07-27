@@ -400,6 +400,155 @@ actor PlanningCenterAPIClient {
 
 }
 
+struct ContinuousRecordingStorageEstimate: Equatable, Sendable {
+    static let bytesPerSample = 4.0
+    static let programChannelCount = 2
+
+    var inputChannelCount: Int
+    var sampleRate: Double
+    var plannedDurationHours: Double
+    var minimumReserveBytes: Int64
+
+    var recordingBytes: Int64 {
+        let bytes = Double(max(inputChannelCount, 0) + Self.programChannelCount) *
+            max(sampleRate, 0) *
+            Self.bytesPerSample *
+            max(plannedDurationHours, 0) *
+            3_600
+        return Int64(min(bytes.rounded(.up), Double(Int64.max)))
+    }
+
+    var requiredFreeBytes: Int64 {
+        let (sum, overflow) = recordingBytes.addingReportingOverflow(max(minimumReserveBytes, 0))
+        return overflow ? Int64.max : sum
+    }
+
+    func canStart(availableBytes: Int64) -> Bool {
+        availableBytes >= requiredFreeBytes
+    }
+}
+
+struct ContinuousRecordingStorageReport: Equatable, Sendable {
+    var availableBytes: Int64
+    var estimate: ContinuousRecordingStorageEstimate
+    var movedToTrashCount: Int
+
+    var canStart: Bool {
+        estimate.canStart(availableBytes: availableBytes)
+    }
+
+    func decision(
+        recordingActive: Bool,
+        recordingRequested: Bool
+    ) -> ContinuousRecordingStorageDecision {
+        if recordingActive {
+            return availableBytes < estimate.minimumReserveBytes
+                ? .stopForMinimumReserve
+                : .continueRecording
+        }
+        guard recordingRequested else { return .idle }
+        return canStart ? .startRecording : .waitForCapacity
+    }
+}
+
+enum ContinuousRecordingStorageDecision: Equatable, Sendable {
+    case idle
+    case waitForCapacity
+    case startRecording
+    case continueRecording
+    case stopForMinimumReserve
+}
+
+enum ContinuousRecordingStorageError: LocalizedError, Equatable {
+    case capacityUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .capacityUnavailable:
+            return "Could not verify free recording capacity."
+        }
+    }
+}
+
+actor ContinuousRecordingStorageManager {
+    static let completionMarkerName = ".automix-session-complete.json"
+
+    func inspect(
+        root: URL,
+        estimate: ContinuousRecordingStorageEstimate,
+        retentionDays: Int,
+        applyRetention: Bool,
+        availableCapacityOverrideBytes: Int64? = nil,
+        now: Date = Date()
+    ) throws -> ContinuousRecordingStorageReport {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        var movedToTrashCount = 0
+
+        if applyRetention, retentionDays > 0 {
+            for child in try retentionCandidates(
+                root: root,
+                retentionDays: retentionDays,
+                now: now
+            ) {
+                try Task.checkCancellation()
+                var trashedURL: NSURL?
+                try fileManager.trashItem(at: child, resultingItemURL: &trashedURL)
+                movedToTrashCount += 1
+            }
+        }
+
+        let availableBytes: Int64
+        if let availableCapacityOverrideBytes {
+            availableBytes = max(availableCapacityOverrideBytes, 0)
+        } else {
+            let attributes = try fileManager.attributesOfFileSystem(forPath: root.path)
+            guard let freeNumber = attributes[.systemFreeSize] as? NSNumber else {
+                throw ContinuousRecordingStorageError.capacityUnavailable
+            }
+            availableBytes = freeNumber.int64Value
+        }
+        return ContinuousRecordingStorageReport(
+            availableBytes: availableBytes,
+            estimate: estimate,
+            movedToTrashCount: movedToTrashCount
+        )
+    }
+
+    func retentionCandidates(
+        root: URL,
+        retentionDays: Int,
+        now: Date = Date()
+    ) throws -> [URL] {
+        guard retentionDays > 0 else { return [] }
+        let fileManager = FileManager.default
+        let cutoff = now.addingTimeInterval(-Double(retentionDays) * 86_400)
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .contentModificationDateKey,
+            .creationDateKey,
+            .isHiddenKey
+        ]
+        return try fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsPackageDescendants]
+        )
+        .filter { child in
+            let values = try child.resourceValues(forKeys: keys)
+            return values.isDirectory == true &&
+                values.isHidden != true &&
+                fileManager.fileExists(
+                    atPath: child
+                        .appendingPathComponent(Self.completionMarkerName, isDirectory: false)
+                        .path
+                ) &&
+                (values.contentModificationDate ?? values.creationDate ?? .distantFuture) < cutoff
+        }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var devices: [AMDeviceInfo] = []
@@ -529,6 +678,45 @@ final class AppModel: ObservableObject {
     @Published private(set) var continuousRecordingDroppedFrameCount: UInt = 0
     @Published private(set) var continuousRecordingSegmentCount: UInt = 0
     @Published private(set) var continuousRecordingDirectoryURL: URL?
+    @Published private(set) var continuousRecordingRequested = false
+    @Published var automaticContinuousRecordingEnabled = true {
+        didSet { saveProfile() }
+    }
+    @Published var plannedRecordingDurationHours = 3.0 {
+        didSet {
+            let clamped = min(max(plannedRecordingDurationHours, 0.25), 12)
+            if plannedRecordingDurationHours != clamped {
+                plannedRecordingDurationHours = clamped
+                return
+            }
+            nextRecordingStorageCheckMs = 0
+            saveProfile()
+        }
+    }
+    @Published var recordingMinimumReserveGB = 20.0 {
+        didSet {
+            let clamped = min(max(recordingMinimumReserveGB, 5), 500)
+            if recordingMinimumReserveGB != clamped {
+                recordingMinimumReserveGB = clamped
+                return
+            }
+            nextRecordingStorageCheckMs = 0
+            saveProfile()
+        }
+    }
+    @Published var recordingRetentionDays = 0 {
+        didSet {
+            let clamped = min(max(recordingRetentionDays, 0), 365)
+            if recordingRetentionDays != clamped {
+                recordingRetentionDays = clamped
+                return
+            }
+            saveProfile()
+        }
+    }
+    @Published private(set) var recordingStorageStatus = "not checked"
+    @Published private(set) var recordingAvailableCapacityBytes: Int64 = 0
+    @Published private(set) var recordingEstimatedSessionBytes: Int64 = 0
     @Published var automaticRecoveryEnabled = true {
         didSet { applyAutomaticRecoveryState() }
     }
@@ -654,7 +842,12 @@ final class AppModel: ObservableObject {
     private var recoveryInFlight = false
     private var incidentJournal: RuntimeIncidentJournal?
     private var incidentWriteTask: Task<Void, Never>?
-    private var continuousRecordingRequested = false
+    private let recordingStorageManager = ContinuousRecordingStorageManager()
+    private var recordingStorageTask: Task<Void, Never>?
+    private var nextRecordingStorageCheckMs: Int64 = 0
+    private var previousContinuousRecordingActive = false
+    private var lastRecordingStorageIncidentKey: String?
+    private var recordingAvailableCapacityOverrideBytesForTesting: Int64?
     private let streamHealthProbe = StreamHealthProbe()
     private var streamHealthTask: Task<Void, Never>?
     private var nextStreamHealthProbeMs: Int64 = 0
@@ -1178,6 +1371,10 @@ final class AppModel: ObservableObject {
             armAutomaticRecoveryAfterSuccessfulStart(nowMs: Int64(Date().timeIntervalSince1970 * 1_000))
             if resumingAutonomousSession && continuousRecordingRequested {
                 resumeContinuousRecordingAfterRecovery(nowMs: Int64(Date().timeIntervalSince1970 * 1_000))
+            } else if automaticContinuousRecordingEnabled {
+                continuousRecordingRequested = true
+                nextRecordingStorageCheckMs = 0
+                saveAutonomousSessionIntent()
             }
             recordRuntimeIncident(
                 kind: resumingAutonomousSession ? "engine-resumed-after-relaunch" : "engine-started",
@@ -1215,6 +1412,9 @@ final class AppModel: ObservableObject {
         runtimeRecoveryCoordinator.disarm()
         automaticRecoveryStatus = "disarmed by operator"
         continuousRecordingRequested = false
+        recordingStorageTask?.cancel()
+        recordingStorageTask = nil
+        nextRecordingStorageCheckMs = 0
         resumingAutonomousSession = false
         clearAutonomousSessionIntent()
         streamHealthTask?.cancel()
@@ -1233,7 +1433,11 @@ final class AppModel: ObservableObject {
             details: runtimeRouteDetails()
         )
         cancelStabilityMonitor()
+        let wasContinuouslyRecording = engine.continuousRecording
         engine.stop()
+        if wasContinuouslyRecording {
+            markContinuousRecordingSessionComplete()
+        }
         runningInRehearsal = false
         runningRouteSnapshot = nil
         pollEngine()
@@ -1295,24 +1499,24 @@ final class AppModel: ObservableObject {
             return
         }
 
-        do {
-            let directory = try nextContinuousRecordingDirectory()
-            try engine.startContinuousRecording(atDirectoryURL: directory)
-            continuousRecordingDirectoryURL = directory
-            continuousRecordingRequested = true
-            saveAutonomousSessionIntent()
-            lastError = nil
-            pollEngine()
-        } catch {
-            lastError = error.localizedDescription
-            statusText = error.localizedDescription
-        }
+        continuousRecordingRequested = true
+        nextRecordingStorageCheckMs = 0
+        saveAutonomousSessionIntent()
+        updateRecordingStorage(nowMs: Int64(Date().timeIntervalSince1970 * 1_000))
     }
 
     func stopContinuousRecording() {
         continuousRecordingRequested = false
+        recordingStorageTask?.cancel()
+        recordingStorageTask = nil
+        nextRecordingStorageCheckMs = 0
+        recordingStorageStatus = "stopped by operator"
         saveAutonomousSessionIntent()
+        let wasContinuouslyRecording = engine.continuousRecording
         engine.stopContinuousRecording()
+        if wasContinuouslyRecording {
+            markContinuousRecordingSessionComplete()
+        }
         pollEngine()
     }
 
@@ -1604,6 +1808,7 @@ final class AppModel: ObservableObject {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
         updateRuntimeIncidentTransitions(nowMs: nowMs)
         updateAutomaticRecovery(nowMs: nowMs)
+        updateRecordingStorage(nowMs: nowMs)
         updateStreamHealthMonitoring(nowMs: nowMs)
         updatePlanningCenterScene(now: Date(timeIntervalSince1970: Double(nowMs) / 1_000))
         if planningCenterFollowTimedCues,
@@ -1612,6 +1817,235 @@ final class AppModel: ObservableObject {
             refreshPlanningCenterPlan()
         }
         monitorBridge?.captureAndPublish(nowMs: nowMs)
+    }
+
+    private func updateRecordingStorage(nowMs: Int64) {
+        let isActive = engine.continuousRecording
+        if previousContinuousRecordingActive,
+           !isActive,
+           continuousRecordingRequested {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "continuous-recording-stopped-unexpectedly",
+                severity: .critical,
+                message: "Continuous recording stopped while capture was still requested",
+                details: [
+                    "recordingDirectory": continuousRecordingDirectoryURL?.path ?? "",
+                    "droppedFrames": "\(engine.continuousRecordingDroppedFrameCount)"
+                ]
+            )
+            nextRecordingStorageCheckMs = 0
+        }
+        previousContinuousRecordingActive = isActive
+
+        guard engine.running,
+              recordingStorageTask == nil,
+              nowMs >= nextRecordingStorageCheckMs
+        else { return }
+
+        let inputChannels = max(engine.inputChannelCount, detectedInputChannels, 1)
+        let sampleRate = engine.sampleRate > 0
+            ? engine.sampleRate
+            : max(detectedSampleRate, expectedSampleRate)
+        let reserveBytes = Int64(
+            min(
+                (recordingMinimumReserveGB * 1_000_000_000).rounded(.up),
+                Double(Int64.max)
+            )
+        )
+        let estimate = ContinuousRecordingStorageEstimate(
+            inputChannelCount: inputChannels,
+            sampleRate: sampleRate,
+            plannedDurationHours: plannedRecordingDurationHours,
+            minimumReserveBytes: reserveBytes
+        )
+        recordingEstimatedSessionBytes = estimate.recordingBytes
+        let shouldStart = continuousRecordingRequested && !isActive
+        let root: URL
+        do {
+            root = try continuousRecordingRootDirectory()
+        } catch {
+            finishRecordingStorageCheck(error: error, nowMs: nowMs)
+            return
+        }
+
+        recordingStorageStatus = shouldStart ? "checking before capture" : "checking capacity"
+        recordingStorageTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let report = try await recordingStorageManager.inspect(
+                    root: root,
+                    estimate: estimate,
+                    retentionDays: recordingRetentionDays,
+                    applyRetention: shouldStart,
+                    availableCapacityOverrideBytes: recordingAvailableCapacityOverrideBytesForTesting
+                )
+                guard !Task.isCancelled else { return }
+                finishRecordingStorageCheck(
+                    report: report,
+                    nowMs: nowMs
+                )
+            } catch is CancellationError {
+                recordingStorageTask = nil
+            } catch {
+                finishRecordingStorageCheck(error: error, nowMs: nowMs)
+            }
+        }
+    }
+
+    private func finishRecordingStorageCheck(
+        report: ContinuousRecordingStorageReport,
+        nowMs: Int64
+    ) {
+        recordingStorageTask = nil
+        recordingAvailableCapacityBytes = report.availableBytes
+        recordingEstimatedSessionBytes = report.estimate.recordingBytes
+
+        if report.movedToTrashCount > 0 {
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "recording-retention-cleanup",
+                severity: .info,
+                message: "Moved \(report.movedToTrashCount) expired recording session(s) to Trash",
+                details: ["retentionDays": "\(recordingRetentionDays)"]
+            )
+        }
+
+        switch report.decision(
+            recordingActive: engine.continuousRecording,
+            recordingRequested: continuousRecordingRequested
+        ) {
+        case .stopForMinimumReserve:
+            continuousRecordingRequested = false
+            saveAutonomousSessionIntent()
+            engine.stopContinuousRecording()
+            markContinuousRecordingSessionComplete()
+            recordingStorageStatus = "stopped · minimum free-space reserve reached"
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "recording-stopped-low-space",
+                severity: .critical,
+                message: "Continuous recording stopped before exhausting the storage volume",
+                details: [
+                    "availableBytes": "\(report.availableBytes)",
+                    "minimumReserveBytes": "\(report.estimate.minimumReserveBytes)",
+                    "recordingDirectory": continuousRecordingDirectoryURL?.path ?? ""
+                ]
+            )
+            nextRecordingStorageCheckMs = nowMs + 60_000
+            pollEngine()
+            return
+
+        case .continueRecording:
+            recordingStorageStatus = "recording · capacity monitored"
+            lastRecordingStorageIncidentKey = nil
+            nextRecordingStorageCheckMs = nowMs + 30_000
+            return
+
+        case .idle:
+            recordingStorageStatus = report.canStart
+                ? "ready for planned capture"
+                : "planned capture exceeds free capacity"
+            nextRecordingStorageCheckMs = nowMs + 60_000
+            return
+
+        case .waitForCapacity:
+            recordingStorageStatus = "waiting · insufficient space for planned capture + reserve"
+            recordRecordingStorageIncidentOnce(
+                key: "insufficient-capacity",
+                nowMs: nowMs,
+                kind: "recording-start-blocked-low-space",
+                severity: .critical,
+                message: "Continuous recording is requested but the planned capture does not fit",
+                details: [
+                    "availableBytes": "\(report.availableBytes)",
+                    "plannedRecordingBytes": "\(report.estimate.recordingBytes)",
+                    "minimumReserveBytes": "\(report.estimate.minimumReserveBytes)"
+                ]
+            )
+            nextRecordingStorageCheckMs = nowMs + 60_000
+            return
+
+        case .startRecording:
+            break
+        }
+
+        guard engine.running,
+              !engine.recording,
+              !engine.recordingSaveInProgress,
+              !soundcheckReportInProgress
+        else {
+            recordingStorageStatus = "waiting for audio/soundcheck state"
+            nextRecordingStorageCheckMs = nowMs + 5_000
+            return
+        }
+
+        do {
+            let directory = try nextContinuousRecordingDirectory()
+            try engine.startContinuousRecording(atDirectoryURL: directory)
+            continuousRecordingDirectoryURL = directory
+            previousContinuousRecordingActive = true
+            recordingStorageStatus = "recording · capacity gate passed"
+            lastRecordingStorageIncidentKey = nil
+            nextRecordingStorageCheckMs = nowMs + 30_000
+            saveAutonomousSessionIntent()
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "continuous-recording-started",
+                severity: .info,
+                message: "Continuous raw-input and program capture started",
+                details: [
+                    "recordingDirectory": directory.path,
+                    "availableBytes": "\(report.availableBytes)",
+                    "plannedRecordingBytes": "\(report.estimate.recordingBytes)"
+                ]
+            )
+            pollEngine()
+        } catch {
+            recordingStorageStatus = "start failed · \(error.localizedDescription)"
+            recordRecordingStorageIncidentOnce(
+                key: "recording-start-failed",
+                nowMs: nowMs,
+                kind: "recording-start-failed",
+                severity: .critical,
+                message: error.localizedDescription,
+                details: runtimeRouteDetails()
+            )
+            nextRecordingStorageCheckMs = nowMs + 60_000
+        }
+    }
+
+    private func finishRecordingStorageCheck(error: Error, nowMs: Int64) {
+        recordingStorageTask = nil
+        recordingStorageStatus = "capacity check failed · \(error.localizedDescription)"
+        recordRecordingStorageIncidentOnce(
+            key: "capacity-check-failed",
+            nowMs: nowMs,
+            kind: "recording-capacity-check-failed",
+            severity: .critical,
+            message: error.localizedDescription,
+            details: [:]
+        )
+        nextRecordingStorageCheckMs = nowMs + 60_000
+    }
+
+    private func recordRecordingStorageIncidentOnce(
+        key: String,
+        nowMs: Int64,
+        kind: String,
+        severity: AlertSeverity,
+        message: String,
+        details: [String: String]
+    ) {
+        guard lastRecordingStorageIncidentKey != key else { return }
+        lastRecordingStorageIncidentKey = key
+        recordRuntimeIncident(
+            timestampMs: nowMs,
+            kind: kind,
+            severity: severity,
+            message: message,
+            details: details
+        )
     }
 
     private func resetStreamHealthMonitoring() {
@@ -1791,7 +2225,11 @@ final class AppModel: ObservableObject {
         )
 
         invalidateValidationEvidence()
+        let wasContinuouslyRecording = engine.continuousRecording
         engine.stop()
+        if wasContinuouslyRecording {
+            markContinuousRecordingSessionComplete()
+        }
         runningRouteSnapshot = nil
 
         do {
@@ -1896,22 +2334,11 @@ final class AppModel: ObservableObject {
     }
 
     private func resumeContinuousRecordingAfterRecovery(nowMs: Int64) {
-        do {
-            let directory = try nextContinuousRecordingDirectory()
-            try engine.startContinuousRecording(atDirectoryURL: directory)
-            continuousRecordingDirectoryURL = directory
-            continuousRecordingRequested = true
-            saveAutonomousSessionIntent()
-        } catch {
-            recordRuntimeIncident(
-                timestampMs: nowMs,
-                kind: "recording-resume-failed",
-                severity: .critical,
-                message: error.localizedDescription,
-                details: runtimeRouteDetails()
-            )
-            lastError = "Audio recovered, but continuous recording did not resume: \(error.localizedDescription)"
-        }
+        continuousRecordingRequested = true
+        nextRecordingStorageCheckMs = 0
+        recordingStorageStatus = "checking before recovery capture resumes"
+        saveAutonomousSessionIntent()
+        updateRecordingStorage(nowMs: nowMs)
     }
 
     private func updateRuntimeIncidentTransitions(nowMs: Int64) {
@@ -2188,6 +2615,10 @@ final class AppModel: ObservableObject {
         egressHealthURL = profile.egressHealthURL
         planningCenterServiceTypeID = profile.planningCenterServiceTypeID
         planningCenterFollowTimedCues = profile.planningCenterFollowTimedCues
+        automaticContinuousRecordingEnabled = profile.automaticContinuousRecordingEnabled
+        plannedRecordingDurationHours = profile.plannedRecordingDurationHours
+        recordingMinimumReserveGB = profile.recordingMinimumReserveGB
+        recordingRetentionDays = profile.recordingRetentionDays
         expectedInputChannels = profile.expectedInputChannels
         expectedSampleRate = profile.expectedSampleRate
         channelMappings = profile.channelMappings.isEmpty ? ChannelMapping.defaults(count: 32) : profile.channelMappings
@@ -2207,6 +2638,10 @@ final class AppModel: ObservableObject {
             egressHealthURL: egressHealthURL,
             planningCenterServiceTypeID: planningCenterServiceTypeID,
             planningCenterFollowTimedCues: planningCenterFollowTimedCues,
+            automaticContinuousRecordingEnabled: automaticContinuousRecordingEnabled,
+            plannedRecordingDurationHours: plannedRecordingDurationHours,
+            recordingMinimumReserveGB: recordingMinimumReserveGB,
+            recordingRetentionDays: recordingRetentionDays,
             expectedInputChannels: expectedInputChannels,
             expectedSampleRate: expectedSampleRate,
             channelMappings: channelMappings
@@ -2226,10 +2661,43 @@ final class AppModel: ObservableObject {
         return directory.appendingPathComponent(name)
     }
 
-    private func nextContinuousRecordingDirectory() throws -> URL {
+    private func continuousRecordingRootDirectory() throws -> URL {
         let root = try appSupportDirectory()
             .appendingPathComponent("Continuous Recordings", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func markContinuousRecordingSessionComplete() {
+        guard let directory = continuousRecordingDirectoryURL else { return }
+        let markerURL = directory.appendingPathComponent(
+            ContinuousRecordingStorageManager.completionMarkerName,
+            isDirectory: false
+        )
+        let payload: [String: Any] = [
+            "completedAtMs": Int64(Date().timeIntervalSince1970 * 1_000),
+            "capturedFrames": engine.continuousRecordingFrameCount,
+            "droppedFrames": engine.continuousRecordingDroppedFrameCount,
+            "segments": engine.continuousRecordingSegmentCount
+        ]
+        do {
+            let data = try JSONSerialization.data(
+                withJSONObject: payload,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try data.write(to: markerURL, options: .atomic)
+        } catch {
+            recordRuntimeIncident(
+                kind: "recording-completion-marker-failed",
+                severity: .warning,
+                message: error.localizedDescription,
+                details: ["recordingDirectory": directory.path]
+            )
+        }
+    }
+
+    private func nextContinuousRecordingDirectory() throws -> URL {
+        let root = try continuousRecordingRootDirectory()
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
@@ -2667,6 +3135,11 @@ final class AppModel: ObservableObject {
         runningInRehearsal = false
         runningRouteSnapshot = liveRouteSnapshot()
         armAutomaticRecoveryAfterSuccessfulStart(nowMs: nowMs)
+        if automaticContinuousRecordingEnabled {
+            continuousRecordingRequested = true
+            nextRecordingStorageCheckMs = 0
+            saveAutonomousSessionIntent()
+        }
         pollEngine()
     }
 
@@ -2683,6 +3156,16 @@ final class AppModel: ObservableObject {
 
     func debugWaitForIncidentWritesForTesting() async {
         await incidentWriteTask?.value
+    }
+
+    func debugSetRecordingAvailableCapacityForTesting(_ bytes: Int64?) {
+        recordingAvailableCapacityOverrideBytesForTesting = bytes
+        nextRecordingStorageCheckMs = 0
+    }
+
+    func debugWaitForRecordingStorageForTesting() async {
+        await recordingStorageTask?.value
+        pollEngine()
     }
 
     func debugActivateStabilityMonitorForInvalidationProbe() {

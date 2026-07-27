@@ -181,9 +181,12 @@ Current native milestone:
 - continuously records raw Core Audio/Dante inputs plus final stream L/R into
   checkpointed 60-second float-WAV segments on a dedicated file queue; a preallocated
   two-second SPSC ring keeps all file I/O off the audio callback, recording pressure
-  drops and counts recorder frames instead of blocking the mix, and the operator UI
-  exposes captured frames, segment count, output folder, and drop telemetry; storage
-  sizing and recovery limits are documented in
+  drops and counts recorder frames instead of blocking the mix; the native app can
+  start capture with the engine, gates start on planned-duration capacity plus a free
+  reserve, rechecks capacity while live, and supports opt-in retention that moves only
+  cleanly completed sessions to Trash; the operator UI exposes storage state, captured
+  frames, segment count, output folder, and drop telemetry; storage sizing, archival,
+  and recovery limits are documented in
   [`docs/CONTINUOUS_RECORDING.md`](docs/CONTINUOUS_RECORDING.md);
 - detects route loss and callback stalls, retries the exact configured route with
   verification and bounded backoff, restores continuous-capture intent, and writes

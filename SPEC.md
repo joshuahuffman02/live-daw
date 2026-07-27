@@ -275,10 +275,12 @@ Solves cold-start.
 - Automation conservative when live: rate-limit moves, confidence-gate uncertain
   decisions, hold last-good values, and let FREEZE stop control-thread changes.
 - Always record raw multitracks + output (safety, forensics, training). The native
-  milestone implements operator-started, checkpointed 60-second float-WAV segments
-  through a preallocated two-second SPSC ring and dedicated file queue. Recorder
-  overflow is explicit telemetry and never blocks the audio callback. Automatic
-  start, free-space gating, retention, and archival policy remain to be added.
+  milestone implements automatic or operator-requested checkpointed 60-second
+  float-WAV segments through a preallocated two-second SPSC ring and dedicated file
+  queue. Recorder overflow is explicit telemetry and never blocks the audio callback.
+  Capture start is gated on planned-duration capacity plus a configured reserve,
+  capacity is monitored while live, and optional retention moves only cleanly closed
+  sessions to Trash. Archive export remains an explicit post-service operator step.
 
 ## Supervisory UI
 Per-channel: label + confidence, EQ moves, level rides. Dual metering pre/post.

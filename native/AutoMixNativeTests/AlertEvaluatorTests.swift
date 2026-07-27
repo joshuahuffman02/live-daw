@@ -154,6 +154,23 @@ final class AlertEvaluatorTests: XCTestCase {
         XCTAssertFalse(ids(ev.step(input, nowMs: 200)).contains("recording-drops"))
     }
 
+    func testRequestedButInactiveRecordingIsCriticalWithoutStoppingMix() {
+        var ev = AlertEvaluator()
+        var input = healthy()
+        input.recordingRequested = true
+        input.recordingActive = false
+        input.recordingStorageStatus = "waiting · insufficient space"
+
+        let result = ev.step(input, nowMs: 0)
+
+        XCTAssertTrue(ids(result).contains("recording-not-active"))
+        XCTAssertEqual(result.severity, .critical)
+        XCTAssertEqual(
+            result.alerts.first { $0.id == "recording-not-active" }?.detail,
+            "waiting · insufficient space"
+        )
+    }
+
     func testXrunFiresOnCounterIncreaseThenClears() {
         var ev = AlertEvaluator()
         _ = ev.step(healthy(), nowMs: 0)

@@ -208,6 +208,9 @@ struct AlertInput {
     var outputClockCorrectionPpm: Double = 0
     var outputRingFillFrames: Int = 0
     var outputRingTargetFrames: Int = 0
+    var recordingRequested: Bool = false
+    var recordingActive: Bool = false
+    var recordingStorageStatus: String = ""
     var recordingDroppedFrames: UInt = 0
     var encoderHealth: StreamEndpointHealth = .disabled
     var egressHealth: StreamEndpointHealth = .disabled
@@ -289,6 +292,18 @@ struct AlertEvaluator {
                                 actions: []))
         }
         previousRecordingDroppedFrames = input.recordingDroppedFrames
+
+        if input.isRunning, input.recordingRequested, !input.recordingActive {
+            alerts.append(Alert(
+                id: "recording-not-active",
+                severity: .critical,
+                title: "Recording not active",
+                detail: input.recordingStorageStatus.isEmpty
+                    ? "Continuous capture is requested but not running"
+                    : input.recordingStorageStatus,
+                actions: []
+            ))
+        }
 
         let endpointFailures = [
             input.encoderHealth.isFailure ? "encoder: \(input.encoderHealth.detail)" : nil,
