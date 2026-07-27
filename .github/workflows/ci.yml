@@ -71,16 +71,21 @@ jobs:
 
       - name: Build and test native macOS app
         run: |
+          NATIVE_DERIVED_DATA="${RUNNER_TEMP}/live-daw-native"
           xcodebuild test \
             -project native/AutoMixNative.xcodeproj \
             -scheme AutoMixNative \
             -configuration Debug \
             -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "${NATIVE_DERIVED_DATA}" \
             CODE_SIGNING_ALLOWED=NO
+          "${NATIVE_DERIVED_DATA}/Build/Products/Debug/AutoMix Native.app/Contents/MacOS/AutoMix Native" \
+            --monitor-smoke
           plutil -lint native/AutoMixNative/AutoMixNative.entitlements
           xcodebuild build \
             -project native/AutoMixNative.xcodeproj \
             -scheme AutoMixNative \
             -configuration Release \
             -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "${NATIVE_DERIVED_DATA}" \
             CODE_SIGNING_ALLOWED=NO
