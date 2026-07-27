@@ -52,6 +52,11 @@ if(BUILD_APP)
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1
     )
+    if(MSVC)
+        target_compile_options(BroadcastMixer PRIVATE /WX)
+    else()
+        target_compile_options(BroadcastMixer PRIVATE -Werror)
+    endif()
     target_link_libraries(BroadcastMixer PRIVATE
         juce::juce_audio_basics
         juce::juce_audio_devices

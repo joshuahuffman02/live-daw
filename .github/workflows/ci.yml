@@ -34,6 +34,18 @@ jobs:
             -o "${RUNNER_TEMP}/automix-replay"
           "${RUNNER_TEMP}/automix-replay" --self-test
 
+      - name: Build strict JUCE portability appliance
+        run: |
+          cmake \
+            -S appliance \
+            -B "${RUNNER_TEMP}/live-daw-juce" \
+            -DBUILD_APP=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake \
+            --build "${RUNNER_TEMP}/live-daw-juce" \
+            --target BroadcastMixer \
+            --parallel 3
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:

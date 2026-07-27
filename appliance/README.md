@@ -68,7 +68,8 @@ The no-JUCE build also creates `automix_replay`; CTest runs its synthetic end-to
 self-test. Full usage and the decision-log contract are in
 [`../docs/REPLAY_EVALUATION.md`](../docs/REPLAY_EVALUATION.md).
 
-The full appliance pulls JUCE 8 via CMake FetchContent on first configure:
+The full appliance pulls JUCE 8 via CMake FetchContent on first configure. Its
+production target treats compiler warnings as errors and is built in CI:
 
 ```bash
 cmake -B build            # downloads JUCE
