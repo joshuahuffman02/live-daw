@@ -351,6 +351,51 @@ static void testEngineProcessNoAllocation() {
     CHECK(g_allocationsWhileGuarded.load(std::memory_order_relaxed) == 0, "Engine::setChannelConfig performs no heap allocations after prepare");
 }
 
+static double renderEngineWithMasterLoudnessTrim(float trimDb, bool* shortTermReady = nullptr) {
+    const int frames = 256;
+    Engine eng;
+    eng.prepare(FS, frames, 1);
+    eng.setChannelConfig(0, BusId::Band, false);
+
+    ChannelParams channel;
+    channel.faderDb = 0.0f;
+    channel.pan = 0.0f;
+    channel.hpfHz = 20.0f;
+    channel.compRatio = 1.0f;
+    channel.reverbSendDb = -60.0f;
+    eng.setChannelParams(0, channel);
+
+    MasterParams master;
+    master.glueRatio = 1.0f;
+    master.loudnessTrimDb = trimDb;
+    master.reverbReturnDb = -60.0f;
+    eng.setMasterParams(master);
+
+    std::vector<float> input(frames), outL(frames), outR(frames);
+    std::vector<const float*> inputs{input.data()};
+    double phase = 0.0;
+    const double increment = 2.0 * M_PI * 1000.0 / FS;
+    for (int block = 0; block < (int)(FS * 3.2 / frames); ++block) {
+        for (int sample = 0; sample < frames; ++sample) {
+            input[(size_t)sample] = 0.002f * (float)std::sin(phase);
+            phase += increment;
+        }
+        eng.process(inputs.data(), 1, outL.data(), outR.data(), frames);
+    }
+    if (shortTermReady) *shortTermReady = eng.shortTermLoudnessReady();
+    return rms(outL, frames / 2);
+}
+
+static void testEngineMasterLoudnessTrim() {
+    std::printf("Engine (smoothed master loudness trim)\n");
+    bool shortTermReady = false;
+    const double baseline = renderEngineWithMasterLoudnessTrim(0.0f);
+    const double raised = renderEngineWithMasterLoudnessTrim(6.0f, &shortTermReady);
+    CHECK(shortTermReady, "short-term loudness readiness requires a complete 3-second window");
+    CHECK(raised > baseline * 1.85, "+6 dB loudness trim approximately doubles low-level output");
+    CHECK(raised < baseline * 2.15, "master loudness trim stays within its requested gain");
+}
+
 static void testBrainThreadControls() {
     std::printf("BrainThread (channel limits, role profiles, manual overrides)\n");
     bool threw = false;
@@ -437,6 +482,49 @@ static void testBrainMeasurementDrivenGainStaging() {
     CHECK(!brain.channelActive(2), "idle channel remains inactive");
     CHECK(brain.currentNoiseFloorDb(2) < -68.0f,
           "idle measurement teaches a lower per-channel noise floor");
+}
+
+static void testBrainMasterLoudnessControl() {
+    std::printf("BrainThread (slow master loudness normalization)\n");
+    app::BrainThread brain;
+    brain.configure(0, 96000.0, {});
+    brain.setScene(app::Scene::Sermon);
+    {
+        AllocationGuard guard;
+        brain.pushMasterMeasurement(-24.0f, -24.0f, 0.0f, true);
+    }
+    CHECK(g_allocationsWhileGuarded.load(std::memory_order_relaxed) == 0,
+          "audio-to-brain master measurement publish performs no heap allocations");
+
+    brain.start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    const float raised = brain.currentAutoLoudnessTrimDb();
+    CHECK(raised >= 0.8f && raised <= 1.3f,
+          "low program loudness raises master trim at no more than 1 dB/s");
+
+    brain.pushMasterMeasurement(-8.0f, -8.0f, 0.0f, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    const float lowered = brain.currentAutoLoudnessTrimDb();
+    CHECK(lowered < raised - 0.8f,
+          "high program loudness slowly unwinds the master trim");
+
+    brain.setFrozen(true);
+    const float frozen = brain.currentAutoLoudnessTrimDb();
+    brain.pushMasterMeasurement(-30.0f, -30.0f, 0.0f, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    CHECK(std::fabs(brain.currentAutoLoudnessTrimDb() - frozen) < 0.01f,
+          "FREEZE holds the current loudness correction");
+    brain.stop();
+
+    app::BrainThread limited;
+    limited.configure(0, 96000.0, {});
+    limited.setScene(app::Scene::Sermon);
+    limited.pushMasterMeasurement(-24.0f, -24.0f, 4.0f, true);
+    limited.start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(550));
+    limited.stop();
+    CHECK(limited.currentAutoLoudnessTrimDb() <= -0.4f,
+          "heavy limiter activity makes the loudness controller back away");
 }
 
 static std::pair<double, double> renderBrainTone(bool manualOverride) {
@@ -733,9 +821,11 @@ int main() {
     testEngine();
     testEngine96kAndRouting();
     testEngineProcessNoAllocation();
+    testEngineMasterLoudnessTrim();
     testBrainThreadControls();
     testBrainThreadManualOverrideBehavior();
     testBrainMeasurementDrivenGainStaging();
+    testBrainMasterLoudnessControl();
     testBeatTracker();
     testOnsetDetector();
     testOnsetFeedsBeatTracker();

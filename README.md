@@ -152,6 +152,10 @@ Current native milestone:
 - ramps automatic scene and level changes instead of stepping them, with a full
   sermon-scene move settling in roughly 1–2 seconds and persisted manual overrides
   retaining final authority;
+- closes the native master loudness loop only after a complete three-second
+  short-term measurement: correction is bounded to ±6 dB, moves no faster than
+  1 dB/second, ignores silence, holds during FREEZE/SAFE, and backs away instead of
+  adding gain when the true-peak limiter is already working;
 - uses block-duration-correct detector timing in the speech gain-sharing automixer,
   with behavior tests for first-talker acquisition and talker handoff at the native
   96 kHz operating point;
@@ -202,9 +206,10 @@ clang++ -std=c++17 -O2 -Iappliance/dsp -Iappliance/src \
 
 This covers DSP primitives, full-engine SAFE bypass, 96 kHz engine processing,
 bus/pan routing, block-timed speech automixing, live source-role reassignment,
-measurement-driven activity/noise-floor/gain decisions, manual override guards, and
-the no-heap-allocation invariant for `Engine::process`, measurement publication,
-and live channel config updates.
+measurement-driven activity/noise-floor/gain decisions, bounded slow master
+loudness normalization, manual override guards, and the no-heap-allocation
+invariant for `Engine::process`, measurement publication, and live channel config
+updates.
 
 Native XCTest coverage for the simulated Core Audio bridge:
 

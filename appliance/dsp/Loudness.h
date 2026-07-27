@@ -31,6 +31,7 @@ public:
 
     float momentary() const { return meanLufs(4); }
     float shortTerm() const { return meanLufs(30); }
+    bool shortTermReady() const { return histCount_ >= 30; }
     float integrated() const {
         if (intCount_ == 0) return -100.0f;
         double sum = 0;

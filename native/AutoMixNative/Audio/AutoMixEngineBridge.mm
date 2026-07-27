@@ -316,6 +316,7 @@ struct AMRealtimeAllocationGuard {
 - (double)limiterGainReductionDb { return (double)_limiterGainReductionDbAtomic.load(std::memory_order_relaxed); }
 - (double)currentBpm { return _brainStarted ? (double)_brain.currentBpm() : 0.0; }
 - (double)currentBpmConfidence { return _brainStarted ? (double)_brain.currentBpmConfidence() : 0.0; }
+- (double)autoLoudnessTrimDb { return (double)_brain.currentAutoLoudnessTrimDb(); }
 - (double)autoTrimDbForChannel:(NSInteger)channel {
     return (double)_brain.currentAutoTrimDb((int)channel);
 }
@@ -1399,6 +1400,12 @@ struct AMRealtimeAllocationGuard {
     }
 
     [self applyPendingRoleConfigIfNeeded];
+    _brain.pushMasterMeasurement(
+        _engine.shortTermLufs(),
+        _engine.momentaryLufs(),
+        _engine.limiterGrDb(),
+        _engine.shortTermLoudnessReady()
+    );
     _brain.applyTo(_engine);
     _engine.setBypass(_safeBypassAtomic.load(std::memory_order_relaxed) ||
                       _brain.watchdogBypassActive());

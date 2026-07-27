@@ -53,6 +53,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) double limiterGainReductionDb;
 @property (nonatomic, readonly) double currentBpm;
 @property (nonatomic, readonly) double currentBpmConfidence;
+@property (nonatomic, readonly) double autoLoudnessTrimDb;
 - (double)autoTrimDbForChannel:(NSInteger)channel;
 - (double)autoFaderDbForChannel:(NSInteger)channel;
 - (double)learnedNoiseFloorDbForChannel:(NSInteger)channel;

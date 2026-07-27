@@ -3,11 +3,10 @@
 // audio thread through an atomic mailbox so the audio callback NEVER blocks or locks. A
 // watchdog drops the engine to the SAFE mix if the brain stalls.
 //
-// This is a skeleton: the parameter math here is a static per-class profile table +
-// scene offsets (mirrors web/src/brain/targets.ts & scenes.ts). The live pieces — the
-// ONNX/Core ML channel classifier, the spectral auto-EQ, and the cross-channel
-// masking — plug in at the marked integration points. The full, working reference
-// implementation of all of that is the TypeScript brain in ../web/src/brain.
+// The native control loop combines per-class profiles and scene offsets with live
+// channel measurements for gain staging/gating/riding and a slow master loudness
+// correction. Future classifier, spectral auto-EQ, and cross-channel masking stages
+// plug in at the marked integration points.
 #pragma once
 #include "Engine.h"
 #include "BeatTracker.h"
@@ -194,6 +193,7 @@ struct AtomicMasterParams {
     std::atomic<float> glueRatio{2.0f};
     std::atomic<float> targetLufs{-14.0f};
     std::atomic<float> ceilingDbTP{-1.0f};
+    std::atomic<float> loudnessTrimDb{0.0f};
     std::atomic<float> reverbReturnDb{-12.0f};
     std::atomic<float> reverbDecaySeconds{1.8f};
     std::atomic<float> reverbDamping{0.3f};
@@ -206,6 +206,7 @@ struct AtomicMasterParams {
         glueRatio.store(p.glueRatio, std::memory_order_relaxed);
         targetLufs.store(p.targetLufs, std::memory_order_relaxed);
         ceilingDbTP.store(p.ceilingDbTP, std::memory_order_relaxed);
+        loudnessTrimDb.store(p.loudnessTrimDb, std::memory_order_relaxed);
         reverbReturnDb.store(p.reverbReturnDb, std::memory_order_relaxed);
         reverbDecaySeconds.store(p.reverbDecaySeconds, std::memory_order_relaxed);
         reverbDamping.store(p.reverbDamping, std::memory_order_relaxed);
@@ -220,6 +221,7 @@ struct AtomicMasterParams {
         p.glueRatio = glueRatio.load(std::memory_order_relaxed);
         p.targetLufs = targetLufs.load(std::memory_order_relaxed);
         p.ceilingDbTP = ceilingDbTP.load(std::memory_order_relaxed);
+        p.loudnessTrimDb = loudnessTrimDb.load(std::memory_order_relaxed);
         p.reverbReturnDb = reverbReturnDb.load(std::memory_order_relaxed);
         p.reverbDecaySeconds = reverbDecaySeconds.load(std::memory_order_relaxed);
         p.reverbDamping = reverbDamping.load(std::memory_order_relaxed);
@@ -264,6 +266,13 @@ struct AtomicChannelMeasurement {
     std::atomic<float> postRmsDb{-100.0f};
 };
 
+struct AtomicMasterMeasurement {
+    std::atomic<float> shortTermLufs{-100.0f};
+    std::atomic<float> momentaryLufs{-100.0f};
+    std::atomic<float> limiterGrDb{0.0f};
+    std::atomic<bool> shortTermReady{false};
+};
+
 class BrainThread {
 public:
     void configure(int numCh, double fs, const std::vector<Cls>& assignedClasses) {
@@ -294,6 +303,12 @@ public:
             noiseFloorPublished_[(size_t)i].store(-60.0f, std::memory_order_relaxed);
             activePublished_[(size_t)i].store(false, std::memory_order_relaxed);
         }
+        masterMeasurement_.shortTermLufs.store(-100.0f, std::memory_order_relaxed);
+        masterMeasurement_.momentaryLufs.store(-100.0f, std::memory_order_relaxed);
+        masterMeasurement_.limiterGrDb.store(0.0f, std::memory_order_relaxed);
+        masterMeasurement_.shortTermReady.store(false, std::memory_order_relaxed);
+        autoLoudnessTrimDb_ = 0.0f;
+        autoLoudnessTrimPublished_.store(0.0f, std::memory_order_relaxed);
     }
     void setScene(Scene s) { scene_.store((int)s); }
     void setFrozen(bool f) { frozen_.store(f); }
@@ -316,6 +331,20 @@ public:
         m.inputPeakDb.store(sanitizeDb(inputPeakDb), std::memory_order_relaxed);
         m.postRmsDb.store(sanitizeDb(postRmsDb), std::memory_order_release);
     }
+    void pushMasterMeasurement(
+        float shortTermLufs,
+        float momentaryLufs,
+        float limiterGrDb,
+        bool shortTermReady
+    ) {
+        masterMeasurement_.shortTermLufs.store(sanitizeDb(shortTermLufs), std::memory_order_relaxed);
+        masterMeasurement_.momentaryLufs.store(sanitizeDb(momentaryLufs), std::memory_order_relaxed);
+        masterMeasurement_.limiterGrDb.store(
+            std::max(0.0f, std::min(60.0f, std::isfinite(limiterGrDb) ? limiterGrDb : 0.0f)),
+            std::memory_order_relaxed
+        );
+        masterMeasurement_.shortTermReady.store(shortTermReady, std::memory_order_release);
+    }
     float currentAutoTrimDb(int channel) const {
         return validChannelSlot(channel)
             ? autoTrimPublished_[(size_t)channel].load(std::memory_order_relaxed)
@@ -334,6 +363,9 @@ public:
     bool channelActive(int channel) const {
         return validChannelSlot(channel) &&
             activePublished_[(size_t)channel].load(std::memory_order_relaxed);
+    }
+    float currentAutoLoudnessTrimDb() const {
+        return autoLoudnessTrimPublished_.load(std::memory_order_relaxed);
     }
 #if DEBUG
     void debugSetTickPausedForTesting(bool paused) {
@@ -486,6 +518,32 @@ private:
         autoTrimPublished_[i].store(autoTrimDb_[i], std::memory_order_relaxed);
     }
 
+    void updateMasterLoudnessState(float targetLufs) {
+        if (!masterMeasurement_.shortTermReady.load(std::memory_order_acquire)) return;
+        const float shortTerm = masterMeasurement_.shortTermLufs.load(std::memory_order_relaxed);
+        const float momentary = masterMeasurement_.momentaryLufs.load(std::memory_order_relaxed);
+        const float limiterGr = masterMeasurement_.limiterGrDb.load(std::memory_order_relaxed);
+        if (shortTerm <= -60.0f || momentary <= -55.0f) return; // never raise silence/noise
+
+        const float error = targetLufs - shortTerm;
+        float step = 0.0f;
+        if (error > 0.75f && limiterGr < 0.5f) {
+            step = std::min(0.05f, error * 0.01f);
+        } else if (error < -0.75f) {
+            step = std::max(-0.05f, error * 0.01f);
+        }
+        // If the limiter is already working hard, unwind gain even when the
+        // short-term average looks low. The controller must never fight the safety
+        // stage or turn isolated peaks into sustained limiting.
+        if (limiterGr > 3.0f) step = std::min(step, -0.05f);
+
+        autoLoudnessTrimDb_ = std::max(
+            -6.0f,
+            std::min(6.0f, autoLoudnessTrimDb_ + step)
+        );
+        autoLoudnessTrimPublished_.store(autoLoudnessTrimDb_, std::memory_order_relaxed);
+    }
+
     void run() {
         while (running_.load()) {
 #if DEBUG
@@ -532,6 +590,8 @@ private:
         s.bypass = opBypass_.load();
         s.master.targetLufs = sceneTargetLufs(scene);
         s.master.ceilingDbTP = -1.0f;
+        if (!s.bypass) updateMasterLoudnessState(s.master.targetLufs);
+        s.master.loudnessTrimDb = autoLoudnessTrimDb_;
 
         // Production FX targets (conservative): a clean room reverb on every scene, and
         // a tempo-synced eighth-note vocal delay only in Worship. Delay time locks to the
@@ -662,6 +722,7 @@ private:
     uint64_t appliedSeq_ = 0; // audio-thread local
     AtomicEngineSnapshot published_;
     std::array<AtomicChannelMeasurement, EngineSnapshot::kMaxCh> measurements_{};
+    AtomicMasterMeasurement masterMeasurement_{};
     std::mutex controlMutex_;
     std::array<bdsp::ChannelParams, EngineSnapshot::kMaxCh> manualParams_{};
     std::array<OverrideMask, EngineSnapshot::kMaxCh> overrideMask_{};
@@ -676,6 +737,8 @@ private:
     std::array<std::atomic<float>, EngineSnapshot::kMaxCh> autoFaderPublished_{};
     std::array<std::atomic<float>, EngineSnapshot::kMaxCh> noiseFloorPublished_{};
     std::array<std::atomic<bool>, EngineSnapshot::kMaxCh> activePublished_{};
+    float autoLoudnessTrimDb_ = 0.0f;
+    std::atomic<float> autoLoudnessTrimPublished_{0.0f};
     bdsp::BeatTracker beatTracker_;           // brain-thread only
     bdsp::Engine* onsetEngine_ = nullptr;     // onset source, set before start()
     std::atomic<float> bpm_{0.0f};

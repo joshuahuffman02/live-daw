@@ -36,6 +36,9 @@ struct ChannelParams {
 struct MasterParams {
     float glueThreshDb = -18.0f, glueRatio = 2.0f;
     float targetLufs = -14.0f, ceilingDbTP = -1.0f;
+    // Slow control-rate loudness correction. The engine smooths this again before
+    // the loudness meter/limiter, so target changes cannot become gain steps.
+    float loudnessTrimDb = 0.0f;
     float reverbReturnDb = -12.0f;
     float reverbDecaySeconds = 1.8f, reverbDamping = 0.3f;
     // Tempo-synced vocal delay. Wet defaults to off; the brain sets the time from the

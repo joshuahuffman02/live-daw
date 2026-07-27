@@ -42,10 +42,11 @@ Per-sample DSP, no allocation/locking/ML in the hot path, all params ramped:
   sequence mailbox** (the audio callback never blocks or takes the control mutex).
   It consumes atomically published input/post-strip levels for activity detection,
   idle-only noise-floor learning, bounded gain staging, adaptive gate thresholds,
-  and conservative per-scene level riding. It includes the watchdog that drops to
-  the SAFE mix if the brain stalls. The class-profile/scene tables here mirror the
-  web brain; the **integration points** for any future classifier, spectral auto-EQ,
-  and cross-channel masking are marked in comments.
+  and conservative per-scene level riding. A separate master measurement closes a
+  slow, limiter-aware loudness loop after a full short-term window. It includes the
+  watchdog that drops to the SAFE mix if the brain stalls. The class-profile/scene
+  tables here mirror the web brain; the **integration points** for any future
+  classifier, spectral auto-EQ, and cross-channel masking are marked in comments.
 
 ## Build & test
 
@@ -71,14 +72,15 @@ cmake --build build --target BroadcastMixer
 
 ## Status — what's verified vs. scaffolded
 
-- **Verified here:** the entire `dsp/` core, via 78 assertions in `tests/test_dsp.cpp`
+- **Verified here:** the entire `dsp/` core, via 86 assertions in `tests/test_dsp.cpp`
   (filter response, +6 dB loudness scaling, the limiter never exceeding its ceiling,
   automixer gain sharing and 96 kHz acquisition/handoff timing, compressor/gate
   behavior, full-engine output under the ceiling, SAFE bypass behavior, 96 kHz
   engine processing, bus/pan routing, live source-role reassignment,
-  measurement-driven gain staging/activity/noise-floor behavior, BrainThread manual
-  override guards, and the no-allocation invariant for `Engine::process`,
-  measurement publication, `BrainThread::applyTo`, and live channel config updates).
+  measurement-driven gain staging/activity/noise-floor behavior, bounded slow
+  master loudness correction and limiter backoff, BrainThread manual override
+  guards, and the no-allocation invariant for `Engine::process`, measurement
+  publication, `BrainThread::applyTo`, and live channel config updates).
 - **Native production path:** [`../native`](../native) wraps this same verified core
   in a real Apple Silicon macOS app with Core Audio device selection, HD96 preflight,
   channel mapping, soundcheck recording, stability monitoring, SAFE, FREEZE, and

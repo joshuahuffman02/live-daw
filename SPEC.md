@@ -28,6 +28,11 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   rate-limited so scene changes settle over roughly 1–2 seconds; persisted manual
   fader/pan overrides still win. Unknown roles are measured but receive no automatic
   gain correction.
+- Native master loudness control: after the BS.1770 meter has a complete three-second
+  short-term window, the brain applies a maximum 1 dB/second correction bounded to
+  ±6 dB before the final loudness meter and true-peak limiter. Silence/noise cannot
+  trigger upward gain, SAFE/FREEZE hold the current correction, and significant
+  limiter gain reduction forces the controller to back away.
 - CPU/architecture: arm64-only Apple Silicon build.
 - HD96/Dante operating point: 64 mapped input channels at 96 kHz, with clear
   sample-rate, channel-count, Core Audio float-format readiness, callback frame-size,
@@ -209,6 +214,8 @@ block's duration, and is behavior-tested for first-talker acquisition and handof
 - Master tonal EQ (broadcast voicing).
 - Loudness: BS.1770 LUFS metering, target ~-14 LUFS integrated, true-peak ceiling
   ~-1 dBTP, true-peak look-ahead limiter as final safety.
+- Native slow correction uses completed three-second short-term LUFS, moves at most
+  1 dB/second within ±6 dB, ignores silence, and yields to limiter activity.
 
 ## Reverb
 Convolution with 2–3 curated impulse responses. No from-scratch algorithmic reverb.
@@ -261,10 +268,10 @@ sync: expose a fixed, known audio latency so video can compensate; measure end-t
    LUFS/true-peak limiter) → out. All params controllable + manual override. Static
    settings, no AI yet. Already a working software broadcast console.
 2. Add the gain-sharing automixer on the speech group. Spoken word runs itself.
-3. Add more brain features: measurement-driven gain staging, adaptive gates, and
-   conservative per-scene level riding are now present. Next: close the slow master
-   loudness loop, then add optional classifier labels, spectral auto-EQ to target
-   curves, and Planning Center scene driving.
+3. Add more brain features: measurement-driven gain staging, adaptive gates,
+   conservative per-scene level riding, and the slow master loudness loop are now
+   present. Next: optional classifier labels, spectral auto-EQ to target curves,
+   and Planning Center scene driving.
    Keep every decision off the realtime callback.
 4. v2: cross-channel masking, dynamic feedback suppression, learned scene behaviors,
    remote-monitoring polish.

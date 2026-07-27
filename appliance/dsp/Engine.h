@@ -51,6 +51,8 @@ public:
 
         reverbReturn_.reset(sampleRate, 0.08);
         reverbReturn_.setImmediate(dbToGain(-12.0f));
+        loudnessTrim_.reset(sampleRate, 0.5);
+        loudnessTrim_.setImmediate(1.0f);
         delay_.prepare(sampleRate, 2.0f);
         delayWet_.reset(sampleRate, 0.08);
         delayWet_.setImmediate(0.0f);
@@ -88,6 +90,7 @@ public:
         glueRatio_ = std::max(1.0f, m.glueRatio);
         lim_.setCeiling(m.ceilingDbTP);
         targetLufs_ = m.targetLufs;
+        loudnessTrim_.setTarget(dbToGain(std::max(-6.0f, std::min(6.0f, m.loudnessTrimDb))));
         reverbReturn_.setTarget(m.reverbReturnDb <= -50.0f ? 0.0f : dbToGain(m.reverbReturnDb));
         reverb_.setDecay(m.reverbDecaySeconds);
         reverb_.setDamping(m.reverbDamping);
@@ -105,6 +108,7 @@ public:
 
     float momentaryLufs() const { return loud_.momentary(); }
     float shortTermLufs() const { return loud_.shortTerm(); }
+    bool shortTermLoudnessReady() const { return loud_.shortTermReady(); }
     float integratedLufs() const { return loud_.integrated(); }
     float limiterGrDb() const { return lim_.gainReductionDb(); }
     float channelGrDb(int i) const { return strips_[i].compGainReductionDb(); }
@@ -215,7 +219,13 @@ public:
 
             feedOnset(std::max(std::fabs(L), std::fabs(R)));   // tempo feature pre-limiter
 
-            // loudness metering (pre-limiter) + true-peak limiter
+            // Slow loudness normalization sits after tone/dynamics and before both
+            // the meter and final safety limiter. SAFE bypass intentionally skips it.
+            const float loudnessGain = loudnessTrim_.next();
+            L *= loudnessGain;
+            R *= loudnessGain;
+
+            // loudness metering (post-trim, pre-limiter) + true-peak limiter
             loud_.process(L, R);
             float oL, oR;
             lim_.process(L, R, oL, oR);
@@ -255,6 +265,7 @@ private:
     Limiter lim_;
     SVF eqAirL_, eqAirR_;
     Smoothed reverbReturn_;
+    Smoothed loudnessTrim_;
     Reverb reverb_;
     TempoDelay delay_;
     Smoothed delayWet_;
