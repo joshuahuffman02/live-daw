@@ -1,6 +1,6 @@
 # Production Completion Audit
 
-Audited 2026-07-27 against the full autonomous-livestream objective. This document
+Audited 2026-07-28 against the full autonomous-livestream objective. This document
 separates verified software behavior from evidence that can exist only on the venue
 rig. A passing simulator, unit test, or locally built app is never represented as
 hardware proof.
@@ -9,7 +9,7 @@ hardware proof.
 
 | Objective requirement | Authoritative evidence | Current determination |
 | --- | --- | --- |
-| Version control and CI | Clean Git history; `.github/workflows/ci.yml` builds/tests DSP, replay, JUCE, web, native Debug/Release, and the monitor smoke | Local version control and workflow complete. Private GitHub repository exists, but initial push and hosted run await GitHub `workflow` authorization. |
+| Version control and CI | Private repository at `github.com/joshuahuffman02/live-daw`; clean published `main`; `.github/workflows/ci.yml` builds/tests DSP, replay, JUCE, web, native Debug/Release, and the monitor smoke | Source is published and local validation is green. Hosted macOS jobs are triggered, but GitHub stops them before checkout with `Actions budget is preventing further use`; no hosted test result is being claimed. |
 | Behavior-tested speech automixer | `appliance/dsp/Automixer.h`; 96 kHz acquisition, equal-share, silence ducking, handoff, and no-allocation assertions in `appliance/tests/test_dsp.cpp` | Verified in deterministic tests. |
 | Measurement-driven gain staging, activity/noise floor, adaptive gates, level riding, slow loudness normalization | `appliance/src/BrainThread.h`; measurement, loudness, limiter-backoff, FREEZE/SAFE, and shadow tests in `appliance/tests/test_dsp.cpp` | Verified in deterministic control-loop tests and native bridge integration. |
 | Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE verified. Independent hardware/encoder fallback is fully specified but must be built and kill-tested on the venue system. |
@@ -27,6 +27,7 @@ hardware proof.
 | Real 64-channel 96 kHz HD96/Dante proof | Full-check runner, semantic manifest verifier, simulation-resistant source checks, notarized-build gate | Not achieved. Current inventory contains only built-in 48 kHz speakers and the explicit simulated HD96 device. |
 | Sermon-autopilot milestone | Sermon-first staged runner, minimum two-hour health/stability proof, named acceptance contract | Not achieved; requires the production rig and supervised service. |
 | Worship autonomy acceptance | Verified sermon prerequisite, recorded-service comparison, supervised worship proof, named acceptance | Not achieved and deliberately gated behind sermon acceptance. |
+| Operator UI/UX | Native operator shell, remote monitor, monitor wall, setup/onboarding, keyboard/screen-reader paths, responsive layouts, and critical-state visual hierarchy; `docs/UI_UX_AUDIT.md`; `design-qa.md` | Full product-flow audit and redesign implemented. Native/web builds and UI-facing tests pass locally; real operators must still validate the production rig workflow under service conditions. |
 
 ## Latest verified local results
 
@@ -38,7 +39,15 @@ hardware proof.
   with **0 known vulnerabilities**.
 - JUCE 8.0.15 portability target: strict Release build and CTest passed.
 - Xcode project regeneration: deterministic with the declared Brew tools.
-- Worktree: clean after each committed validation slice.
+- Full CMake graph: Release build and CTest passed.
+- Operator UI/UX redesign: native, remote, monitor, setup, accessibility, and
+  responsive-layout changes committed as `f3e6e74`.
+- Published private `main`: `b9bb6825c7d2204f12400c0afec2791e84f70925`.
+- Hosted CI attempts:
+  [push run 30380776472](https://github.com/joshuahuffman02/live-daw/actions/runs/30380776472)
+  and subsequent Dependabot-triggered checks were rejected before any step ran by
+  the account Actions budget gate.
+- Worktree: clean after the verified publication slice.
 
 ## Current-host readiness facts
 
@@ -57,8 +66,8 @@ and is intentionally ignored from source control.
 
 ## Evidence still required for completion
 
-1. Authorize and push the private GitHub repository; obtain a green hosted macOS CI
-   run for the exact source commit.
+1. Restore GitHub Actions minutes/billing for the repository owner and obtain a
+   green hosted macOS CI run for the published source commit.
 2. Install/activate DVS or attach the chosen 64-channel Dante interface; connect the
    HD96 split and clock the complete route at 96 kHz.
 3. Provision an isolated stereo encoder/virtual output, encoder and public-egress
