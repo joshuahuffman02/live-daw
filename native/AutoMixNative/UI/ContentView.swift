@@ -2084,11 +2084,11 @@ private struct DeviceControlPanel: View {
 
     private func passFailLabel(_ value: Bool?) -> String {
         switch value {
-        case true:
+        case .some(true):
             return "passed"
-        case false:
+        case .some(false):
             return "failed"
-        case nil:
+        case .none:
             return "pending"
         }
     }
