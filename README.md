@@ -216,7 +216,9 @@ Current native milestone:
   crash-relaunch/session-resume procedure documented in
   [`docs/RUNTIME_RESILIENCE.md`](docs/RUNTIME_RESILIENCE.md); staged promotion
   preserves and re-verifies continuous dual-probe coverage using
-  [`docs/STREAM_HEALTH_EVIDENCE.md`](docs/STREAM_HEALTH_EVIDENCE.md);
+  [`docs/STREAM_HEALTH_EVIDENCE.md`](docs/STREAM_HEALTH_EVIDENCE.md) and binds a
+  clean, manifest-duration incident snapshot using
+  [`docs/RUNTIME_INCIDENT_EVIDENCE.md`](docs/RUNTIME_INCIDENT_EVIDENCE.md);
 - supports a gated sermon-first then worship hardware rollout with multi-hour
   stability windows, manifest verification, and named human acceptance before the
   worship proof; see [`docs/STAGED_ROLLOUT.md`](docs/STAGED_ROLLOUT.md);

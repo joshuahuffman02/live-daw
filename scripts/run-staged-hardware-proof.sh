@@ -205,6 +205,7 @@ stop_health_monitors() {
 }
 trap stop_health_monitors EXIT INT TERM
 
+proof_started_ms="$(( $(date +%s) * 1000 ))"
 "${app_binary}" \
   --smoke-test \
   --core-audio-full-check \
@@ -218,6 +219,7 @@ trap stop_health_monitors EXIT INT TERM
   --continuous-recording \
   --recording-reserve-gb "${recording_reserve_gb}" \
   --output-dir "${phase_directory}"
+proof_ended_ms="$(( $(date +%s) * 1000 ))"
 
 stop_health_monitors
 trap - EXIT INT TERM
@@ -252,6 +254,22 @@ fi
 "${script_directory}/verify-stream-health-evidence.sh" \
   "${stream_health_arguments[@]}"
 
+incident_journal_path="${AUTOMIX_INCIDENT_JOURNAL_PATH:-${HOME}/Library/Application Support/AutoMix Native/Incidents/runtime-incidents.jsonl}"
+incident_report="${phase_directory}/runtime-incident-evidence.json"
+incident_arguments=(
+  --journal "${incident_journal_path}"
+  --manifest "${manifest}"
+  --phase "${phase}"
+  --window-start-ms "${proof_started_ms}"
+  --window-end-ms "${proof_ended_ms}"
+  --output "${incident_report}"
+)
+if [[ "${rehearsal_only}" != "1" ]]; then
+  incident_arguments+=(--require-production-duration)
+fi
+"${script_directory}/record-runtime-incident-evidence.sh" \
+  "${incident_arguments[@]}"
+
 recording_reports=(
   "${phase_directory}"/automix-continuous-recording-*/continuous-recording-proof.json(N)
 )
@@ -274,5 +292,6 @@ else
     --require-production-duration
   print "${phase:u} hardware proof passed: ${manifest}"
   print "${phase:u} continuous recording proof passed: ${recording_report}"
+  print "${phase:u} runtime incident proof passed: ${incident_report}"
   print "Review the complete evidence, then record the post-review decision with scripts/record-proof-acceptance.sh."
 fi

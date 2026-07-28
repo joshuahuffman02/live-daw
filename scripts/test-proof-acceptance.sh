@@ -20,6 +20,19 @@ print -r -- "operator@example.test $(<"${key_path}.pub")" > "${trusted_signers}"
 source "${script_directory}/test-support/create-production-evidence-fixtures.sh"
 create_production_evidence_fixtures "${fixture_root}/production-evidence"
 
+runtime_incident_journal="${fixture_root}/runtime-incidents.jsonl"
+runtime_incident_report="${fixture_root}/runtime-incident-evidence.json"
+print -r -- '{"details":{"state":"healthy"},"kind":"engine-healthy","message":"Engine healthy","severity":"info","timestampMs":1780000001000}' \
+  > "${runtime_incident_journal}"
+"${script_directory}/record-runtime-incident-evidence.sh" \
+  --journal "${runtime_incident_journal}" \
+  --manifest "${production_evidence_attachments[full-check-manifest]}" \
+  --phase sermon \
+  --window-start-ms 1780000000000 \
+  --window-end-ms 1780007230000 \
+  --output "${runtime_incident_report}" \
+  --require-production-duration >/dev/null
+
 write_stream_health_fixture() {
   local output="$1"
   /usr/bin/awk 'BEGIN {
@@ -40,6 +53,7 @@ labels=(
   continuous-recording-report
   app-integrity
   stream-health
+  runtime-incidents
   external-failover
   latency-lipsync
   runtime-resilience
@@ -58,6 +72,8 @@ for label in "${labels[@]}"; do
     path="${production_evidence_attachments[full-check-manifest]}"
   elif [[ "${label}" == "stream-health" ]]; then
     write_stream_health_fixture "${path}"
+  elif [[ "${label}" == "runtime-incidents" ]]; then
+    path="${runtime_incident_report}"
   else
     print -r -- "fixture ${label}" > "${path}"
   fi

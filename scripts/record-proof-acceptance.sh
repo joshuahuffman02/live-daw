@@ -7,6 +7,7 @@ usage() {
   print -u2 "     --reviewer NAME --signer ID --signing-key PATH --trusted-signers FILE"
   print -u2 "     --source-commit SHA --app APP_PATH --build-metadata PATH --manifest PATH"
   print -u2 "     --recording-report PATH --app-integrity PATH --stream-health PATH"
+  print -u2 "     --runtime-incidents PATH"
   print -u2 "     --external-failover PATH --latency-lipsync PATH"
   print -u2 "     --runtime-resilience PATH --replay-comparison PATH"
   print -u2 "     --output-root DIR --notes TEXT"
@@ -26,6 +27,7 @@ manifest_path=""
 recording_report_path=""
 app_integrity_path=""
 stream_health_path=""
+runtime_incidents_path=""
 external_failover_path=""
 latency_lipsync_path=""
 runtime_resilience_path=""
@@ -49,6 +51,7 @@ while (( $# > 0 )); do
     --recording-report) recording_report_path="${2:-}"; shift 2 ;;
     --app-integrity) app_integrity_path="${2:-}"; shift 2 ;;
     --stream-health) stream_health_path="${2:-}"; shift 2 ;;
+    --runtime-incidents) runtime_incidents_path="${2:-}"; shift 2 ;;
     --external-failover) external_failover_path="${2:-}"; shift 2 ;;
     --latency-lipsync) latency_lipsync_path="${2:-}"; shift 2 ;;
     --runtime-resilience) runtime_resilience_path="${2:-}"; shift 2 ;;
@@ -100,6 +103,7 @@ evidence_paths=(
   continuous-recording-report "${recording_report_path}"
   app-integrity "${app_integrity_path}"
   stream-health "${stream_health_path}"
+  runtime-incidents "${runtime_incidents_path}"
   external-failover "${external_failover_path}"
   latency-lipsync "${latency_lipsync_path}"
   runtime-resilience "${runtime_resilience_path}"
@@ -158,6 +162,12 @@ fi
 script_directory="${0:A:h}"
 "${script_directory}/verify-stream-health-evidence.sh" \
   --stream-health "${stream_health_path}" \
+  --manifest "${manifest_path}" \
+  --expected-phase "${phase}" \
+  --require-production-duration
+
+"${script_directory}/verify-runtime-incident-evidence.sh" \
+  --report "${runtime_incidents_path}" \
   --manifest "${manifest_path}" \
   --expected-phase "${phase}" \
   --require-production-duration

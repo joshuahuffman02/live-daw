@@ -39,10 +39,13 @@ STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
   "/Volumes/Proof/AutoMix"
 ```
 
-4. Review the manifest, soundcheck WAV/report, stability report, incident JSONL,
-   `stream-health-observations.tsv`, the continuous-recording proof report and its
-   raw/program segments, and the external-failover recording. The runner probes both
-   configured health endpoints throughout the full check and blocks after two
+4. Review the manifest, soundcheck WAV/report, stability report,
+   `runtime-incident-evidence.json`, `stream-health-observations.tsv`, the
+   continuous-recording proof report and its raw/program segments, and the
+   external-failover recording. The incident report validates and binds the source
+   journal and requires zero warning/critical events across the manifest-duration
+   window. The runner probes both configured health endpoints throughout the full
+   check and blocks after two
    consecutive failures or a missing healthy observation. Its final semantic gate
    additionally requires zero unhealthy rows, fresh endpoint timestamps, a maximum
    seven-second observation gap, and at least 95% coverage of the requested window,
@@ -75,6 +78,7 @@ For an approved sermon, bind the exact proof and supporting evidence:
   --recording-report "/Volumes/Proof/AutoMix/sermon-.../automix-continuous-recording-.../continuous-recording-proof.json" \
   --app-integrity "/Volumes/Proof/AutoMix/sermon-.../app-integrity.txt" \
   --stream-health "/Volumes/Proof/AutoMix/sermon-.../stream-health-observations.tsv" \
+  --runtime-incidents "/Volumes/Proof/AutoMix/sermon-.../runtime-incident-evidence.json" \
   --external-failover "/Volumes/Proof/AutoMix/sermon-.../external-failover-evidence.json" \
   --latency-lipsync "/Volumes/Proof/AutoMix/sermon-.../latency-lipsync-evidence.json" \
   --runtime-resilience "/Volumes/Proof/AutoMix/sermon-.../runtime-resilience-evidence.json" \
@@ -85,13 +89,14 @@ For an approved sermon, bind the exact proof and supporting evidence:
 
 The command independently re-verifies the notarized app, full-check manifest,
 two-hour recording, continuous encoder/egress coverage in
-`STREAM_HEALTH_EVIDENCE.md`, and the semantic production-evidence contract in
+`STREAM_HEALTH_EVIDENCE.md`, the clean proof-window incident contract in
+`RUNTIME_INCIDENT_EVIDENCE.md`, and the semantic production-evidence contract in
 `PRODUCTION_EVIDENCE_FORMAT.md`. It checks that failover, A/V sync/drift, recovery
 drills, and replay results pass their numeric and behavioral gates; hashes every
-referenced attachment; binds all four reports to the selected manifest; and binds
-the replay candidate to the release source commit. It then hashes the complete
-evidence index into `acceptance.json`, signs that exact JSON with the operator key,
-and verifies the result against the venue trust file. A signed `rejected` decision is
+referenced attachment; binds all reports to the selected manifest; and binds the
+replay candidate to the release source commit. It then hashes the complete evidence
+index into `acceptance.json`, signs that exact JSON with the operator key, and
+verifies the result against the venue trust file. A signed `rejected` decision is
 retained just as durably but cannot unlock worship.
 
 ## Phase 2 — worship

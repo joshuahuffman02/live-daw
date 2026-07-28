@@ -81,7 +81,7 @@ if [[ "${format_version}" != "1" ||
       ! "${signer_identity}" =~ '^[A-Za-z0-9._@+-]{1,128}$' ||
       ! "${source_commit}" =~ '^[0-9a-f]{40}$' ||
       ! "${evidence_count}" =~ '^[0-9]+$' ||
-      ${evidence_count} -lt 9 ]]; then
+      ${evidence_count} -lt 10 ]]; then
   print -u2 "Acceptance metadata is incomplete or invalid."
   exit 3
 fi
@@ -164,6 +164,7 @@ required_labels=(
   continuous-recording-report
   app-integrity
   stream-health
+  runtime-incidents
   external-failover
   latency-lipsync
   runtime-resilience
@@ -190,6 +191,12 @@ fi
 
 "${script_directory}/verify-stream-health-evidence.sh" \
   --stream-health "${verified_evidence_paths[stream-health]}" \
+  --manifest "${verified_evidence_paths[full-check-manifest]}" \
+  --expected-phase "${phase}" \
+  --require-production-duration >/dev/null
+
+"${script_directory}/verify-runtime-incident-evidence.sh" \
+  --report "${verified_evidence_paths[runtime-incidents]}" \
   --manifest "${verified_evidence_paths[full-check-manifest]}" \
   --expected-phase "${phase}" \
   --require-production-duration >/dev/null

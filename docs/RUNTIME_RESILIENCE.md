@@ -24,6 +24,10 @@ Incidents are append-only JSON Lines at:
 
 The audio callback never writes this file.
 
+Staged promotion snapshots the proof-window subset and source-journal provenance
+using the contract in `RUNTIME_INCIDENT_EVIDENCE.md`. Informational lifecycle events
+are retained, while any warning or critical incident blocks a clean acceptance run.
+
 ## 2. Application relaunch
 
 While Automatic Audio Recovery is armed, AutoMix atomically saves an
