@@ -1,0 +1,102 @@
+name: Live DAW CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: live-daw-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: DSP, web, and native
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Lint deployment contracts
+        run: |
+          zsh -n scripts/*.sh
+          plutil -lint native/AutoMixNative/AutoMixNative.entitlements
+          plutil -lint native/launchd/com.livedaw.automixnative.plist.template
+
+      - name: Verify generated Xcode project
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew bundle --file Brewfile
+          xcodegen generate --spec native/project.yml --project native
+          git diff --exit-code -- native/AutoMixNative.xcodeproj/project.pbxproj
+
+      - name: Build and test deterministic DSP
+        run: |
+          clang++ -std=c++17 -O2 \
+            -Iappliance/dsp -Iappliance/src \
+            appliance/tests/test_dsp.cpp \
+            -o "${RUNNER_TEMP}/live-daw-test-dsp"
+          "${RUNNER_TEMP}/live-daw-test-dsp"
+
+      - name: Build and self-test deterministic replay evaluator
+        run: |
+          clang++ -std=c++17 -O2 \
+            -Iappliance/dsp -Iappliance/src -Iappliance/tools \
+            appliance/tools/replay_eval.cpp \
+            -o "${RUNNER_TEMP}/automix-replay"
+          "${RUNNER_TEMP}/automix-replay" --self-test
+
+      - name: Build strict JUCE portability appliance
+        run: |
+          cmake \
+            -S appliance \
+            -B "${RUNNER_TEMP}/live-daw-juce" \
+            -DBUILD_APP=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake \
+            --build "${RUNNER_TEMP}/live-daw-juce" \
+            --target BroadcastMixer \
+            --parallel 3
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Verify browser proof
+        working-directory: web
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npm run typecheck
+          npm run build
+
+      - name: Build and test native macOS app
+        run: |
+          NATIVE_DERIVED_DATA="${RUNNER_TEMP}/live-daw-native"
+          xcodebuild test \
+            -project native/AutoMixNative.xcodeproj \
+            -scheme AutoMixNative \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "${NATIVE_DERIVED_DATA}" \
+            CODE_SIGNING_ALLOWED=NO
+          "${NATIVE_DERIVED_DATA}/Build/Products/Debug/AutoMix Native.app/Contents/MacOS/AutoMix Native" \
+            --monitor-smoke
+          plutil -lint native/AutoMixNative/AutoMixNative.entitlements
+          xcodebuild build \
+            -project native/AutoMixNative.xcodeproj \
+            -scheme AutoMixNative \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "${NATIVE_DERIVED_DATA}" \
+            CODE_SIGNING_ALLOWED=NO
