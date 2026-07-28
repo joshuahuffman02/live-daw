@@ -256,7 +256,9 @@ End-to-end A/V calibration and clock-drift proof follow
 The four external review artifacts use the hash-closed, manifest/commit-bound JSON
 contract in
 [`docs/PRODUCTION_EVIDENCE_FORMAT.md`](docs/PRODUCTION_EVIDENCE_FORMAT.md); both
-acceptance recording and later verification re-run its semantic gates.
+acceptance recording and later verification re-run its semantic gates. The same
+document includes fail-closed draft generation and automatic finalization so venue
+operators do not hand-calculate attachment hashes.
 
 ### Native/DSP verification
 

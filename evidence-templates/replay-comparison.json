@@ -1,0 +1,56 @@
+{
+  "formatVersion": 1,
+  "proofType": "replay-comparison",
+  "completedAtUTC": "1970-01-01T00:00:00Z",
+  "venueRig": true,
+  "phase": "sermon",
+  "fullCheckManifestSHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "draft": true,
+  "draftInstructions": "Duplicate comparisons for each corpus recording, replace all paths/CRCs/commits, and record the blind review honestly.",
+  "reviewer": "REPLACE",
+  "findings": "REPLACE",
+  "decision": "rejected",
+  "blindListeningCompleted": false,
+  "baselineCommit": "0000000000000000000000000000000000000000",
+  "candidateCommit": "0000000000000000000000000000000000000000",
+  "comparisons": [
+    {
+      "corpusID": "REPLACE",
+      "completeServiceReviewed": false,
+      "coverageTags": [
+        "sermon",
+        "prayer",
+        "walk-in-out-playback",
+        "quiet-speaker",
+        "loud-speaker",
+        "panel-handoff",
+        "intentional-silence",
+        "feedback-noise",
+        "missing-channel",
+        "repatched-role"
+      ],
+      "baselineSourceCRC32": "00000000",
+      "candidateSourceCRC32": "ffffffff",
+      "baseline": {
+        "program": {"path": "/REPLACE/baseline-program.wav", "sha256": "", "bytes": 0},
+        "metrics": {"path": "/REPLACE/baseline-metrics.json", "sha256": "", "bytes": 0},
+        "decisions": {"path": "/REPLACE/baseline-decisions.jsonl", "sha256": "", "bytes": 0}
+      },
+      "candidate": {
+        "program": {"path": "/REPLACE/candidate-program.wav", "sha256": "", "bytes": 0},
+        "metrics": {"path": "/REPLACE/candidate-metrics.json", "sha256": "", "bytes": 0},
+        "decisions": {"path": "/REPLACE/candidate-decisions.jsonl", "sha256": "", "bytes": 0}
+      },
+      "referenceMix": {"path": "/REPLACE/reference-mix.wav", "sha256": "", "bytes": 0},
+      "checks": {
+        "finiteOutput": false,
+        "noUnexpectedSilence": false,
+        "noClippingRegression": false,
+        "noSustainedLimiterReduction": false,
+        "noUnexplainedDecisionJumps": false,
+        "loudnessWithinTolerance": false,
+        "blindListeningPassed": false
+      }
+    }
+  ]
+}

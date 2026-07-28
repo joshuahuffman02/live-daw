@@ -63,6 +63,11 @@ Record that decision only after the review. The venue owns an SSH signing key an
 operator@example.org ssh-ed25519 AAAA... venue-acceptance
 ```
 
+Use the fail-closed draft/finalize workflow in
+`PRODUCTION_EVIDENCE_FORMAT.md` to produce the four external JSON reports. It
+calculates attachment hashes and manifest/commit bindings; untouched or incomplete
+templates cannot pass.
+
 For an approved sermon, bind the exact proof and supporting evidence:
 
 ```sh

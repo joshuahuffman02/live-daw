@@ -25,6 +25,41 @@ again. Consequently, a report or attachment that changes after review, belongs t
 different manifest, names a different candidate commit, or fails a semantic gate
 cannot produce or verify an approved acceptance bundle.
 
+## Fail-closed authoring workflow
+
+Create all four drafts without hand-building schemas:
+
+```sh
+./scripts/new-production-evidence-drafts.sh \
+  --phase sermon \
+  --output-dir "/proof/evidence-drafts"
+```
+
+The generated JSON files contain every required test ID and field, but unsafe
+defaults (`false`, impossible measurements, mismatched CRCs, and `/REPLACE/...`
+paths) make untouched or partially completed drafts impossible to approve. Fill the
+actual venue measurements, observations, reviewer judgments, commits/CRCs, corpus
+entries, and absolute attachment paths. Duplicate the replay comparison object when
+the corpus has more than one recording.
+
+Finalize only after the drafts are complete:
+
+```sh
+./scripts/finalize-production-evidence.sh \
+  --draft-dir "/proof/evidence-drafts" \
+  --manifest "/proof/automix-core-audio-full-check.json" \
+  --candidate-commit "40_CHARACTER_GIT_SHA" \
+  --output-dir "/proof/evidence-final" \
+  --require-approved-replay
+```
+
+The finalizer refuses a failed/simulated manifest, fills the exact manifest and
+candidate bindings, canonicalizes every attachment path, computes every SHA-256 and
+byte count, removes draft-only instructions, and runs the complete semantic
+verifier before publishing any final report. Drafts and final output must be in
+different directories. Existing drafts or final reports are never overwritten
+without explicit `--replace`.
+
 ## Common report fields
 
 Every report is JSON readable by macOS `plutil` and contains:
@@ -147,8 +182,10 @@ coverage tags, but every comparison still needs its own CRC, outputs, metrics,
 decision logs, reference mix, and complete-service review.
 
 The deterministic fixture and rejection coverage live in
-`scripts/test-production-evidence.sh`. It proves rejection of slow failover, modified
-attachments, excessive residual sync, inconsistent drift math, restart after
-operator Stop, unsafe evaluator metrics, incomplete decision logs, unsafe approved
-replay, rejected promotion, wrong candidate commit, and evidence bound to another
-manifest.
+`scripts/test-production-evidence.sh` and
+`scripts/test-production-evidence-authoring.sh`. They prove fail-closed drafts,
+generated bindings/hashes, overwrite protection, and rejection of slow failover,
+modified attachments, excessive residual sync, inconsistent drift math, restart
+after operator Stop, unsafe evaluator metrics, incomplete decision logs, unsafe
+approved replay, rejected promotion, wrong candidate commit, and evidence bound to
+another manifest.

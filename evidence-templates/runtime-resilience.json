@@ -1,0 +1,64 @@
+{
+  "formatVersion": 1,
+  "proofType": "runtime-resilience",
+  "completedAtUTC": "1970-01-01T00:00:00Z",
+  "venueRig": true,
+  "phase": "sermon",
+  "fullCheckManifestSHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "draft": true,
+  "draftInstructions": "Run each drill, replace its REPLACE attachment, and set only observed results.",
+  "tests": [
+    {
+      "id": "callback-stall-recovery",
+      "passed": false,
+      "unhealthyGraceSeconds": 0,
+      "engineRestarted": false,
+      "evidence": {"path": "/REPLACE/callback-stall.txt", "sha256": "", "bytes": 0}
+    },
+    {
+      "id": "output-device-reattach",
+      "passed": false,
+      "boundedBackoffObserved": false,
+      "routeRecovered": false,
+      "evidence": {"path": "/REPLACE/output-device-reattach.txt", "sha256": "", "bytes": 0}
+    },
+    {
+      "id": "recording-resume",
+      "passed": false,
+      "newRecordingDirectoryCreated": false,
+      "wavHeadersValid": false,
+      "evidence": {"path": "/REPLACE/recording-resume.txt", "sha256": "", "bytes": 0}
+    },
+    {
+      "id": "encoder-egress-alerts",
+      "passed": false,
+      "staleResponseRejected": false,
+      "unhealthyResponseRejected": false,
+      "desktopCriticalAlertObserved": false,
+      "remoteCriticalAlertObserved": false,
+      "evidence": {"path": "/REPLACE/encoder-egress-alerts.txt", "sha256": "", "bytes": 0}
+    },
+    {
+      "id": "launchagent-relaunch",
+      "passed": false,
+      "applicationRelaunched": false,
+      "sessionResumed": false,
+      "captureResumed": false,
+      "evidence": {"path": "/REPLACE/launchagent-relaunch.txt", "sha256": "", "bytes": 0}
+    },
+    {
+      "id": "operator-stop-no-restart",
+      "passed": false,
+      "recoveryDisarmed": false,
+      "automaticRestartObserved": true,
+      "evidence": {"path": "/REPLACE/operator-stop.txt", "sha256": "", "bytes": 0}
+    },
+    {
+      "id": "external-failover-handoff",
+      "passed": false,
+      "allKillTestsPassed": false,
+      "heldBackupUntilManualReturn": false,
+      "evidence": {"path": "/REPLACE/external-failover.txt", "sha256": "", "bytes": 0}
+    }
+  ]
+}

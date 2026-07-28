@@ -63,6 +63,17 @@ if [[ -n "${expected_manifest_path}" ]]; then
     exit 3
   fi
   expected_manifest_sha="$(/usr/bin/shasum -a 256 "${expected_manifest_path}" | /usr/bin/awk '{print $1}')"
+  manifest_hardware="$(/usr/bin/plutil -extract hardwareProofPassed raw -o - "${expected_manifest_path}" 2>/dev/null || true)"
+  manifest_scene="$(/usr/bin/plutil -extract scene raw -o - "${expected_manifest_path}" 2>/dev/null || true)"
+  if [[ "${manifest_hardware}" != "true" ||
+        ( "${manifest_scene}" != "sermon" && "${manifest_scene}" != "worship" ) ]]; then
+    print -u2 "Expected manifest must be passed sermon or worship hardware proof."
+    exit 3
+  fi
+  if [[ -n "${expected_phase}" && "${manifest_scene}" != "${expected_phase}" ]]; then
+    print -u2 "Expected manifest scene does not match the selected phase."
+    exit 3
+  fi
 fi
 
 fail() {
