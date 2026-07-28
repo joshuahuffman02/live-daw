@@ -29,6 +29,9 @@ jobs:
           plutil -lint native/AutoMixNative/AutoMixNative.entitlements
           plutil -lint native/launchd/com.livedaw.automixnative.plist.template
 
+      - name: Verify signed acceptance contract
+        run: scripts/test-proof-acceptance.sh
+
       - name: Verify generated Xcode project
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
