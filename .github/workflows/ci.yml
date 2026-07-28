@@ -33,6 +33,7 @@ jobs:
         run: |
           scripts/test-stream-health-evidence.sh
           scripts/test-runtime-incident-evidence.sh
+          scripts/test-production-evidence-authoring.sh
           scripts/test-production-evidence.sh
           scripts/test-proof-acceptance.sh
 
