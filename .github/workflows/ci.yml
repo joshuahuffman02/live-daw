@@ -32,6 +32,7 @@ jobs:
       - name: Verify production and signed acceptance contracts
         run: |
           scripts/test-stream-health-evidence.sh
+          scripts/test-runtime-incident-evidence.sh
           scripts/test-production-evidence.sh
           scripts/test-proof-acceptance.sh
 
