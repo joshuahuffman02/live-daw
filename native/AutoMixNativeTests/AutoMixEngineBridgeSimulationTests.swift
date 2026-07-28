@@ -178,7 +178,10 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(inventory.deviceCount, 3)
         XCTAssertEqual(inventory.readyInputUIDs, [dante.uid])
         XCTAssertEqual(inventory.readyOutputUIDs, [stream.uid])
-        XCTAssertTrue(inventory.summary.localizedCaseInsensitiveContains("1 HD96 input candidate"))
+        XCTAssertEqual(inventory.productionReadyInputUIDs, [dante.uid])
+        XCTAssertEqual(inventory.productionReadyOutputUIDs, [stream.uid])
+        XCTAssertEqual(inventory.simulatedDeviceUIDs, [])
+        XCTAssertTrue(inventory.summary.localizedCaseInsensitiveContains("1 production HD96 input candidate"))
 
         let danteEntry = try XCTUnwrap(inventory.devices.first { $0.uid == dante.uid })
         XCTAssertTrue(danteEntry.inputReady)
@@ -190,6 +193,41 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertFalse(streamEntry.inputReady)
         XCTAssertTrue(streamEntry.outputReady)
         XCTAssertEqual(streamEntry.outputIsolationReady, true)
+    }
+
+    func testCoreAudioDeviceInventoryExcludesSimulationFromProductionCandidates() {
+        let simulated = AMDeviceInfo(
+            uid: "com.livedaw.automix.simulated-hd96-dante",
+            name: "Simulated HD96 Dante Split",
+            inputChannels: 64,
+            outputChannels: 2,
+            sampleRate: 96_000
+        )
+        let stream = AMDeviceInfo(
+            uid: "stream.encoder.output",
+            name: "Stream Encoder Output",
+            inputChannels: 0,
+            outputChannels: 2,
+            sampleRate: 96_000
+        )
+
+        let inventory = CoreAudioDeviceInventory.make(
+            generatedAt: Date(timeIntervalSince1970: 0),
+            devices: [simulated, stream],
+            expectedInputChannels: 64,
+            selectedInputUID: simulated.uid,
+            selectedOutputUID: stream.uid
+        )
+
+        XCTAssertEqual(inventory.readyInputUIDs, [simulated.uid])
+        XCTAssertEqual(inventory.readyOutputUIDs, [simulated.uid, stream.uid])
+        XCTAssertEqual(inventory.productionReadyInputUIDs, [])
+        XCTAssertEqual(inventory.productionReadyOutputUIDs, [stream.uid])
+        XCTAssertEqual(inventory.simulatedDeviceUIDs, [simulated.uid])
+        XCTAssertEqual(inventory.derivedProductionReadyInputUIDs, [])
+        XCTAssertEqual(inventory.derivedProductionReadyOutputUIDs, [stream.uid])
+        XCTAssertTrue(inventory.summary.localizedCaseInsensitiveContains("0 production HD96 input candidate"))
+        XCTAssertTrue(inventory.summary.localizedCaseInsensitiveContains("1 simulated device"))
     }
 
     func testCoreAudioDeviceInventoryWithoutSelectedInputDoesNotScoreIsolation() throws {
@@ -4769,6 +4807,37 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(inventoryCheck.summary, "inventory selected UIDs do not match manifest input/output route")
     }
 
+    func testCoreAudioFullCheckVerifierRejectsMissingProductionInventoryFields() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let manifestURL = try writeFullCheckProofFixture(
+            in: directory,
+            validationSource: .coreAudioDevice
+        )
+        let inventoryURL = directory.appendingPathComponent("inventory.json")
+        var inventory = try readJSON(CoreAudioDeviceInventory.self, from: inventoryURL)
+        inventory.productionReadyInputUIDs = nil
+        inventory.productionReadyOutputUIDs = nil
+        inventory.simulatedDeviceUIDs = nil
+        try writeJSON(inventory, to: inventoryURL)
+
+        let result = try CoreAudioFullCheckVerifier.verifyManifest(at: manifestURL)
+        let inventoryCheck = try XCTUnwrap(
+            result.proofChecks.first { $0.name == "Device Inventory Semantics" }
+        )
+
+        XCTAssertFalse(result.passed)
+        XCTAssertFalse(result.hardwareProofPassed)
+        XCTAssertFalse(inventoryCheck.passed)
+        XCTAssertEqual(
+            inventoryCheck.summary,
+            "inventory production-ready fields are missing or inconsistent"
+        )
+    }
+
     func testCoreAudioFullCheckVerifierAcceptsWrappedPreflightProofArtifact() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -5129,6 +5198,36 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(result.summary, "Full check proof artifacts failed semantic verification.")
         XCTAssertTrue(result.artifactChecks.allSatisfy(\.passed))
         XCTAssertFalse(result.proofChecks.allSatisfy(\.passed))
+    }
+
+    func testCoreAudioFullCheckVerifierRejectsCoreAudioLabelOnSimulatedRoute() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let manifestURL = try writeFullCheckProofFixture(
+            in: directory,
+            validationSource: .simulatedHD96Dante
+        )
+        var manifest = try readJSON(CoreAudioFullCheckManifest.self, from: manifestURL)
+        manifest.validationSource = .coreAudioDevice
+        manifest.recomputePassed()
+        XCTAssertTrue(manifest.hardwareProofPassed)
+        try writeJSON(manifest, to: manifestURL)
+
+        let result = try CoreAudioFullCheckVerifier.verifyManifest(at: manifestURL)
+        let routeCheck = try XCTUnwrap(
+            result.proofChecks.first { $0.name == "Manifest Route Semantics" }
+        )
+
+        XCTAssertFalse(result.passed)
+        XCTAssertFalse(result.hardwareProofPassed)
+        XCTAssertFalse(routeCheck.passed)
+        XCTAssertEqual(
+            routeCheck.summary,
+            "manifest validation source does not match the selected route identity"
+        )
     }
 
     func testCoreAudioFullCheckVerifierRejectsSilentWavDespitePassingReport() throws {

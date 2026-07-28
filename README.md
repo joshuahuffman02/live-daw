@@ -427,10 +427,15 @@ The `--verify-full-check` command re-runs the same final gate for an existing ma
 it checks that each referenced proof artifact exists and is non-empty, parses the
 inventory, preflight, soundcheck report, stability report, and WAV metadata,
 cross-checks them against the manifest, requires the inventory's selected input and
-output UIDs to match the manifest route, verifies the exact same channel map, source
-roles, and manual override values appear in preflight, soundcheck, and stability
-proofs, and exits nonzero for simulated validation, dummy artifacts, profile-map
-mismatches, or incomplete hardware proof.
+output UIDs to match the manifest route, derives production candidates from the
+inventory's device identities instead of trusting its summary arrays, and requires
+the manifest validation source to match the selected route identity. Simulated
+devices remain visible as rehearsal candidates but are explicitly excluded from
+production-ready counts. The verifier also checks that the exact same channel map,
+source roles, and manual override values appear in preflight, soundcheck, and
+stability proofs, and exits nonzero for simulated validation, relabeled simulated
+routes, missing or inconsistent production inventory fields, dummy artifacts,
+profile-map mismatches, or incomplete hardware proof.
 For real hardware, Output Isolation is a blocking check: use a stream encoder,
 BlackHole, Loopback, OBS/virtual output, or known-good Aggregate Device output, not
 the same Dante/HD96-facing Core Audio route used for the input split.

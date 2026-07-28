@@ -33,7 +33,7 @@ hardware proof.
 
 - Deterministic DSP: **117 passed, 0 failed**.
 - Replay evaluator: self-test passed.
-- Native XCTest: **249 passed, 0 failed**.
+- Native XCTest: **252 passed, 0 failed**.
 - Remote monitor: static/auth/pairing/cookie, heartbeat, snapshot-freshness,
   SAFE-release confirmation, bounded command timeout, and SSE smoke passed.
 - Remote browser control safety: **6 passed, 0 failed** for forward-only timestamp
@@ -75,20 +75,34 @@ hardware proof.
   verifies evidence contracts, deterministic project generation, DSP, replay, JUCE,
   npm audit/typecheck/build, native XCTest, monitor smoke, and native Release build
   for every published commit.
+- Device-inventory proof hardening: production input/output candidates are derived
+  from enumerated device identities, simulated devices are separately disclosed and
+  excluded, missing or edited production fields fail closed, and a simulated route
+  relabeled as real Core Audio hardware is rejected.
 - Worktree: clean after the verified publication slice.
 
 ## Current-host readiness facts
 
 The latest inventory is under
-`validation-artifacts/current-host-readiness/automix-core-audio-device-inventory-20260727-165927.json`
+`validation-artifacts/current-host-readiness/automix-core-audio-device-inventory-20260728-164523.json`
 and is intentionally ignored from source control.
 
+- `ThinkPad Thunderbolt 3 Dock USB Audio`: separate 1-input and 2-output 48 kHz
+  endpoints; neither satisfies the 64-input/96 kHz isolated-stream route.
 - `Mac mini Speakers`: 0 inputs, 2 outputs, 48 kHz, not a livestream-safe route.
 - `Simulated HD96 Dante Split`: 64 inputs, 2 outputs, 96 kHz, explicitly labeled
-  `simulated-hd96-dante`; it cannot set `hardwareProofPassed=true`.
+  `simulated-hd96-dante`; it is excluded from both production candidate counts and
+  cannot set `hardwareProofPassed=true`.
+- Fresh inventory result: **0 production HD96 input candidates**, **0 production
+  stream output candidates**, and **1 simulated device excluded**.
 - Developer ID signing identities: **0**.
-- Dante/DVS, OBS, BlackHole, and Loopback applications: not found.
-- Internal filesystem free space: approximately **19 GiB**.
+- OBS Studio **32.2.1** is installed in `/Applications`, passes strict deep code
+  signature verification, and is accepted by Gatekeeper as a notarized Developer ID
+  build. Its bundled OBS WebSocket plugin is present.
+- Dante/DVS, BlackHole, and Loopback applications: not found. BlackHole 2ch requires
+  an administrator-approved package installation and a reboot before it can be
+  evaluated as the isolated program-output route.
+- Internal filesystem free space: approximately **25 GiB**.
 - A 64-input + stereo-program 96 kHz float recording consumes about **91.2 GB/hour**,
   before reserve and other proof artifacts.
 

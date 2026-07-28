@@ -111,20 +111,17 @@ enum AudioValidationSource: String, Codable, Equatable, Sendable {
     }
 
     static func infer(inputDevice: SoundcheckDeviceSnapshot, outputDevice: SoundcheckDeviceSnapshot) -> AudioValidationSource {
-        let haystack = [
-            inputDevice.uid,
-            inputDevice.name,
-            outputDevice.uid,
-            outputDevice.name
-        ]
-        .joined(separator: " ")
-        .lowercased()
-
-        if haystack.contains("com.livedaw.automix.simulated-hd96-dante") ||
-            haystack.contains("simulated hd96 dante") {
+        if isSimulatedDevice(uid: inputDevice.uid, name: inputDevice.name) ||
+            isSimulatedDevice(uid: outputDevice.uid, name: outputDevice.name) {
             return .simulatedHD96Dante
         }
         return .coreAudioDevice
+    }
+
+    static func isSimulatedDevice(uid: String, name: String) -> Bool {
+        let identity = "\(uid) \(name)".lowercased()
+        return identity.contains("com.livedaw.automix.simulated-hd96-dante") ||
+            identity.contains("simulated hd96 dante")
     }
 }
 

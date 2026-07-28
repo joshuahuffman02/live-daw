@@ -171,6 +171,11 @@ on-rig reports and the full-check manifest must say
 The manifest also requires the no-audio device inventory, preflight, soundcheck WAV,
 soundcheck report, and stability report paths before its aggregate `passed` flag can
 be true.
+Inventory JSON retains general `readyInputUIDs` / `readyOutputUIDs` for rehearsal
+diagnostics, but separately records production-ready input/output UIDs and simulated
+device UIDs. The semantic verifier re-derives all three lists from the enumerated
+device identities, rejects missing or edited production fields for hardware proof,
+and rejects a simulated route relabeled as `core-audio-device`.
 The one-shot `--core-audio-full-check` command runs the same semantic verifier before
 it returns and exits nonzero unless `hardwareProofPassed=true`. Use
 `--verify-full-check` to re-run that final gate for an existing manifest; it verifies

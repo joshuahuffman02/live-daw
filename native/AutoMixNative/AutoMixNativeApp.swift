@@ -489,11 +489,14 @@ struct AutoMixNativeApp: App {
         if inventory.selectedOutputUID == nil {
             print("Inventory proof warning: pass --output-uid <stream output UID>; final full-check verification requires selected input/output UIDs to match the manifest route.")
         }
-        if inventory.readyInputUIDs.isEmpty {
+        if inventory.derivedProductionReadyInputUIDs.isEmpty {
             print("Inventory warning: no input device currently looks ready for \(inventory.expectedInputChannels) channels at 96 kHz.")
         }
-        if inventory.readyOutputUIDs.isEmpty {
+        if inventory.derivedProductionReadyOutputUIDs.isEmpty {
             print("Inventory warning: no output device currently looks ready for isolated stereo stream output at 96 kHz.")
+        }
+        if !inventory.derivedSimulatedDeviceUIDs.isEmpty {
+            print("Inventory proof warning: simulated devices are listed for rehearsal only and are excluded from production-ready candidate counts.")
         }
     }
 

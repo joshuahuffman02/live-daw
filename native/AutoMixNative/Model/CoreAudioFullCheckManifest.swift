@@ -145,8 +145,23 @@ struct CoreAudioDeviceInventory: Codable, Equatable, Sendable {
     var deviceCount: Int
     var readyInputUIDs: [String]
     var readyOutputUIDs: [String]
+    var productionReadyInputUIDs: [String]?
+    var productionReadyOutputUIDs: [String]?
+    var simulatedDeviceUIDs: [String]?
     var summary: String
     var devices: [CoreAudioDeviceInventoryDevice]
+
+    var derivedProductionReadyInputUIDs: [String] {
+        devices.filter { $0.inputReady && !$0.isSimulated }.map(\.uid)
+    }
+
+    var derivedProductionReadyOutputUIDs: [String] {
+        devices.filter { $0.outputReady && !$0.isSimulated }.map(\.uid)
+    }
+
+    var derivedSimulatedDeviceUIDs: [String] {
+        devices.filter(\.isSimulated).map(\.uid)
+    }
 
     static func make(
         generatedAt: Date = Date(),
@@ -168,7 +183,17 @@ struct CoreAudioDeviceInventory: Codable, Equatable, Sendable {
         }
         let readyInputUIDs = entries.filter(\.inputReady).map(\.uid)
         let readyOutputUIDs = entries.filter(\.outputReady).map(\.uid)
-        let summary = "\(readyInputUIDs.count) HD96 input candidate(s), \(readyOutputUIDs.count) stream output candidate(s), \(entries.count) Core Audio device(s)"
+        let productionReadyInputUIDs = entries
+            .filter { $0.inputReady && !$0.isSimulated }
+            .map(\.uid)
+        let productionReadyOutputUIDs = entries
+            .filter { $0.outputReady && !$0.isSimulated }
+            .map(\.uid)
+        let simulatedDeviceUIDs = entries.filter(\.isSimulated).map(\.uid)
+        let summary = "\(productionReadyInputUIDs.count) production HD96 input candidate(s), " +
+            "\(productionReadyOutputUIDs.count) production stream output candidate(s), " +
+            "\(simulatedDeviceUIDs.count) simulated device(s) excluded, " +
+            "\(entries.count) Core Audio device(s)"
         return CoreAudioDeviceInventory(
             generatedAt: generatedAt,
             expectedInputChannels: expectedInputs,
@@ -177,6 +202,9 @@ struct CoreAudioDeviceInventory: Codable, Equatable, Sendable {
             deviceCount: entries.count,
             readyInputUIDs: readyInputUIDs,
             readyOutputUIDs: readyOutputUIDs,
+            productionReadyInputUIDs: productionReadyInputUIDs,
+            productionReadyOutputUIDs: productionReadyOutputUIDs,
+            simulatedDeviceUIDs: simulatedDeviceUIDs,
             summary: summary,
             devices: entries
         )
@@ -325,13 +353,20 @@ enum CoreAudioFullCheckVerifier {
     private static func verifyManifestRoute(
         manifest: CoreAudioFullCheckManifest
     ) -> CoreAudioFullCheckProofCheck {
-        let passed = proofRouteSnapshotsAreReady(
+        let routeReady = proofRouteSnapshotsAreReady(
             inputDevice: manifest.inputDevice,
             outputDevice: manifest.outputDevice,
             expectedInputChannels: manifest.expectedInputChannels
         )
+        let inferredSource = AudioValidationSource.infer(
+            inputDevice: manifest.inputDevice,
+            outputDevice: manifest.outputDevice
+        )
+        let passed = routeReady && inferredSource == manifest.validationSource
         let summary = passed
             ? "manifest route is ready for \(manifest.expectedInputChannels)-input 96 kHz HD96/Dante proof"
+            : inferredSource != manifest.validationSource
+                ? "manifest validation source does not match the selected route identity"
             : "manifest route snapshot is not a ready 96 kHz HD96 input plus isolated stream output"
         return CoreAudioFullCheckProofCheck(name: "Manifest Route Semantics", passed: passed, summary: summary)
     }
@@ -346,8 +381,18 @@ enum CoreAudioFullCheckVerifier {
             let expectedInputsMatch = inventory.expectedInputChannels == manifest.expectedInputChannels
             let inputUID = manifest.inputDevice.uid
             let outputUID = manifest.outputDevice.uid
-            let inputReady = !inputUID.isEmpty && inventory.readyInputUIDs.contains(inputUID)
-            let outputReady = !outputUID.isEmpty && inventory.readyOutputUIDs.contains(outputUID)
+            let productionFieldsMatchDerived =
+                inventory.productionReadyInputUIDs == inventory.derivedProductionReadyInputUIDs &&
+                inventory.productionReadyOutputUIDs == inventory.derivedProductionReadyOutputUIDs &&
+                inventory.simulatedDeviceUIDs == inventory.derivedSimulatedDeviceUIDs
+            let inputUIDs = manifest.validationSource == .coreAudioDevice
+                ? inventory.derivedProductionReadyInputUIDs
+                : inventory.readyInputUIDs
+            let outputUIDs = manifest.validationSource == .coreAudioDevice
+                ? inventory.derivedProductionReadyOutputUIDs
+                : inventory.readyOutputUIDs
+            let inputReady = !inputUID.isEmpty && inputUIDs.contains(inputUID)
+            let outputReady = !outputUID.isEmpty && outputUIDs.contains(outputUID)
             let selectedInputMatches = inventory.selectedInputUID == inputUID
             let selectedOutputMatches = inventory.selectedOutputUID == outputUID
             let inputDevicePresent = inventory.devices.contains { $0.uid == inputUID && $0.inputReady }
@@ -356,12 +401,15 @@ enum CoreAudioFullCheckVerifier {
                 expectedInputsMatch &&
                 inputReady &&
                 outputReady &&
+                (manifest.validationSource != .coreAudioDevice || productionFieldsMatchDerived) &&
                 selectedInputMatches &&
                 selectedOutputMatches &&
                 inputDevicePresent &&
                 outputDevicePresent
             let summary = passed
-                ? "\(inventory.readyInputUIDs.count) input / \(inventory.readyOutputUIDs.count) output ready"
+                ? "\(inputUIDs.count) input / \(outputUIDs.count) output ready"
+                : manifest.validationSource == .coreAudioDevice && !productionFieldsMatchDerived
+                    ? "inventory production-ready fields are missing or inconsistent"
                 : !selectedInputMatches || !selectedOutputMatches
                     ? "inventory selected UIDs do not match manifest input/output route"
                     : "inventory does not prove selected \(manifest.expectedInputChannels)-input route and stream output readiness"
@@ -804,6 +852,10 @@ struct CoreAudioDeviceInventoryDevice: Codable, Equatable, Sendable {
     var outputReadiness: String
     var outputIsolationReady: Bool?
     var outputIsolationObserved: String?
+
+    var isSimulated: Bool {
+        AudioValidationSource.isSimulatedDevice(uid: uid, name: name)
+    }
 
     static func make(
         device: AMDeviceInfo,
