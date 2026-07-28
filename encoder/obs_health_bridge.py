@@ -680,8 +680,10 @@ class EncoderHealthState:
         audio_track: int = 1,
         maximum_status_age_ms: int = 3000,
         maximum_meter_age_ms: int = 1000,
+        production_eligible: bool = True,
     ) -> None:
         self.selector = selector
+        self.production_eligible = bool(production_eligible)
         if isinstance(audio_track, bool) or audio_track < 1 or audio_track > 6:
             raise ConfigurationError("OBS audio track must be between 1 and 6")
         self.audio_track = audio_track
@@ -1001,7 +1003,12 @@ class EncoderHealthState:
             and -5000 <= track_age_ms <= self.maximum_status_age_ms
         )
 
-        if not connected:
+        if not self.production_eligible:
+            detail = (
+                "rehearsal/unauthenticated OBS configuration cannot produce "
+                "production health"
+            )
+        elif not connected:
             detail = failure
         elif not authenticated:
             detail = "OBS WebSocket session is not authenticated"
@@ -1054,7 +1061,8 @@ class EncoderHealthState:
             )
 
         healthy = bool(
-            connected
+            self.production_eligible
+            and connected
             and authenticated
             and status_fresh
             and streaming
@@ -1086,6 +1094,7 @@ class EncoderHealthState:
         return {
             "formatVersion": FORMAT_VERSION,
             "kind": HEALTH_KIND,
+            "productionEligible": self.production_eligible,
             "healthy": healthy,
             "streaming": bool(
                 streaming
@@ -1417,6 +1426,7 @@ def run_bridge(arguments: argparse.Namespace) -> int:
         audio_track=arguments.audio_track,
         maximum_status_age_ms=arguments.maximum_status_age_ms,
         maximum_meter_age_ms=arguments.maximum_meter_age_ms,
+        production_eligible=not arguments.allow_unauthenticated,
     )
 
     def password_loader() -> Optional[str]:

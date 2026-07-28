@@ -58,9 +58,13 @@ STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
    window. The runner probes both configured health endpoints throughout the full
    check and blocks after two
    consecutive failures or a missing healthy observation. Its final semantic gate
-   additionally requires zero unhealthy rows, fresh endpoint timestamps, a maximum
-   seven-second observation gap, and at least 95% coverage of the requested window,
-   as specified in `STREAM_HEALTH_EVIDENCE.md`. The recording verifier requires zero
+   additionally requires zero unhealthy rows, exact production observer contracts,
+   the actual local/remote endpoint peers (rejecting any egress peer bound to the
+   production Mac), stable observer identity/software,
+   authenticated clean OBS counter progress, advancing decoded HLS media sequences,
+   fresh advancing endpoint timestamps, a maximum seven-second observation gap, and
+   at least 95% coverage of the requested window, as specified in
+   `STREAM_HEALTH_EVIDENCE.md`. The recording verifier requires zero
    dropped frames, exact segment/header/frame accounting, 66-channel 96 kHz float
    WAVs, the free-space reserve, and at least two persisted hours. The rollout
    verifier parses every native SHADOW snapshot, requiring one 64-channel/96 kHz

@@ -103,6 +103,78 @@ if [[ -z "${encoder_health_url}" || -z "${egress_health_url}" ]]; then
   exit 3
 fi
 
+is_local_health_host() {
+  local host="${1:l}"
+  local local_address
+  for local_address in "${local_health_addresses[@]}"; do
+    if [[ "${host}" == "${local_address}" ]]; then
+      return 0
+    fi
+  done
+  [[ "${host}" == "localhost" ||
+     "${host}" == localhost.* ||
+     "${host}" == *.localhost ||
+     "${host}" == 127.* ||
+     "${host}" == "0.0.0.0" ||
+     "${host}" == "::" ||
+     "${host}" == "0:0:0:0:0:0:0:0" ||
+     "${host}" == "::1" ||
+     "${host}" == "0:0:0:0:0:0:0:1" ||
+     "${host}" == ::ffff:127.* ||
+     "${host}" == 0:0:0:0:0:ffff:127.* ]]
+}
+
+typeset -a local_health_addresses
+local_health_addresses=(
+  "${(@f)$(/sbin/ifconfig -a | /usr/bin/awk '
+    /^[[:space:]]*inet / {
+      print tolower($2)
+    }
+    /^[[:space:]]*inet6 / {
+      sub(/%.*/, "", $2)
+      print tolower($2)
+    }
+  ')}"
+)
+
+validate_health_endpoint_url() {
+  local role="$1"
+  local url="$2"
+  if [[ ( "${url}" != http://* && "${url}" != https://* ) ||
+        "${url}" == *[[:cntrl:]]* ||
+        "${url}" == *"@"* ||
+        "${url}" == *"?"* ||
+        "${url}" == *"#"* ]]; then
+    print -u2 "${role} health URL must be a token-free HTTP(S) URL."
+    return 1
+  fi
+  local remainder="${url#*://}"
+  local authority="${remainder%%/*}"
+  local authority_host="${authority%%:*}"
+  if [[ "${authority}" == \[*\]* ]]; then
+    authority_host="${authority#\[}"
+    authority_host="${authority_host%%\]*}"
+  fi
+  local path="/${remainder#*/}"
+  if [[ -z "${authority}" || "${path}" != "/health" ]]; then
+    print -u2 "${role} health URL must target the exact /health path."
+    return 1
+  fi
+  if [[ "${role}" == "encoder" ]]; then
+    if [[ "${authority}" != "127.0.0.1" &&
+          "${authority}" != 127.0.0.1:* ]]; then
+      print -u2 "Encoder health must use the local numeric loopback bridge."
+      return 1
+    fi
+  elif is_local_health_host "${authority_host}"; then
+    print -u2 "Public egress health must use a remote observer endpoint."
+    return 1
+  fi
+}
+
+validate_health_endpoint_url "encoder" "${encoder_health_url}" || exit 3
+validate_health_endpoint_url "egress" "${egress_health_url}" || exit 3
+
 if [[ "${phase}" == "worship" ]]; then
   if [[ -z "${sermon_manifest}" ||
         -z "${sermon_acceptance_directory}" ||
@@ -133,7 +205,15 @@ fi
 health_stop_file="${phase_directory}/.stop-health-monitor"
 health_failure_file="${phase_directory}/.stream-health-failed"
 health_log="${phase_directory}/stream-health-observations.tsv"
-print -r -- $'checkedAtMs\tprobe\tstate\tresponseTimestampMs\tageMs\thealthy\tstreaming\taudioActive\tdetail' > "${health_log}"
+print -r -- $'checkedAtMs\tprobe\tendpointPeer\tobserverKind\tformatVersion\tproductionEligible\tobserverIdentity\tsoftwareVersion\tplaybackHost\tmediaSequence\tdecodedAudioSamples\tauthenticated\tencoderProgressing\tencoderIntervalClean\tstate\tresponseTimestampMs\tageMs\thealthy\tstreaming\taudioActive\tdetail' > "${health_log}"
+
+valid_health_text() {
+  local value="$1"
+  local maximum="${2:-512}"
+  [[ -n "${value}" &&
+     ${#value} -le ${maximum} &&
+     "${value}" != *[[:cntrl:]]* ]]
+}
 
 monitor_health_endpoint() {
   local probe_name="$1"
@@ -150,21 +230,86 @@ monitor_health_endpoint() {
     local audio_active=""
     local observed_ms=""
     local age_ms=""
-    if ! /usr/bin/curl --silent --show-error --fail --max-time 3 \
+    local endpoint_peer=""
+    local observer_kind=""
+    local format_version=""
+    local production_eligible=""
+    local observer_identity="-"
+    local software_version="-"
+    local playback_host="-"
+    local media_sequence="-"
+    local decoded_audio_samples="-"
+    local authenticated="-"
+    local encoder_progressing="-"
+    local encoder_interval_clean="-"
+    if ! endpoint_peer="$(/usr/bin/curl --silent --show-error --fail --max-time 3 \
+      --max-filesize 65536 \
       -H "Accept: application/json" \
       -o "${response_file}" \
-      "${probe_url}"; then
+      --write-out '%{remote_ip}' \
+      "${probe_url}")"; then
       state="unhealthy"
       detail="HTTP request failed"
     else
+      observer_kind="$(/usr/bin/plutil -extract kind raw -o - "${response_file}" 2>/dev/null || true)"
+      format_version="$(/usr/bin/plutil -extract formatVersion raw -o - "${response_file}" 2>/dev/null || true)"
+      production_eligible="$(/usr/bin/plutil -extract productionEligible raw -o - "${response_file}" 2>/dev/null || true)"
       healthy="$(/usr/bin/plutil -extract healthy raw -o - "${response_file}" 2>/dev/null || true)"
       streaming="$(/usr/bin/plutil -extract streaming raw -o - "${response_file}" 2>/dev/null || true)"
       audio_active="$(/usr/bin/plutil -extract audioActive raw -o - "${response_file}" 2>/dev/null || true)"
       observed_ms="$(/usr/bin/plutil -extract timestampMs raw -o - "${response_file}" 2>/dev/null || true)"
-      if [[ "${healthy}" != "true" || "${streaming}" != "true" || "${audio_active}" != "true" ||
+      detail="$(/usr/bin/plutil -extract detail raw -o - "${response_file}" 2>/dev/null || true)"
+      if [[ "${probe_name}" == "encoder" ]]; then
+        observer_identity="$(/usr/bin/plutil -extract audioInput raw -o - "${response_file}" 2>/dev/null || true)"
+        software_version="$(/usr/bin/plutil -extract obsStudioVersion raw -o - "${response_file}" 2>/dev/null || true)"
+        authenticated="$(/usr/bin/plutil -extract authenticated raw -o - "${response_file}" 2>/dev/null || true)"
+        encoder_progressing="$(/usr/bin/plutil -extract encoderProgressing raw -o - "${response_file}" 2>/dev/null || true)"
+        encoder_interval_clean="$(/usr/bin/plutil -extract encoderIntervalClean raw -o - "${response_file}" 2>/dev/null || true)"
+      else
+        observer_identity="$(/usr/bin/plutil -extract observerSite raw -o - "${response_file}" 2>/dev/null || true)"
+        software_version="$(/usr/bin/plutil -extract ffmpegVersion raw -o - "${response_file}" 2>/dev/null || true)"
+        playback_host="$(/usr/bin/plutil -extract playbackHost raw -o - "${response_file}" 2>/dev/null || true)"
+        media_sequence="$(/usr/bin/plutil -extract mediaSequence raw -o - "${response_file}" 2>/dev/null || true)"
+        decoded_audio_samples="$(/usr/bin/plutil -extract decodedAudioSamples raw -o - "${response_file}" 2>/dev/null || true)"
+      fi
+      if [[ "${healthy}" != "true" ||
+            "${streaming}" != "true" ||
+            "${audio_active}" != "true" ||
+            "${format_version}" != "1" ||
+            "${production_eligible}" != "true" ||
             ! "${observed_ms}" =~ '^[0-9]+$' ]]; then
         state="unhealthy"
         detail="invalid or unhealthy JSON contract"
+      elif ! valid_health_text "${endpoint_peer}" 128 ||
+           ! valid_health_text "${observer_identity}" 512 ||
+           ! valid_health_text "${software_version}" 512 ||
+           ! valid_health_text "${detail}" 512; then
+        state="unhealthy"
+        detail="invalid observer provenance text"
+      elif [[ "${probe_name}" == "encoder" &&
+              ( "${observer_kind}" != "automix-obs-encoder-health" ||
+                "${endpoint_peer}" != 127.* ||
+                "${authenticated}" != "true" ||
+                "${encoder_progressing}" != "true" ||
+                "${encoder_interval_clean}" != "true" ) ]]; then
+        state="unhealthy"
+        detail="wrong or rehearsal-only OBS observer"
+      elif [[ "${probe_name}" == "egress" &&
+              ( "${observer_kind}" != "automix-hls-egress-health" ||
+                ! "${media_sequence}" =~ '^[0-9]+$' ||
+                ! "${decoded_audio_samples}" =~ '^[1-9][0-9]*$' ||
+                "${software_version}" != "ffmpeg version "* ) ]]; then
+        state="unhealthy"
+        detail="wrong, local, or incomplete public-egress observer"
+      elif [[ "${probe_name}" == "egress" ]] &&
+           is_local_health_host "${endpoint_peer}"; then
+        state="unhealthy"
+        detail="public-egress observer resolved to this host"
+      elif [[ "${probe_name}" == "egress" ]] &&
+           ( ! valid_health_text "${playback_host}" 253 ||
+             is_local_health_host "${playback_host}" ); then
+        state="unhealthy"
+        detail="public playback hostname is missing or local"
       else
         age_ms="$(( now_ms - observed_ms ))"
         if (( age_ms < -5000 || age_ms > 15000 )); then
@@ -174,7 +319,7 @@ monitor_health_endpoint() {
       fi
     fi
 
-    print -r -- "${now_ms}"$'\t'"${probe_name}"$'\t'"${state}"$'\t'"${observed_ms}"$'\t'"${age_ms}"$'\t'"${healthy}"$'\t'"${streaming}"$'\t'"${audio_active}"$'\t'"${detail}" >> "${health_log}"
+    print -r -- "${now_ms}"$'\t'"${probe_name}"$'\t'"${endpoint_peer}"$'\t'"${observer_kind}"$'\t'"${format_version}"$'\t'"${production_eligible}"$'\t'"${observer_identity}"$'\t'"${software_version}"$'\t'"${playback_host}"$'\t'"${media_sequence}"$'\t'"${decoded_audio_samples}"$'\t'"${authenticated}"$'\t'"${encoder_progressing}"$'\t'"${encoder_interval_clean}"$'\t'"${state}"$'\t'"${observed_ms}"$'\t'"${age_ms}"$'\t'"${healthy}"$'\t'"${streaming}"$'\t'"${audio_active}"$'\t'"${detail}" >> "${health_log}"
     if [[ "${state}" == "healthy" ]]; then
       consecutive_failures=0
       /usr/bin/touch "${phase_directory}/.${probe_name}-health-seen"

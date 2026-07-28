@@ -486,15 +486,19 @@ The app does not configure the Midas console. It expects Dante to already exist:
 - Automatic Audio Recovery watches exact route readiness and callback age, retries
   with grace/verification/backoff, reapplies the live state, and resumes continuous
   capture in a new segment directory. Runtime incidents are durable JSONL. Optional
-  encoder-ingest and public-egress probes require fresh structured health rather than
-  treating a generic HTTP 200 as proof. For OBS, the repository's authenticated
+  encoder-ingest and public-egress probes require token-free exact `/health` URLs,
+  bounded fresh role-specific production contracts, and live-audio provenance rather
+  than treating a generic HTTP 200 as proof. Encoder health is numeric-loopback only;
+  public egress rejects local observers and redirects. For OBS, the repository's authenticated
   loopback WebSocket bridge converts advancing `GetStreamStatus` encoder counters
-  plus exact-input streaming-track and `InputVolumeMeters` evidence into the encoder
+  plus exact-input streaming-track and `InputVolumeMeters` evidence, OBS identity,
+  authentication, and clean counter intervals into the encoder
   contract at
   `http://127.0.0.1:8421/health`; see
   [`../encoder/README.md`](../encoder/README.md). The public HLS observer separately
-  requires an advancing CDN sequence and a decoded audio frame from the newest
-  segment; deploy it offsite as documented in
+  requires a stable offsite identity/FFmpeg version, non-local playback host,
+  advancing CDN sequence, and a decoded audio frame from the newest segment; deploy
+  it offsite as documented in
   [`../egress/README.md`](../egress/README.md). See
   [`../docs/RUNTIME_RESILIENCE.md`](../docs/RUNTIME_RESILIENCE.md) for the LaunchAgent,
   session-resume contract, and kill-test procedure.

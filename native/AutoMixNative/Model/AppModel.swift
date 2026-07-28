@@ -2206,8 +2206,16 @@ final class AppModel: ObservableObject {
 
         let probe = streamHealthProbe
         streamHealthTask = Task { [weak self] in
-            async let encoderResult = probe.probe(urlString: encoderURL, nowMs: nowMs)
-            async let egressResult = probe.probe(urlString: egressURL, nowMs: nowMs)
+            async let encoderResult = probe.probe(
+                urlString: encoderURL,
+                nowMs: nowMs,
+                role: .encoder
+            )
+            async let egressResult = probe.probe(
+                urlString: egressURL,
+                nowMs: nowMs,
+                role: .egress
+            )
             let results = await (encoderResult, egressResult)
             guard !Task.isCancelled else { return }
             self?.finishStreamHealthProbe(

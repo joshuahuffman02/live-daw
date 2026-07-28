@@ -121,17 +121,25 @@ Example:
 {
   "formatVersion": 1,
   "kind": "automix-hls-egress-health",
+  "productionEligible": true,
   "healthy": true,
   "streaming": true,
   "audioActive": true,
   "timestampMs": 1785280000000,
-  "detail": "public HLS advancing via cdn.example.test; sequence 19284; decoded 2048 audio samples"
+  "detail": "public HLS advancing via cdn.example.test; sequence 19284; decoded 2048 audio samples",
+  "observerSite": "offsite-cellular-observer",
+  "playbackHost": "cdn.example.test",
+  "mediaSequence": 19284,
+  "decodedAudioSamples": 2048,
+  "ffmpegVersion": "ffmpeg version 8.1.2"
 }
 ```
 
 Diagnostic additions disclose the observer label, playback hostname (never the
 full URL), media sequence, progress age, target duration, decoded sample count,
-FFmpeg version, and poll generation.
+FFmpeg version, and poll generation. AutoMix and the signed proof path require the
+production eligibility, stable observer identity/software, non-local playback host,
+media sequence, and positive decoded sample evidence shown above.
 
 Any DNS/TLS/HTTP/redirect error, private peer, oversized or malformed playlist,
 finite stream, encryption, sequence reset, stalled sequence, missing media,

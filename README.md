@@ -218,7 +218,11 @@ Current native milestone:
 - detects route loss and callback stalls, retries the exact configured route with
   verification and bounded backoff, restores continuous-capture intent, and writes
   ordered durable incident JSONL; optional encoder-ingest and public-egress endpoints
-  provide fresh-payload verification to the desktop and remote alert path, with the
+  provide fresh, exact-role, production-eligible payload verification to the desktop,
+  remote alert, staged-proof, and signed-acceptance paths; proof rejects an egress
+  peer bound to the production Mac and preserves the actual local/remote peer plus
+  stable observer/software identity and role-specific
+  encoder/HLS progression evidence, with the
   dependency-free authenticated OBS WebSocket bridge exposing exact stream and
   program-audio-carrier state at a loopback encoder-health endpoint (see
   [`encoder/README.md`](encoder/README.md)), and the independently deployable HLS

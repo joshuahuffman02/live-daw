@@ -14,7 +14,8 @@ key_path="${fixture_root}/operator"
 trusted_signers="${fixture_root}/allowed_signers"
 bundle="${fixture_root}/sermon-acceptance"
 /usr/bin/ssh-keygen -q -t ed25519 -N "" -f "${key_path}"
-print -r -- "operator@example.test $(<"${key_path}.pub")" > "${trusted_signers}"
+operator_public_key="$(/bin/cat "${key_path}.pub")"
+print -r -- "operator@example.test ${operator_public_key}" > "${trusted_signers}"
 /bin/mkdir "${bundle}"
 
 source "${script_directory}/test-support/create-production-evidence-fixtures.sh"
@@ -36,13 +37,21 @@ print -r -- '{"details":{"state":"healthy"},"kind":"engine-healthy","message":"E
 write_stream_health_fixture() {
   local output="$1"
   /usr/bin/awk 'BEGIN {
-    print "checkedAtMs\tprobe\tstate\tresponseTimestampMs\tageMs\thealthy\tstreaming\taudioActive\tdetail"
+    print "checkedAtMs\tprobe\tendpointPeer\tobserverKind\tformatVersion\tproductionEligible\tobserverIdentity\tsoftwareVersion\tplaybackHost\tmediaSequence\tdecodedAudioSamples\tauthenticated\tencoderProgressing\tencoderIntervalClean\tstate\tresponseTimestampMs\tageMs\thealthy\tstreaming\taudioActive\tdetail"
     base = 1780000000000
     for (offset = 0; offset <= 7230000; offset += 2000) {
       checked = base + offset
       response = checked - 1000
-      print checked "\tencoder\thealthy\t" response "\t1000\ttrue\ttrue\ttrue\tfresh live payload"
-      print checked "\tegress\thealthy\t" response "\t1000\ttrue\ttrue\ttrue\tfresh live payload"
+      sequence = 100 + int(offset / 4000)
+      print checked \
+        "\tencoder\t127.0.0.1\tautomix-obs-encoder-health\t1\ttrue" \
+        "\tAutoMix Program\t32.2.1\t-\t-\t-\ttrue\ttrue\ttrue\thealthy\t" \
+        response "\t1000\ttrue\ttrue\ttrue\tfresh live payload"
+      print checked \
+        "\tegress\t10.88.0.2\tautomix-hls-egress-health\t1\ttrue" \
+        "\toffsite-cellular\tffmpeg version fixture\tcdn.example.test\t" \
+        sequence "\t1024\t-\t-\t-\thealthy\t" response \
+        "\t1000\ttrue\ttrue\ttrue\tfresh live payload"
     }
   }' > "${output}"
 }

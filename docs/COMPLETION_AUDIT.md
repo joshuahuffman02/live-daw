@@ -17,7 +17,7 @@ hardware proof.
 | Worship roles and stereo linking | Role profiles for speech, vocals, guitars, bass, drums, keys, percussion, and playback; linked detector/control tests; profile/preflight coverage tests | Verified in deterministic and native simulation tests. |
 | Latency and lip-sync reporting | Fixed limiter latency impulse test; native route estimate and persisted measured A/V path; `docs/LATENCY_AND_LIPSYNC.md` | Calculation/reporting verified. End-to-end camera/encoder measurement and multi-hour drift observation require the real chain. |
 | Continuous raw/program recording | Preallocated SPSC recording path, 60-second checkpoint segments, capacity/retention controls, remapped-input-order and no-allocation tests; staged full-window recorder; `ContinuousRecordingProofReport` segment/frame/capacity verifier | Software and the headless proof integration are verified. Current internal disk still has insufficient space for the two-hour 64+2-channel hardware run. |
-| Encoder/public-egress health, device recovery, relaunch, incident logging | Health contract and alert tests; authenticated OBS WebSocket bridge with advancing counters and exact track/meter binding; independently deployable public HLS observer requiring public-peer sequence advancement, newest-segment retrieval, and decoded audio; both LaunchAgent installers; 25 OBS plus 26 egress protocol/state/server tests; exact-route recovery/backoff; app LaunchAgent; incident JSONL; `docs/RUNTIME_RESILIENCE.md` | Concrete encoder and public-playback observer software paths are verified. The venue still needs its real BlackHole/capture input, authenticated OBS configuration, offsite/VPN egress deployment, real live stream, and crash/device drills. |
+| Encoder/public-egress health, device recovery, relaunch, incident logging | Exact-role production health and signed-evidence contract tests; authenticated OBS WebSocket bridge with advancing counters and exact track/meter binding; independently deployable public HLS observer requiring public-peer sequence advancement, newest-segment retrieval, and decoded audio; signed proof binds actual endpoint peer, observer/software identity, and role-specific provenance; both LaunchAgent installers; 26 OBS plus 26 egress protocol/state/server tests; exact-route recovery/backoff; app LaunchAgent; incident JSONL; `docs/RUNTIME_RESILIENCE.md` | Concrete encoder and public-playback observer software paths are verified. The venue still needs its real BlackHole/capture input, authenticated OBS configuration, offsite/VPN egress deployment, real live stream, and crash/device drills. |
 | Separate-device drift mitigation/shared clock | Bounded `AsyncOutputClock`, ring telemetry, correction-limit gates, route clock preflight, stability-report tests | Algorithm and gates verified. Real independent-device or Aggregate Device run remains hardware evidence. |
 | Reproducible replay/evaluation and decision log | `appliance/tools/replay_eval.cpp`; deterministic self-test; CRC/config/metrics/20 Hz trace contract in `docs/REPLAY_EVALUATION.md` | Harness verified. Promotion still requires representative recorded services and operator-approved references. |
 | SHADOW-first progressive autonomy | Candidate-only shadow behavior tests; venue profiles default SHADOW on; native one-second 64-channel candidate-decision JSONL; semantic coverage/route/non-application verifier; manifest/commit-bound `rollout-observation` evidence; `docs/STAGED_ROLLOUT.md` | Workflow and signed promotion gates are verified. An approved bundle now requires a full, continuous, non-simulated native SHADOW capture, supervised service, and reviewed real Planning Center cue trace. Those venue events have not yet occurred. |
@@ -33,7 +33,7 @@ hardware proof.
 
 - Deterministic DSP: **117 passed, 0 failed**.
 - Replay evaluator: self-test passed.
-- Native XCTest: **252 passed, 0 failed**.
+- Native XCTest: **255 passed, 0 failed**.
 - Remote monitor: static/auth/pairing/cookie, heartbeat, snapshot-freshness,
   SAFE-release confirmation, bounded command timeout, and SSE smoke passed.
 - Remote browser control safety: **6 passed, 0 failed** for forward-only timestamp
@@ -43,7 +43,7 @@ hardware proof.
   heartbeat validation, startup/restart defaults, short primary leases, manual-only
   return, relay acknowledgement binding, controller state, and private operator
   control/status.
-- OBS encoder-health bridge: **25 passed, 0 failed** for authenticated WebSocket v5
+- OBS encoder-health bridge: **26 passed, 0 failed** for authenticated WebSocket v5
   negotiation, advancing encoder counters, exact name/UUID program-input track and
   carrier binding, honest observation age, stale and malformed observations,
   immediate stop/reconnect failure, recovery/session-invalidated behavior, socket

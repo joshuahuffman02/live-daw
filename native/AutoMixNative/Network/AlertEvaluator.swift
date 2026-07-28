@@ -34,22 +34,148 @@ struct StreamEndpointHealth: Equatable, Sendable {
 }
 
 struct StreamHealthPayload: Codable, Equatable, Sendable {
+    var formatVersion: Int? = nil
+    var kind: String? = nil
+    var productionEligible: Bool? = nil
     var healthy: Bool
     var streaming: Bool?
     var audioActive: Bool?
     var timestampMs: Int64
     var detail: String?
+    var observerSite: String? = nil
+    var playbackHost: String? = nil
+    var mediaSequence: Int64? = nil
+    var decodedAudioSamples: Int? = nil
+    var ffmpegVersion: String? = nil
+    var authenticated: Bool? = nil
+    var obsStudioVersion: String? = nil
+    var audioInput: String? = nil
+    var encoderProgressing: Bool? = nil
+    var encoderIntervalClean: Bool? = nil
+}
+
+enum StreamHealthProbeRole: Sendable {
+    case encoder
+    case egress
+
+    var expectedKind: String {
+        switch self {
+        case .encoder: return "automix-obs-encoder-health"
+        case .egress: return "automix-hls-egress-health"
+        }
+    }
+
+    func provenanceFailure(_ payload: StreamHealthPayload) -> String? {
+        guard payload.formatVersion == 1, payload.kind == expectedKind else {
+            return "wrong stream-health observer contract"
+        }
+        guard payload.productionEligible == true else {
+            return "observer is not production eligible"
+        }
+        guard payload.streaming == true, payload.audioActive == true else {
+            return "observer does not prove live audio transport"
+        }
+
+        switch self {
+        case .encoder:
+            guard payload.authenticated == true else {
+                return "OBS observer is not authenticated"
+            }
+            guard payload.encoderProgressing == true,
+                  payload.encoderIntervalClean == true
+            else {
+                return "OBS encoder provenance is unhealthy"
+            }
+            guard let identity = payload.audioInput?.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ), Self.isBoundedText(identity, maximum: 512) else {
+                return "OBS observer has no bound program input"
+            }
+            guard let version = payload.obsStudioVersion?.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ), Self.isBoundedText(version, maximum: 512) else {
+                return "OBS Studio version is missing"
+            }
+        case .egress:
+            guard let site = payload.observerSite?.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ), Self.isBoundedText(site, maximum: 512) else {
+                return "egress observer site is missing"
+            }
+            guard let host = payload.playbackHost?.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ), Self.isBoundedText(host, maximum: 253),
+                  !Self.isLoopbackOrLocalhost(host) else {
+                return "public playback hostname is missing"
+            }
+            guard let version = payload.ffmpegVersion,
+                  Self.isBoundedText(version, maximum: 512),
+                  version.hasPrefix("ffmpeg version ")
+            else {
+                return "egress decode provenance is incomplete"
+            }
+            guard let sequence = payload.mediaSequence, sequence >= 0,
+                  let samples = payload.decodedAudioSamples, samples > 0
+            else {
+                return "egress decode provenance is incomplete"
+            }
+        }
+        return nil
+    }
+
+    static func isCanonicalLoopback(_ rawHost: String) -> Bool {
+        let host = normalizedHost(rawHost)
+        return host == "127.0.0.1" || host == "::1"
+            || host == "0:0:0:0:0:0:0:1"
+    }
+
+    static func isLoopbackOrLocalhost(_ rawHost: String) -> Bool {
+        let host = normalizedHost(rawHost)
+        return host == "localhost"
+            || host.hasSuffix(".localhost")
+            || host.hasPrefix("localhost.")
+            || host.hasPrefix("127.")
+            || host == "0.0.0.0"
+            || host == "::"
+            || host == "0:0:0:0:0:0:0:0"
+            || host == "::1"
+            || host == "0:0:0:0:0:0:0:1"
+            || host.hasPrefix("::ffff:127.")
+            || host.hasPrefix("0:0:0:0:0:ffff:127.")
+    }
+
+    private static func normalizedHost(_ rawHost: String) -> String {
+        let host = rawHost.lowercased()
+        if host.hasPrefix("["), host.hasSuffix("]") {
+            return String(host.dropFirst().dropLast())
+        }
+        return host
+    }
+
+    private static func isBoundedText(_ value: String, maximum: Int) -> Bool {
+        !value.isEmpty
+            && value.count <= maximum
+            && value.unicodeScalars.allSatisfy {
+                !CharacterSet.controlCharacters.contains($0)
+            }
+    }
 }
 
 enum StreamHealthAssessment {
+    static let maximumPayloadBytes = 65_536
+
     static func assess(
         statusCode: Int,
         data: Data,
         nowMs: Int64,
-        maxPayloadAgeMs: Int64 = 15_000
+        maxPayloadAgeMs: Int64 = 15_000,
+        role: StreamHealthProbeRole? = nil
     ) -> StreamEndpointHealth {
         guard (200...299).contains(statusCode) else {
             return unhealthy("HTTP \(statusCode)", nowMs: nowMs)
+        }
+        guard !data.isEmpty, data.count <= maximumPayloadBytes else {
+            return unhealthy("invalid health JSON", nowMs: nowMs)
         }
 
         let payload: StreamHealthPayload
@@ -57,6 +183,10 @@ enum StreamHealthAssessment {
             payload = try JSONDecoder().decode(StreamHealthPayload.self, from: data)
         } catch {
             return unhealthy("invalid health JSON", nowMs: nowMs)
+        }
+
+        if let role, let failure = role.provenanceFailure(payload) {
+            return unhealthy(failure, nowMs: nowMs)
         }
 
         let ageMs = nowMs - payload.timestampMs
@@ -126,15 +256,43 @@ actor StreamHealthProbe {
         self.session = session
     }
 
-    func probe(urlString: String, nowMs: Int64) async -> StreamEndpointHealth {
+    func probe(
+        urlString: String,
+        nowMs: Int64,
+        role: StreamHealthProbeRole? = nil
+    ) async -> StreamEndpointHealth {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .disabled }
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https",
-              url.host != nil
+              let host = url.host?.lowercased()
         else {
             return StreamHealthAssessment.invalidURL(nowMs: nowMs)
+        }
+        if let role {
+            guard url.user == nil,
+                  url.password == nil,
+                  url.query == nil,
+                  url.fragment == nil,
+                  url.path == "/health"
+            else {
+                return StreamHealthAssessment.invalidURL(nowMs: nowMs)
+            }
+            switch role {
+            case .encoder where !StreamHealthProbeRole.isCanonicalLoopback(host):
+                return StreamHealthAssessment.requestFailed(
+                    "encoder health must use a numeric loopback endpoint",
+                    nowMs: nowMs
+                )
+            case .egress where StreamHealthProbeRole.isLoopbackOrLocalhost(host):
+                return StreamHealthAssessment.requestFailed(
+                    "public egress health must use a remote observer endpoint",
+                    nowMs: nowMs
+                )
+            default:
+                break
+            }
         }
 
         var request = URLRequest(url: url)
@@ -151,10 +309,17 @@ actor StreamHealthProbe {
                     nowMs: nowMs
                 )
             }
+            guard http.url == url else {
+                return StreamHealthAssessment.requestFailed(
+                    "health endpoint redirects are not allowed",
+                    nowMs: nowMs
+                )
+            }
             return StreamHealthAssessment.assess(
                 statusCode: http.statusCode,
                 data: data,
-                nowMs: nowMs
+                nowMs: nowMs,
+                role: role
             )
         } catch {
             return StreamHealthAssessment.requestFailed(

@@ -472,5 +472,146 @@ final class AlertEvaluatorTests: XCTestCase {
             ).detail,
             "invalid health JSON"
         )
+        XCTAssertEqual(
+            StreamHealthAssessment.assess(
+                statusCode: 200,
+                data: Data(
+                    repeating: 0x20,
+                    count: StreamHealthAssessment.maximumPayloadBytes + 1
+                ),
+                nowMs: 1
+            ).detail,
+            "invalid health JSON"
+        )
+    }
+
+    func testRoleSpecificStreamHealthRequiresBoundProductionObserver() throws {
+        let generic = try JSONSerialization.data(withJSONObject: [
+            "healthy": true,
+            "streaming": true,
+            "audioActive": true,
+            "timestampMs": 100_000
+        ])
+        XCTAssertEqual(
+            StreamHealthAssessment.assess(
+                statusCode: 200,
+                data: generic,
+                nowMs: 100_100,
+                role: .encoder
+            ).detail,
+            "wrong stream-health observer contract"
+        )
+
+        let rehearsalEgress = try JSONSerialization.data(withJSONObject: [
+            "formatVersion": 1,
+            "kind": "automix-hls-egress-health",
+            "productionEligible": false,
+            "healthy": true,
+            "streaming": true,
+            "audioActive": true,
+            "timestampMs": 100_000,
+            "observerSite": "fixture-offsite",
+            "playbackHost": "cdn.example.test",
+            "mediaSequence": 42,
+            "decodedAudioSamples": 1024,
+            "ffmpegVersion": "ffmpeg version fixture"
+        ])
+        XCTAssertEqual(
+            StreamHealthAssessment.assess(
+                statusCode: 200,
+                data: rehearsalEgress,
+                nowMs: 100_100,
+                role: .egress
+            ).detail,
+            "observer is not production eligible"
+        )
+    }
+
+    func testRoleSpecificStreamHealthAcceptsEncoderAndEgressProvenance() throws {
+        let encoder = try JSONSerialization.data(withJSONObject: [
+            "formatVersion": 1,
+            "kind": "automix-obs-encoder-health",
+            "productionEligible": true,
+            "healthy": true,
+            "streaming": true,
+            "audioActive": true,
+            "timestampMs": 100_000,
+            "authenticated": true,
+            "obsStudioVersion": "32.2.1",
+            "audioInput": "AutoMix Program",
+            "encoderProgressing": true,
+            "encoderIntervalClean": true
+        ])
+        XCTAssertEqual(
+            StreamHealthAssessment.assess(
+                statusCode: 200,
+                data: encoder,
+                nowMs: 100_100,
+                role: .encoder
+            ).state,
+            .healthy
+        )
+
+        let egress = try JSONSerialization.data(withJSONObject: [
+            "formatVersion": 1,
+            "kind": "automix-hls-egress-health",
+            "productionEligible": true,
+            "healthy": true,
+            "streaming": true,
+            "audioActive": true,
+            "timestampMs": 100_000,
+            "observerSite": "offsite-cellular",
+            "playbackHost": "cdn.example.test",
+            "mediaSequence": 42,
+            "decodedAudioSamples": 1024,
+            "ffmpegVersion": "ffmpeg version fixture"
+        ])
+        XCTAssertEqual(
+            StreamHealthAssessment.assess(
+                statusCode: 200,
+                data: egress,
+                nowMs: 100_100,
+                role: .egress
+            ).state,
+            .healthy
+        )
+    }
+
+    func testRoleSpecificHealthURLsEnforceLocalEncoderAndRemoteEgress() async {
+        let probe = StreamHealthProbe()
+        let remoteEncoder = await probe.probe(
+            urlString: "http://10.0.0.2:8421/health",
+            nowMs: 100_000,
+            role: .encoder
+        )
+        XCTAssertTrue(remoteEncoder.detail.contains("numeric loopback"))
+
+        let localEgress = await probe.probe(
+            urlString: "http://127.0.0.1:8422/health",
+            nowMs: 100_000,
+            role: .egress
+        )
+        XCTAssertTrue(localEgress.detail.contains("remote observer"))
+
+        let alternateLoopbackEgress = await probe.probe(
+            urlString: "http://127.0.0.2:8422/health",
+            nowMs: 100_000,
+            role: .egress
+        )
+        XCTAssertTrue(alternateLoopbackEgress.detail.contains("remote observer"))
+
+        let mappedLoopbackEgress = await probe.probe(
+            urlString: "http://[::ffff:127.0.0.1]:8422/health",
+            nowMs: 100_000,
+            role: .egress
+        )
+        XCTAssertTrue(mappedLoopbackEgress.detail.contains("remote observer"))
+
+        let credentialed = await probe.probe(
+            urlString: "http://user:secret@127.0.0.1:8421/health",
+            nowMs: 100_000,
+            role: .encoder
+        )
+        XCTAssertTrue(credentialed.detail.contains("http:// or https://"))
     }
 }

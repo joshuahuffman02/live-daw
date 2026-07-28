@@ -65,23 +65,54 @@ result, and allow return to primary only by operator action. See
 ## 4. Encoder and public-egress probes
 
 The optional Encoder Health and Public Egress fields poll every two seconds while the
-audio engine is running. Each URL must be token-free HTTP(S) and return a fresh JSON
-document:
+audio engine is running. Each URL must be token-free HTTP(S), use the exact
+`/health` path, avoid redirects, and return a fresh role-specific JSON document.
+Encoder health is confined to numeric loopback:
 
 ```json
 {
+  "formatVersion": 1,
+  "kind": "automix-obs-encoder-health",
+  "productionEligible": true,
   "healthy": true,
   "streaming": true,
   "audioActive": true,
   "timestampMs": 1785182400000,
-  "detail": "primary ingest live"
+  "detail": "OBS streaming with fresh program carrier",
+  "authenticated": true,
+  "obsStudioVersion": "32.2.1",
+  "audioInput": "AutoMix Program",
+  "encoderProgressing": true,
+  "encoderIntervalClean": true
+}
+```
+
+Public egress must use a remote, non-loopback observer:
+
+```json
+{
+  "formatVersion": 1,
+  "kind": "automix-hls-egress-health",
+  "productionEligible": true,
+  "healthy": true,
+  "streaming": true,
+  "audioActive": true,
+  "timestampMs": 1785182400000,
+  "detail": "public HLS sequence advanced and decoded",
+  "observerSite": "offsite-cellular",
+  "playbackHost": "cdn.example.test",
+  "mediaSequence": 19284,
+  "decodedAudioSamples": 2048,
+  "ffmpegVersion": "ffmpeg version 8.1.2"
 }
 ```
 
 `timestampMs` is Unix epoch milliseconds and must be no more than 15 seconds old.
-HTTP errors, malformed/stale responses, `healthy:false`, `streaming:false`, or
-`audioActive:false` become a critical remote alert after three sustained seconds and
-are written to the incident journal. A fresh healthy response records recovery.
+HTTP errors, redirects, oversized or malformed/stale responses, a wrong role,
+rehearsal-only provenance, missing exact-input/decode evidence, `healthy:false`,
+`streaming:false`, or `audioActive:false` become a critical remote alert after three
+sustained seconds and are written to the incident journal. A fresh healthy response
+records recovery.
 
 Use an encoder/sidecar endpoint for the first probe and an independently observed
 platform/CDN playback endpoint for the second. A generic web page returning HTTP 200
@@ -112,11 +143,15 @@ content. Keep the full HLS URL in the observer's owner-only file and expose only
 token-free `/health` endpoint over a VPN/firewall ACL. Deployment is documented in
 `egress/README.md`.
 
-The staged proof persists the payload booleans, endpoint timestamp, calculated age,
-and request timestamp for both probes. The signed-acceptance contract in
-`STREAM_HEALTH_EVIDENCE.md` requires fresh, gap-bounded, all-healthy coverage across
-the requested soundcheck and stability window; one isolated unhealthy observation
-remains reviewable but cannot be promoted.
+The staged proof rejects peers bound to the production Mac, then persists the actual
+connected peer, exact observer kind/version, production eligibility, stable observer
+identity/software, role-specific
+authentication or HLS decode provenance, payload booleans, endpoint timestamp,
+calculated age, and request timestamp. The signed-acceptance contract in
+`STREAM_HEALTH_EVIDENCE.md` requires fresh, advancing, provenance-bound,
+gap-bounded, all-healthy coverage across the requested soundcheck and stability
+window; one isolated unhealthy observation remains reviewable but cannot be
+promoted.
 
 ## Acceptance drill
 

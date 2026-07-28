@@ -94,18 +94,26 @@ Example healthy payload:
 {
   "formatVersion": 1,
   "kind": "automix-obs-encoder-health",
+  "productionEligible": true,
   "healthy": true,
   "streaming": true,
   "audioActive": true,
   "timestampMs": 1785277200000,
-  "detail": "OBS 32.2.1 streaming; AutoMix Program carrier fresh on track 1; peak -31.4 dBFS"
+  "detail": "OBS 32.2.1 streaming; AutoMix Program carrier fresh on track 1; peak -31.4 dBFS",
+  "authenticated": true,
+  "obsStudioVersion": "32.2.1",
+  "audioInput": "AutoMix Program",
+  "encoderProgressing": true,
+  "encoderIntervalClean": true
 }
 ```
 
 Extra diagnostic fields include connection/authentication state, OBS versions,
 reconnect state, stream/track/meter ages, selected input and audio track, encoder
 counter progress, skipped frames, congestion, peak level, and session generation.
-AutoMix safely ignores those additions.
+AutoMix and the signed proof path require the exact contract, production eligibility,
+authentication, OBS version, bound input, and clean encoder progress shown above;
+the remaining diagnostics stay explanatory.
 
 ## Manual run
 
@@ -118,8 +126,9 @@ python3 encoder/obs_health_bridge.py \
 ```
 
 Authentication is mandatory by default. `--allow-unauthenticated` exists only to
-diagnose a rehearsal OBS instance and deliberately cannot produce
-`healthy:true`.
+diagnose a rehearsal OBS instance and deliberately reports
+`productionEligible:false`, so it cannot produce `healthy:true` or satisfy native
+or signed production proof.
 
 ## Verify
 

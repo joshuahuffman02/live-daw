@@ -80,27 +80,63 @@ if ! /usr/bin/awk \
     failed = 1
     exit 1
   }
+  function is_local_host(value, host) {
+    host = tolower(value)
+    return host == "localhost" ||
+      host ~ /^localhost[.]/ ||
+      host ~ /[.]localhost$/ ||
+      host ~ /^127[.]/ ||
+      host == "0.0.0.0" ||
+      host == "::" ||
+      host == "0:0:0:0:0:0:0:0" ||
+      host == "::1" ||
+      host == "0:0:0:0:0:0:0:1" ||
+      host ~ /^::ffff:127[.]/ ||
+      host ~ /^0:0:0:0:0:ffff:127[.]/
+  }
   NR == 1 {
-    expected = "checkedAtMs\tprobe\tstate\tresponseTimestampMs\tageMs\thealthy\tstreaming\taudioActive\tdetail"
+    expected = "checkedAtMs\tprobe\tendpointPeer\tobserverKind\tformatVersion\tproductionEligible\tobserverIdentity\tsoftwareVersion\tplaybackHost\tmediaSequence\tdecodedAudioSamples\tauthenticated\tencoderProgressing\tencoderIntervalClean\tstate\tresponseTimestampMs\tageMs\thealthy\tstreaming\taudioActive\tdetail"
     if ($0 != expected) reject("unexpected TSV header")
     next
   }
   {
-    if (NF != 9) reject("row " NR " must contain exactly nine tab-separated fields")
+    if (NF != 21) reject("row " NR " must contain exactly 21 tab-separated fields")
     checked = $1
     probe = $2
-    state = $3
-    response = $4
-    age = $5
-    healthy = $6
-    streaming = $7
-    audio = $8
-    detail = $9
+    endpoint_peer = $3
+    observer_kind = $4
+    format_version = $5
+    production_eligible = $6
+    observer_identity = $7
+    software_version = $8
+    playback_host = $9
+    media_sequence = $10
+    decoded_audio_samples = $11
+    authenticated = $12
+    encoder_progressing = $13
+    encoder_interval_clean = $14
+    state = $15
+    response = $16
+    age = $17
+    healthy = $18
+    streaming = $19
+    audio = $20
+    detail = $21
 
     if (checked !~ /^[0-9]+$/ || checked < 1000000000000)
       reject("row " NR " has an invalid checkedAtMs")
     if (probe != "encoder" && probe != "egress")
       reject("row " NR " has an unknown probe")
+    if (endpoint_peer == "" || length(endpoint_peer) > 128 ||
+        endpoint_peer ~ /[[:space:][:cntrl:]]/)
+      reject(probe " row " NR " has an invalid endpoint peer")
+    if (format_version != "1" || production_eligible != "true")
+      reject(probe " row " NR " is not production-eligible contract version 1")
+    if (observer_identity !~ /[^[:space:]]/ || length(observer_identity) > 512 ||
+        observer_identity ~ /[[:cntrl:]]/ ||
+        software_version !~ /[^[:space:]]/ || length(software_version) > 512 ||
+        software_version ~ /[[:cntrl:]]/)
+      reject(probe " row " NR " lacks bounded observer identity/version evidence")
     if (state != "healthy")
       reject(probe " row " NR " is not healthy")
     if (response !~ /^[0-9]+$/ || age !~ /^-?[0-9]+$/)
@@ -109,20 +145,67 @@ if ! /usr/bin/awk \
       reject(probe " row " NR " does not prove healthy, streaming, and active audio")
     if (age < -5000 || age > 15000 || checked - response != age)
       reject(probe " row " NR " has stale, future, or inconsistent response time")
-    if (detail == "")
+    if (detail !~ /[^[:space:]]/ || length(detail) > 512 ||
+        detail ~ /[[:cntrl:]]/)
       reject(probe " row " NR " has no detail")
+
+    if (probe == "encoder") {
+      if (observer_kind != "automix-obs-encoder-health")
+        reject("encoder row " NR " has the wrong observer kind")
+      if (endpoint_peer !~ /^127[.]/)
+        reject("encoder row " NR " did not come from numeric loopback")
+      if (playback_host != "-" || media_sequence != "-" ||
+          decoded_audio_samples != "-")
+        reject("encoder row " NR " has invalid public-egress sentinels")
+      if (authenticated != "true" || encoder_progressing != "true" ||
+          encoder_interval_clean != "true")
+        reject("encoder row " NR " does not prove authenticated, clean encoder progress")
+    } else {
+      if (observer_kind != "automix-hls-egress-health")
+        reject("egress row " NR " has the wrong observer kind")
+      if (is_local_host(endpoint_peer))
+        reject("egress row " NR " came from a local observer")
+      if (authenticated != "-" || encoder_progressing != "-" ||
+          encoder_interval_clean != "-")
+        reject("egress row " NR " has invalid OBS sentinels")
+      if (playback_host !~ /[^[:space:]]/ || length(playback_host) > 253 ||
+          is_local_host(playback_host))
+        reject("egress row " NR " lacks a remote playback host")
+      if (media_sequence !~ /^[0-9]+$/ || media_sequence < 0)
+        reject("egress row " NR " lacks a valid media sequence")
+      if (decoded_audio_samples !~ /^[1-9][0-9]*$/)
+        reject("egress row " NR " lacks decoded audio evidence")
+      if (software_version !~ /^ffmpeg version /)
+        reject("egress row " NR " lacks the exact FFmpeg observer version")
+    }
 
     if (!(probe in count)) {
       first[probe] = checked
+      first_response[probe] = response
+      first_identity[probe] = observer_identity
+      first_software[probe] = software_version
+      if (probe == "egress") first_sequence[probe] = media_sequence
     } else {
       gap = checked - previous[probe]
       if (gap <= 0)
         reject(probe " timestamps are not strictly increasing")
       if (gap > maximum_gap_ms)
         reject(probe " observation gap exceeds " maximum_gap_ms " ms")
+      if (response < previous_response[probe])
+        reject(probe " response timestamps moved backward")
+      if (observer_identity != first_identity[probe])
+        reject(probe " observer identity changed during the proof")
+      if (software_version != first_software[probe])
+        reject(probe " observer software changed during the proof")
+      if (probe == "egress" && media_sequence < previous_sequence[probe])
+        reject("egress media sequence moved backward")
     }
     previous[probe] = checked
+    previous_response[probe] = response
+    if (probe == "egress") previous_sequence[probe] = media_sequence
     last[probe] = checked
+    last_response[probe] = response
+    if (probe == "egress") last_sequence[probe] = media_sequence
     count[probe]++
   }
   END {
@@ -139,10 +222,20 @@ if ! /usr/bin/awk \
           " ms; requires at least " minimum_coverage_ms " ms" > "/dev/stderr"
         exit 1
       }
+      if (last_response[probe] <= first_response[probe]) {
+        print "Stream-health evidence invalid: " probe \
+          " response timestamp never advanced" > "/dev/stderr"
+        exit 1
+      }
+    }
+    if (last_sequence["egress"] <= first_sequence["egress"]) {
+      print "Stream-health evidence invalid: egress media sequence never advanced" \
+        > "/dev/stderr"
+      exit 1
     }
   }
 ' "${stream_health_path}"; then
   exit 5
 fi
 
-print "Stream health verified: phase=${scene}, requested=$(( soundcheck_seconds + stability_seconds ))s, gap<=${maximum_gap_ms}ms, all encoder/egress observations healthy."
+print "Stream health verified: phase=${scene}, requested=$(( soundcheck_seconds + stability_seconds ))s, gap<=${maximum_gap_ms}ms, provenance-bound encoder/egress observers remained healthy and advanced."

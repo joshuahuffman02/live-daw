@@ -563,7 +563,24 @@ class EncoderHealthStateTests(unittest.TestCase):
         self.assertEqual(payload["peakDbfs"], -120.0)
         self.assertEqual(payload["formatVersion"], FORMAT_VERSION)
         self.assertEqual(payload["kind"], HEALTH_KIND)
+        self.assertTrue(payload["productionEligible"])
         self.assertIn("carrier fresh", payload["detail"])
+
+    def test_rehearsal_configuration_cannot_report_production_health(self) -> None:
+        state = EncoderHealthState(
+            AudioInputSelector(name="Program Audio"),
+            maximum_status_age_ms=3000,
+            maximum_meter_age_ms=1000,
+            production_eligible=False,
+        )
+        self.connect_and_stream(state)
+        self.meter(state, peak=0.0)
+
+        payload = state.payload()
+
+        self.assertFalse(payload["healthy"])
+        self.assertFalse(payload["productionEligible"])
+        self.assertIn("cannot produce production health", payload["detail"])
 
     def test_wrong_or_inactive_audio_input_fails_closed(self) -> None:
         state = self.make_state()

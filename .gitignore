@@ -3,6 +3,7 @@
 
 # Local browser/test captures
 .playwright-mcp/
+.codex/
 
 # Web build products and credentials
 web/node_modules/
@@ -16,6 +17,7 @@ web/.env.*
 # Native/C++ local build products
 appliance/build/
 native/build/
+native/build-derived/
 DerivedData/
 *.xcresult
 *.xcuserstate
