@@ -134,6 +134,13 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   route properties, requires every embedded soundcheck/stability report check to pass,
   requires the expected SAFE/FREEZE proof-control states, and exits nonzero unless the
   run is real HD96/Dante hardware proof.
+  Staged production proof additionally records all 64 raw inputs plus program L/R
+  throughout the complete stability window. A separate semantic report re-opens every
+  finalized WAV segment and requires exact 66-channel/96 kHz float format, checkpoint
+  and file-length agreement, persisted/captured frame agreement, zero recorder drops,
+  maintained free-space reserve, an isolated real Core Audio route, and at least two
+  recorded hours. Short commissioning runs are labeled rehearsal-only and cannot mint
+  production proof.
 - SAFE scope: operator/watchdog SAFE uses fixed source-role gains and conservative
   pans on raw inputs, normalizes the configured channel set by energy, and feeds the
   existing true-peak limiter. It does not depend on channel-strip DSP or a fresh brain

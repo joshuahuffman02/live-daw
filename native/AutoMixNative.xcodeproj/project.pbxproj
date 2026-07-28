@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		02BBC65E9B44F9E15AEDAD56 /* ContinuousRecordingProofReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82C96F9EDDE6E9249C9B0D19 /* ContinuousRecordingProofReport.swift */; };
 		1135425F047CB5EA873AE85F /* SoundcheckReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1B9F59BF8757A7E53B79C7D /* SoundcheckReport.swift */; };
 		12747B785F0D4CFBB339DC40 /* AutoMixEngineBridgeSimulationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 049D232C290988C7D7198D60 /* AutoMixEngineBridgeSimulationTests.swift */; };
 		136A49E37B150348AF83C513 /* RehearsalStartGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9C030A40A3E3D363DD8FEF /* RehearsalStartGateTests.swift */; };
@@ -76,6 +77,7 @@
 		5DFA983BCED377F74DB60A99 /* MonitorSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorSmoke.swift; sourceTree = "<group>"; };
 		6B8396F6223BFD984934D499 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		7450F79496F6DDA9B5B688A4 /* MonitorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorBridge.swift; sourceTree = "<group>"; };
+		82C96F9EDDE6E9249C9B0D19 /* ContinuousRecordingProofReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuousRecordingProofReport.swift; sourceTree = "<group>"; };
 		8E7CC84C52E7301B04085D5B /* AutoMixNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AutoMixNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9A8AA569B2AEF23646F90297 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		9B3C73AE9B2C66B7AF280143 /* PairingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingStore.swift; sourceTree = "<group>"; };
@@ -201,6 +203,7 @@
 			children = (
 				129612A78B049535B28439D8 /* AppModel.swift */,
 				3B650A957E81DB727D76A4F8 /* ChannelRole.swift */,
+				82C96F9EDDE6E9249C9B0D19 /* ContinuousRecordingProofReport.swift */,
 				2C519B8722729D5A030D987A /* CoreAudioFullCheckManifest.swift */,
 				F1B9F59BF8757A7E53B79C7D /* SoundcheckReport.swift */,
 			);
@@ -345,6 +348,7 @@
 				CB607727F710CFAFA7863CF4 /* AutoMixNativeApp.swift in Sources */,
 				A52336E238C48D3F7AE1F8FE /* ChannelRole.swift in Sources */,
 				50E78121ABE3681487AFDA1F /* ContentView.swift in Sources */,
+				02BBC65E9B44F9E15AEDAD56 /* ContinuousRecordingProofReport.swift in Sources */,
 				7DB26AEB8F7A5B34D4BA72F7 /* CoreAudioFullCheckManifest.swift in Sources */,
 				74A82654CFE2B49BE53E7FD2 /* HTTPConnection.swift in Sources */,
 				1A8CE5FA547F86D045B64325 /* HTTPRequest.swift in Sources */,

@@ -33,6 +33,7 @@ struct AutoMixNativeApp: App {
         let runsCoreAudioStability = CommandLine.arguments.contains("--core-audio-stability")
         let runsCoreAudioFullCheck = CommandLine.arguments.contains("--core-audio-full-check")
         let verifiesFullCheck = CommandLine.arguments.contains("--verify-full-check")
+        let verifiesContinuousRecording = CommandLine.arguments.contains("--verify-continuous-recording")
         let verifiesRealtimeNoAllocation = CommandLine.arguments.contains("--verify-realtime-no-allocation")
         let writesServiceProfile = CommandLine.arguments.contains("--write-service-profile")
         let writesDeviceInventory = CommandLine.arguments.contains("--write-device-inventory")
@@ -62,6 +63,9 @@ struct AutoMixNativeApp: App {
         }
         if verifiesFullCheck {
             verifyCoreAudioFullCheckManifest()
+        }
+        if verifiesContinuousRecording {
+            verifyContinuousRecordingProof()
         }
         if verifiesRealtimeNoAllocation {
             verifyRealtimeNoAllocation(bridge: bridge)
@@ -109,11 +113,15 @@ struct AutoMixNativeApp: App {
               Run inventory, preflight, soundcheck, stability, manifest generation, and proof verification.
           --smoke-test --verify-full-check --manifest PATH
               Verify a full-check manifest and require real Core Audio hardware proof.
+          --smoke-test --verify-continuous-recording --recording-report PATH [--require-production-duration]
+              Verify every continuous-recording WAV segment and optionally require a two-hour hardware proof.
 
         Common options:
           --expected-inputs N
           --soundcheck-seconds N
           --stability-seconds N
+          --continuous-recording
+          --recording-reserve-gb N
           --scene preService|worship|sermon|prayer|postService
           --output-dir PATH
           --profile PATH
@@ -651,7 +659,7 @@ struct AutoMixNativeApp: App {
             }
             let result = try performCoreAudioStability(bridge: bridge, options: options)
             printStabilityResult(result)
-            if !result.report.passed {
+            if !result.passed {
                 Darwin.exit(21)
             }
         } catch {
@@ -676,6 +684,41 @@ struct AutoMixNativeApp: App {
         waitForCallbacks(bridge: bridge, timeout: 5.0)
         let initialOutputLevels = waitForActiveStreamOutput(bridge: bridge, timeout: 5.0)
 
+        var continuousRecordingDirectoryURL: URL?
+        var recordingAvailableBytesAtStart: Int64 = 0
+        var recordingMinimumObservedAvailableBytes: Int64 = 0
+        var recordingRequiredBytesAtStart: Int64 = 0
+        var recordingStoppedUnexpectedly = false
+        var recordingFailureStatus = ""
+        var nextRecordingCapacityCheck = Date.distantFuture
+        if options.continuousRecordingEnabled {
+            let estimate = ContinuousRecordingStorageEstimate(
+                inputChannelCount: options.expectedInputChannels,
+                sampleRate: bridge.sampleRate,
+                plannedDurationHours: options.stabilitySeconds / 3_600.0,
+                minimumReserveBytes: options.recordingMinimumReserveBytes
+            )
+            let availableBytes = try availableCapacityBytes(at: options.outputDirectory)
+            guard estimate.canStart(availableBytes: availableBytes) else {
+                throw CLIValidationError(
+                    "continuous recording needs \(estimate.requiredFreeBytes) bytes for the proof plus reserve; \(availableBytes) bytes are available"
+                )
+            }
+            let directoryURL = options.outputDirectory.appendingPathComponent(
+                "automix-continuous-recording-\(UUID().uuidString.lowercased())",
+                isDirectory: true
+            )
+            try bridge.startContinuousRecording(atDirectoryURL: directoryURL)
+            continuousRecordingDirectoryURL = directoryURL
+            recordingAvailableBytesAtStart = availableBytes
+            recordingMinimumObservedAvailableBytes = availableBytes
+            recordingRequiredBytesAtStart = estimate.requiredFreeBytes
+            nextRecordingCapacityCheck = Date().addingTimeInterval(30.0)
+            print(
+                "Continuous proof recording: \(directoryURL.path) required=\(estimate.requiredFreeBytes) available=\(availableBytes)"
+            )
+        }
+
         let startDropouts = bridge.dropoutCount
         let startCallbackOverruns = bridge.callbackOverrunCount
         let startRenderDeadlineMisses = bridge.renderDeadlineMissCount
@@ -697,6 +740,28 @@ struct AutoMixNativeApp: App {
 
         let startedAt = Date()
         while Date().timeIntervalSince(startedAt) < options.stabilitySeconds {
+            if options.continuousRecordingEnabled {
+                if !bridge.continuousRecording {
+                    recordingStoppedUnexpectedly = true
+                    recordingFailureStatus = bridge.status
+                    break
+                }
+                if Date() >= nextRecordingCapacityCheck {
+                    let availableBytes = try availableCapacityBytes(at: options.outputDirectory)
+                    recordingMinimumObservedAvailableBytes = min(
+                        recordingMinimumObservedAvailableBytes,
+                        availableBytes
+                    )
+                    nextRecordingCapacityCheck = Date().addingTimeInterval(30.0)
+                    if availableBytes < options.recordingMinimumReserveBytes {
+                        recordingStoppedUnexpectedly = true
+                        recordingFailureStatus =
+                            "minimum free-space reserve reached during proof"
+                        bridge.stopContinuousRecording()
+                        break
+                    }
+                }
+            }
             let inputLevels = bridge.inputLevelsDb().map { $0.doubleValue }
             let outputLevels = normalizedStereoLevels(bridge.outputLevelsDb().map { $0.doubleValue })
             for index in 0..<2 {
@@ -732,6 +797,9 @@ struct AutoMixNativeApp: App {
         }
 
         let observedDurationSeconds = Date().timeIntervalSince(startedAt)
+        if options.continuousRecordingEnabled && bridge.continuousRecording {
+            bridge.stopContinuousRecording()
+        }
         let dropoutDelta = bridge.dropoutCount >= startDropouts ? bridge.dropoutCount - startDropouts : 0
         let callbackOverrunDelta = bridge.callbackOverrunCount >= startCallbackOverruns ? bridge.callbackOverrunCount - startCallbackOverruns : 0
         let renderDeadlineMissDelta = bridge.renderDeadlineMissCount >= startRenderDeadlineMisses ? bridge.renderDeadlineMissCount - startRenderDeadlineMisses : 0
@@ -780,7 +848,48 @@ struct AutoMixNativeApp: App {
             extension: "json"
         )
         try writeStabilityReport(report, to: reportURL)
-        return CoreAudioStabilityRunResult(reportURL: reportURL, report: report)
+
+        var continuousRecordingReportURL: URL?
+        var continuousRecordingReport: ContinuousRecordingProofReport?
+        if let recordingDirectoryURL = continuousRecordingDirectoryURL {
+            let proofReport = try ContinuousRecordingProofReport.make(
+                validationSource: AudioValidationSource.infer(
+                    inputDevice: inputSnapshot,
+                    outputDevice: outputSnapshot
+                ),
+                inputDevice: inputSnapshot,
+                outputDevice: outputSnapshot,
+                scene: options.scene,
+                expectedInputChannels: options.expectedInputChannels,
+                detectedInputChannels: bridge.inputChannelCount,
+                sampleRate: bridge.sampleRate,
+                requestedDurationSeconds: options.stabilitySeconds,
+                observedDurationSeconds: observedDurationSeconds,
+                recordingDirectoryURL: recordingDirectoryURL,
+                availableBytesAtStart: recordingAvailableBytesAtStart,
+                minimumObservedAvailableBytes: recordingMinimumObservedAvailableBytes,
+                requiredBytesAtStart: recordingRequiredBytesAtStart,
+                minimumReserveBytes: options.recordingMinimumReserveBytes,
+                capturedFrameCount: UInt64(bridge.continuousRecordingFrameCount),
+                droppedFrameCount: UInt64(bridge.continuousRecordingDroppedFrameCount),
+                reportedSegmentCount: Int(bridge.continuousRecordingSegmentCount),
+                stoppedUnexpectedly: recordingStoppedUnexpectedly,
+                writerStatus: recordingFailureStatus.isEmpty ? bridge.status : recordingFailureStatus
+            )
+            let proofReportURL = recordingDirectoryURL.appendingPathComponent(
+                "continuous-recording-proof.json",
+                isDirectory: false
+            )
+            try writeJSON(proofReport, to: proofReportURL)
+            continuousRecordingReportURL = proofReportURL
+            continuousRecordingReport = proofReport
+        }
+        return CoreAudioStabilityRunResult(
+            reportURL: reportURL,
+            report: report,
+            continuousRecordingReportURL: continuousRecordingReportURL,
+            continuousRecordingReport: continuousRecordingReport
+        )
     }
 
     private func printStabilityResult(_ result: CoreAudioStabilityRunResult) {
@@ -800,6 +909,17 @@ struct AutoMixNativeApp: App {
         )
         if !result.report.passed {
             printFailedChecks(result.report.checks, prefix: "Stability")
+        }
+        if let recordingReport = result.continuousRecordingReport,
+           let recordingReportURL = result.continuousRecordingReportURL {
+            print(
+                "Continuous recording proof: \(recordingReportURL.path) passed=\(recordingReport.passed) productionProofPassed=\(recordingReport.productionProofPassed) frames=\(recordingReport.capturedFrameCount) drops=\(recordingReport.droppedFrameCount) segments=\(recordingReport.segments.count)"
+            )
+            for check in recordingReport.checks where !check.passed {
+                print(
+                    "Continuous recording check failed: \(check.name) expected=\(check.expected) observed=\(check.observed)"
+                )
+            }
         }
     }
 
@@ -884,10 +1004,10 @@ struct AutoMixNativeApp: App {
                 printStabilityResult(stability)
                 manifest.recordStability(
                     reportPath: stability.reportURL.path,
-                    passed: stability.report.passed
+                    passed: stability.passed
                 )
-                guard stability.report.passed else {
-                    manifest.markFailure("stability report did not pass")
+                guard stability.passed else {
+                    manifest.markFailure("stability or continuous recording proof did not pass")
                     try writeAndVerifyFullCheckManifest(manifest, to: manifestURL)
                     Darwin.exit(43)
                 }
@@ -922,6 +1042,41 @@ struct AutoMixNativeApp: App {
         } catch {
             print("Full-check verification failed: \(error.localizedDescription)")
             Darwin.exit(61)
+        }
+    }
+
+    private func verifyContinuousRecordingProof() {
+        do {
+            let path = argumentValue("--recording-report") ?? ""
+            guard !path.isEmpty else {
+                throw CLIValidationError(
+                    "Pass --recording-report <continuous-recording-proof.json> to verify a continuous recording."
+                )
+            }
+            let report = try ContinuousRecordingProofReport.verify(
+                reportAt: URL(fileURLWithPath: path)
+            )
+            print(
+                "Continuous recording verification: \(path) passed=\(report.passed) productionProofPassed=\(report.productionProofPassed)"
+            )
+            for check in report.checks {
+                print(
+                    "Recording proof \(check.name): \(check.passed ? "passed" : "failed") expected=\(check.expected) observed=\(check.observed)"
+                )
+            }
+            guard report.passed else {
+                Darwin.exit(62)
+            }
+            if CommandLine.arguments.contains("--require-production-duration"),
+               !report.productionProofPassed {
+                print(
+                    "Continuous recording verification failed: production proof requires real isolated 64-channel/96 kHz hardware and at least two recorded hours."
+                )
+                Darwin.exit(63)
+            }
+        } catch {
+            print("Continuous recording verification failed: \(error.localizedDescription)")
+            Darwin.exit(64)
         }
     }
 
@@ -1070,6 +1225,8 @@ struct AutoMixNativeApp: App {
         var scene: MixScene
         var soundcheckSeconds: Double
         var stabilitySeconds: Double
+        var continuousRecordingEnabled: Bool
+        var recordingMinimumReserveBytes: Int64
         var outputDirectory: URL
     }
 
@@ -1092,6 +1249,12 @@ struct AutoMixNativeApp: App {
     private struct CoreAudioStabilityRunResult {
         var reportURL: URL
         var report: StabilityMonitorReport
+        var continuousRecordingReportURL: URL?
+        var continuousRecordingReport: ContinuousRecordingProofReport?
+
+        var passed: Bool {
+            report.passed && (continuousRecordingReport?.passed ?? true)
+        }
     }
 
     private func coreAudioValidationOptions() throws -> CoreAudioValidationOptions {
@@ -1119,6 +1282,16 @@ struct AutoMixNativeApp: App {
         let scene = sceneArgument() ?? profile?.scene ?? .worship
         let soundcheckSeconds = min(max(doubleArgument("--soundcheck-seconds") ?? 10.0, 1.0), 30.0)
         let stabilitySeconds = min(max(doubleArgument("--stability-seconds") ?? 300.0, 30.0), 14_400.0)
+        let continuousRecordingEnabled = CommandLine.arguments.contains("--continuous-recording")
+        let recordingReserveGB = doubleArgument("--recording-reserve-gb") ?? 20.0
+        guard recordingReserveGB.isFinite,
+              recordingReserveGB >= 5.0,
+              recordingReserveGB <= 500.0 else {
+            throw CLIValidationError("--recording-reserve-gb must be between 5 and 500.")
+        }
+        let recordingMinimumReserveBytes = Int64(
+            (recordingReserveGB * 1_000_000_000).rounded(.up)
+        )
         let outputDirectory = try validationOutputDirectory()
 
         return CoreAudioValidationOptions(
@@ -1129,6 +1302,8 @@ struct AutoMixNativeApp: App {
             scene: scene,
             soundcheckSeconds: soundcheckSeconds,
             stabilitySeconds: stabilitySeconds,
+            continuousRecordingEnabled: continuousRecordingEnabled,
+            recordingMinimumReserveBytes: recordingMinimumReserveBytes,
             outputDirectory: outputDirectory
         )
     }
@@ -1244,6 +1419,16 @@ struct AutoMixNativeApp: App {
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private func availableCapacityBytes(at directory: URL) throws -> Int64 {
+        let attributes = try FileManager.default.attributesOfFileSystem(
+            forPath: directory.path
+        )
+        guard let freeSize = attributes[.systemFreeSize] as? NSNumber else {
+            throw ContinuousRecordingStorageError.capacityUnavailable
+        }
+        return max(freeSize.int64Value, 0)
     }
 
     private func timestampedURL(directory: URL, prefix: String, extension pathExtension: String) -> URL {

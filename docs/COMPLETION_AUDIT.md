@@ -16,7 +16,7 @@ hardware proof.
 | Safe scene transitions, manual overrides, Planning Center driving | Smoothed targets in the DSP/brain; full processing and mix-override bridge tests; Planning Center mapping/timed-cue tests; Keychain credential storage | Software verified. Live API/service-plan exercise still needs venue credentials and an actual service plan. |
 | Worship roles and stereo linking | Role profiles for speech, vocals, guitars, bass, drums, keys, percussion, and playback; linked detector/control tests; profile/preflight coverage tests | Verified in deterministic and native simulation tests. |
 | Latency and lip-sync reporting | Fixed limiter latency impulse test; native route estimate and persisted measured A/V path; `docs/LATENCY_AND_LIPSYNC.md` | Calculation/reporting verified. End-to-end camera/encoder measurement and multi-hour drift observation require the real chain. |
-| Continuous raw/program recording | Preallocated SPSC recording path, 60-second checkpoint segments, capacity/retention controls, remapped-input-order tests, no-allocation recording tests | Software verified. Current internal disk has insufficient space for the two-hour 64+2-channel proof. |
+| Continuous raw/program recording | Preallocated SPSC recording path, 60-second checkpoint segments, capacity/retention controls, remapped-input-order and no-allocation tests; staged full-window recorder; `ContinuousRecordingProofReport` segment/frame/capacity verifier | Software and the headless proof integration are verified. Current internal disk still has insufficient space for the two-hour 64+2-channel hardware run. |
 | Encoder/public-egress health, device recovery, relaunch, incident logging | Health contract and alert tests; exact-route recovery/backoff tests; LaunchAgent installer; incident JSONL; `docs/RUNTIME_RESILIENCE.md` | Software verified. Real encoder and public-egress endpoints plus crash/device drills remain external acceptance work. |
 | Separate-device drift mitigation/shared clock | Bounded `AsyncOutputClock`, ring telemetry, correction-limit gates, route clock preflight, stability-report tests | Algorithm and gates verified. Real independent-device or Aggregate Device run remains hardware evidence. |
 | Reproducible replay/evaluation and decision log | `appliance/tools/replay_eval.cpp`; deterministic self-test; CRC/config/metrics/20 Hz trace contract in `docs/REPLAY_EVALUATION.md` | Harness verified. Promotion still requires representative recorded services and operator-approved references. |
@@ -33,16 +33,19 @@ hardware proof.
 
 - Deterministic DSP: **117 passed, 0 failed**.
 - Replay evaluator: self-test passed.
-- Native XCTest: **233 passed, 0 failed**.
+- Native XCTest: **234 passed, 0 failed**.
 - Remote monitor: static/auth/pairing/cookie/command/SSE smoke passed.
 - Web proof: clean install, typecheck, production build, and `npm audit` passed
   with **0 known vulnerabilities**.
 - JUCE 8.0.15 portability target: strict Release build and CTest passed.
 - Xcode project regeneration: deterministic with the declared Brew tools.
 - Full CMake graph: Release build and CTest passed.
+- Staged recording proof: full stability-window capture, planned-capacity and live
+  reserve gates, segment/header/frame verification, zero-drop requirement, and the
+  two-hour production-vs-rehearsal gate are implemented and behavior-tested.
 - Operator UI/UX redesign: native, remote, monitor, setup, accessibility, and
   responsive-layout changes committed as `f3e6e74`.
-- Published private `main`: `b9bb6825c7d2204f12400c0afec2791e84f70925`.
+- Private repository publication: local `main` tracks the published private `main`.
 - Hosted CI attempts:
   [push run 30380776472](https://github.com/joshuahuffman02/live-daw/actions/runs/30380776472)
   and subsequent Dependabot-triggered checks were rejected before any step ran by

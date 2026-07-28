@@ -18,9 +18,10 @@ first because speech automation has fewer interacting sources than a worship mix
   ticket, and Gatekeeper acceptance, then records the signing details and executable
   SHA-256 in `app-integrity.txt`.
 - Continuous recording has adequate free space (about 91.2 GB/hour at 64+2 channels,
-  96 kHz float). Set its planned duration at least as long as the service/proof, keep
-  automatic start enabled for the supervised app run, and confirm the capacity gate
-  passes before program begins.
+  96 kHz float). The staged runner now records raw inputs plus program for the complete
+  stability window, refuses to start unless the planned capture plus reserve fits,
+  rechecks the reserve while live, and semantically verifies every finalized WAV
+  segment before it can report success.
 
 ## Phase 1 — sermon
 
@@ -30,7 +31,8 @@ first because speech automation has fewer interacting sources than a worship mix
 3. Execute the real hardware proof for at least two hours:
 
 ```sh
-STABILITY_SECONDS=7200 ./scripts/run-staged-hardware-proof.sh sermon \
+STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
+  ./scripts/run-staged-hardware-proof.sh sermon \
   "/Applications/AutoMix Native.app" \
   "DANTE_INPUT_UID" "ENCODER_OUTPUT_UID" \
   "$HOME/Library/Application Support/AutoMix Native/VenueProfile.json" \
@@ -38,9 +40,12 @@ STABILITY_SECONDS=7200 ./scripts/run-staged-hardware-proof.sh sermon \
 ```
 
 4. Review the manifest, soundcheck WAV/report, stability report, incident JSONL,
-   `stream-health-observations.tsv`, raw/program recording, and external-failover
-   recording. The runner probes both configured health endpoints throughout the full
-   check and blocks after two consecutive failures or a missing healthy observation.
+   `stream-health-observations.tsv`, the continuous-recording proof report and its
+   raw/program segments, and the external-failover recording. The runner probes both
+   configured health endpoints throughout the full check and blocks after two
+   consecutive failures or a missing healthy observation. The recording verifier
+   requires zero dropped frames, exact segment/header/frame accounting, 66-channel
+   96 kHz float WAVs, the free-space reserve, and at least two persisted hours.
 5. A named operator accepts or rejects advancement. Any unexplained critical incident,
    missing speech, clipping, failover, restart, clock correction at the limit, or
    recorder loss blocks worship.
@@ -65,6 +70,22 @@ acceptance JSON, then runs the worship full check. Start worship in SHADOW rehea
 then one supervised live service. Review vocal priority, stereo imaging, playback,
 transients, limiter work, integrated loudness, scene transitions, and every manual
 override.
+
+Short commissioning exercises cannot be mistaken for production proof. Use, for
+example,
+
+```sh
+REHEARSAL_ONLY=1 STABILITY_SECONDS=30 \
+  ./scripts/run-staged-hardware-proof.sh sermon \
+  "/Applications/AutoMix Native.app" \
+  "DANTE_INPUT_UID" "ENCODER_OUTPUT_UID" \
+  "$HOME/Library/Application Support/AutoMix Native/VenueProfile.json" \
+  "/Volumes/Proof/AutoMix"
+```
+
+The same route, signature, health, and recording checks run, but the result is labeled
+as rehearsal-only. Without `REHEARSAL_ONLY=1`, the script rejects stability windows
+shorter than 7,200 seconds.
 
 ## Production acceptance
 

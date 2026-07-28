@@ -6,7 +6,8 @@ usage() {
   print -u2 "  $0 sermon APP_PATH INPUT_UID OUTPUT_UID PROFILE_PATH EVIDENCE_ROOT"
   print -u2 "  $0 worship APP_PATH INPUT_UID OUTPUT_UID PROFILE_PATH EVIDENCE_ROOT SERMON_MANIFEST ACCEPTED_BY"
   print -u2 ""
-  print -u2 "Optional environment: STABILITY_SECONDS=7200 SOUNDCHECK_SECONDS=30"
+  print -u2 "Optional environment: STABILITY_SECONDS=7200 SOUNDCHECK_SECONDS=30 RECORDING_RESERVE_GB=20"
+  print -u2 "Short engineering runs require REHEARSAL_ONLY=1 and never mint production proof."
 }
 
 if (( $# < 6 )); then
@@ -24,6 +25,8 @@ sermon_manifest="${7:-}"
 accepted_by="${8:-}"
 stability_seconds="${STABILITY_SECONDS:-7200}"
 soundcheck_seconds="${SOUNDCHECK_SECONDS:-30}"
+recording_reserve_gb="${RECORDING_RESERVE_GB:-20}"
+rehearsal_only="${REHEARSAL_ONLY:-0}"
 app_binary="${app_path}/Contents/MacOS/AutoMix Native"
 
 if [[ "${phase}" != "sermon" && "${phase}" != "worship" ]]; then
@@ -44,6 +47,24 @@ if [[ ! "${stability_seconds}" =~ '^[0-9]+([.][0-9]+)?$' ]]; then
 fi
 if (( ${stability_seconds%.*} < 30 || ${stability_seconds%.*} > 14400 )); then
   print -u2 "STABILITY_SECONDS must be between 30 and 14400."
+  exit 2
+fi
+if [[ ! "${soundcheck_seconds}" =~ '^[0-9]+([.][0-9]+)?$' ]] ||
+    (( ${soundcheck_seconds%.*} < 1 || ${soundcheck_seconds%.*} > 30 )); then
+  print -u2 "SOUNDCHECK_SECONDS must be between 1 and 30."
+  exit 2
+fi
+if [[ ! "${recording_reserve_gb}" =~ '^[0-9]+([.][0-9]+)?$' ]] ||
+    (( ${recording_reserve_gb%.*} < 5 || ${recording_reserve_gb%.*} > 500 )); then
+  print -u2 "RECORDING_RESERVE_GB must be between 5 and 500."
+  exit 2
+fi
+if [[ "${rehearsal_only}" != "0" && "${rehearsal_only}" != "1" ]]; then
+  print -u2 "REHEARSAL_ONLY must be 0 or 1."
+  exit 2
+fi
+if (( ${stability_seconds%.*} < 7200 )) && [[ "${rehearsal_only}" != "1" ]]; then
+  print -u2 "Production proof requires at least 7200 seconds. Set REHEARSAL_ONLY=1 for a shorter engineering run."
   exit 2
 fi
 
@@ -189,6 +210,8 @@ trap stop_health_monitors EXIT INT TERM
   --scene "${phase}" \
   --soundcheck-seconds "${soundcheck_seconds}" \
   --stability-seconds "${stability_seconds}" \
+  --continuous-recording \
+  --recording-reserve-gb "${recording_reserve_gb}" \
   --output-dir "${phase_directory}"
 
 stop_health_monitors
@@ -213,4 +236,27 @@ fi
 
 manifest="${manifests[1]}"
 "${app_binary}" --smoke-test --verify-full-check --manifest "${manifest}"
-print "${phase:u} hardware proof passed: ${manifest}"
+
+recording_reports=(
+  "${phase_directory}"/automix-continuous-recording-*/continuous-recording-proof.json(N)
+)
+if (( ${#recording_reports} != 1 )); then
+  print -u2 "Expected exactly one continuous recording proof report in ${phase_directory}; found ${#recording_reports}."
+  exit 4
+fi
+recording_report="${recording_reports[1]}"
+if [[ "${rehearsal_only}" == "1" ]]; then
+  "${app_binary}" \
+    --smoke-test \
+    --verify-continuous-recording \
+    --recording-report "${recording_report}"
+  print "${phase:u} rehearsal passed; production proof was not minted: ${manifest}"
+else
+  "${app_binary}" \
+    --smoke-test \
+    --verify-continuous-recording \
+    --recording-report "${recording_report}" \
+    --require-production-duration
+  print "${phase:u} hardware proof passed: ${manifest}"
+  print "${phase:u} continuous recording proof passed: ${recording_report}"
+fi

@@ -97,3 +97,41 @@ network bandwidth with the recorder and encoder.
 
 Continuous capture and the bounded soundcheck recorder are mutually exclusive. A
 stability monitor may run while continuous capture is active.
+
+## Headless hardware-proof workflow
+
+`scripts/run-staged-hardware-proof.sh` passes `--continuous-recording` to the same
+headless Core Audio stability run used for the two-hour proof. This keeps stability
+measurement and the expected multitrack recording in one process and on one exact
+route.
+
+Before opening the recorder, the command calculates the planned
+`input channels + program L/R` requirement and requires that amount plus
+`RECORDING_RESERVE_GB` (20 GB by default). It rechecks available capacity every
+30 seconds and stops the proof if the reserve is crossed.
+
+After the deliberate recorder stop, the file queue is drained and every segment is
+re-opened. `continuous-recording-proof.json` records and verifies:
+
+- the isolated input/output route and real-vs-simulated validation source;
+- available, required, and minimum observed free bytes;
+- requested and observed duration;
+- captured and dropped frame counts;
+- the exact sorted segment index;
+- IEEE-float format, 96 kHz rate, 66-channel layout, header/file byte agreement, and
+  persisted-frame agreement for every WAV;
+- whether the recorder stopped before the requested window.
+
+The report can be checked again without scanning the sample payloads:
+
+```sh
+"/Applications/AutoMix Native.app/Contents/MacOS/AutoMix Native" \
+  --smoke-test \
+  --verify-continuous-recording \
+  --recording-report "/Volumes/Proof/AutoMix/.../continuous-recording-proof.json" \
+  --require-production-duration
+```
+
+The final flag additionally requires a real isolated 64-input/96 kHz route and at
+least 7,200 seconds of wall-clock and persisted recording. Short runs can exercise
+the recorder, but cannot produce `productionProofPassed=true`.

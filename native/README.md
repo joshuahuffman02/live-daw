@@ -457,6 +457,11 @@ The app does not configure the Midas console. It expects Dante to already exist:
   minimum live reserve, and sacrifices recorder frames rather than stream continuity
   if storage falls behind. Optional retention moves cleanly completed sessions to
   Trash rather than hard-deleting them.
+- The staged headless proof can keep that recorder active for the complete stability
+  window. It capacity-gates the planned duration plus reserve, rechecks reserve while
+  live, drains the file queue on stop, and writes a re-verifiable
+  `continuous-recording-proof.json` whose segment metadata, file lengths, persisted
+  frames, drop count, route, duration, and production-vs-rehearsal verdict must agree.
 - Automatic Audio Recovery watches exact route readiness and callback age, retries
   with grace/verification/backoff, reapplies the live state, and resumes continuous
   capture in a new segment directory. Runtime incidents are durable JSONL. Optional
@@ -536,7 +541,9 @@ Run this on the actual HD96/Dante rig before trusting it live:
     treat that as a control-thread failure and do not go live until it is understood.
 17. Use `scripts/run-staged-hardware-proof.sh` for acceptance evidence. It refuses
     development/ad-hoc builds and records signature, notarization, Gatekeeper, and
-    executable-hash evidence before the run.
+    executable-hash evidence before the run. Production mode also requires and
+    verifies at least two hours of continuous 64-input-plus-program recording;
+    shorter `REHEARSAL_ONLY=1` runs cannot mint production proof.
 
 The current app has been build-verified locally, XCTest-verified through the simulated
 native bridge, and DSP-verified without hardware. Real Dante clocking, channel order,

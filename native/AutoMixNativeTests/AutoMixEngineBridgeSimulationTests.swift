@@ -967,6 +967,74 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(totalFrames, UInt64(bridge.continuousRecordingFrameCount))
     }
 
+    func testContinuousRecordingProofVerifiesEveryPersistedSegmentAndRejectsTampering() throws {
+        try bridge.startSimulated(
+            withChannelCount: 64,
+            sampleRate: 96_000,
+            bufferFrameSize: 256,
+            channelRoles: simulatedRoles(count: 64),
+            inputChannelIndices: identityInputMap(count: 64)
+        )
+        XCTAssertTrue(waitUntil(timeout: 2.0) {
+            self.bridge.lastCallbackFrameCount == 256
+        })
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        bridge.debugSetContinuousRecordingSegmentFrameLimit(1_024)
+        try bridge.startContinuousRecording(atDirectoryURL: directory)
+        XCTAssertTrue(waitUntil(timeout: 2.0) {
+            self.bridge.continuousRecordingFrameCount >= 4_096 &&
+                self.bridge.continuousRecordingSegmentCount >= 2
+        })
+        bridge.stopContinuousRecording()
+
+        let report = try ContinuousRecordingProofReport.make(
+            generatedAt: Date(timeIntervalSince1970: 0),
+            validationSource: .coreAudioDevice,
+            inputDevice: hardwareInputSnapshot(),
+            outputDevice: hardwareOutputSnapshot(),
+            scene: .sermon,
+            expectedInputChannels: 64,
+            detectedInputChannels: 64,
+            sampleRate: 96_000,
+            requestedDurationSeconds: 0.05,
+            observedDurationSeconds: 0.1,
+            recordingDirectoryURL: directory,
+            availableBytesAtStart: 2_000_000_000,
+            minimumObservedAvailableBytes: 1_500_000_000,
+            requiredBytesAtStart: 1_000_000_000,
+            minimumReserveBytes: 500_000_000,
+            capturedFrameCount: UInt64(bridge.continuousRecordingFrameCount),
+            droppedFrameCount: UInt64(bridge.continuousRecordingDroppedFrameCount),
+            reportedSegmentCount: Int(bridge.continuousRecordingSegmentCount),
+            stoppedUnexpectedly: false,
+            writerStatus: "deliberate stop"
+        )
+        XCTAssertTrue(report.passed)
+        XCTAssertFalse(report.productionProofPassed)
+        XCTAssertEqual(report.segments.count, Int(bridge.continuousRecordingSegmentCount))
+        XCTAssertTrue(report.checks.allSatisfy(\.passed))
+
+        let reportURL = directory.appendingPathComponent("continuous-recording-proof.json")
+        try writeJSON(report, to: reportURL)
+        let verified = try ContinuousRecordingProofReport.verify(reportAt: reportURL)
+        XCTAssertTrue(verified.passed)
+        XCTAssertFalse(verified.productionProofPassed)
+        XCTAssertEqual(verified.segments, report.segments)
+
+        var tampered = report
+        tampered.reportedSegmentCount += 1
+        try writeJSON(tampered, to: reportURL)
+        let rejected = try ContinuousRecordingProofReport.verify(reportAt: reportURL)
+        XCTAssertFalse(rejected.passed)
+        XCTAssertFalse(rejected.productionProofPassed)
+        XCTAssertFalse(
+            try XCTUnwrap(rejected.checks.first { $0.name == "Segment Count" }).passed
+        )
+    }
+
     func testRecordingCapturePreservesRawDanteOrderWhenMixerInputMapIsRemapped() throws {
         try bridge.startSimulated(
             withChannelCount: 4,
