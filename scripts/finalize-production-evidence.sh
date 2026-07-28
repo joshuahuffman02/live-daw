@@ -89,7 +89,8 @@ trap cleanup EXIT INT TERM
 for name in "${names[@]}"; do
   report="${temporary_directory}/${name}.json"
   /bin/cp "${draft_directory}/${name}.json" "${report}"
-  /usr/bin/plutil -p "${report}" >/dev/null
+  # The following in-place edits parse every temporary report. Avoid `plutil -p`
+  # as a redundant probe because macOS 15 can reject otherwise editable JSON.
   /usr/bin/plutil -replace formatVersion -integer 1 "${report}"
   /usr/bin/plutil -replace phase -string "${phase}" "${report}"
   /usr/bin/plutil -replace completedAtUTC -string "${completed_at}" "${report}"
