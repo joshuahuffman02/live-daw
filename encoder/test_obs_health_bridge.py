@@ -959,6 +959,15 @@ class MonitorAndHTTPTests(unittest.TestCase):
         state = EncoderHealthState(
             AudioInputSelector(name="Program Audio")
         )
+        with mock.patch(
+            "socket.getfqdn",
+            side_effect=AssertionError(
+                "loopback health startup must not depend on DNS"
+            ),
+        ):
+            server = HealthHTTPServer(
+                ("127.0.0.1", 0), make_health_handler(state)
+            )
         state.mark_connected(True, "32.2.1", "5.6.3")
         state.update_stream_status(
             {
@@ -1000,9 +1009,6 @@ class MonitorAndHTTPTests(unittest.TestCase):
                     "inputLevelsMul": [[0.01, 0.02, 0.03]],
                 }
             ]
-        )
-        server = HealthHTTPServer(
-            ("127.0.0.1", 0), make_health_handler(state)
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

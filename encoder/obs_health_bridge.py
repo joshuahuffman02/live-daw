@@ -19,6 +19,7 @@ import os
 import secrets
 import signal
 import socket
+import socketserver
 import stat
 import struct
 import sys
@@ -1241,6 +1242,15 @@ class OBSMonitor:
 class HealthHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        # HTTPServer normally performs a reverse-DNS lookup for server_name.
+        # This listener is loopback-only and never uses that name; bypassing the
+        # lookup avoids startup stalls when venue DNS is absent or unhealthy.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
 
 
 def make_health_handler(
