@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   print -u2 "Usage:"
   print -u2 "  $0 sermon APP_PATH INPUT_UID OUTPUT_UID PROFILE_PATH EVIDENCE_ROOT"
-  print -u2 "  $0 worship APP_PATH INPUT_UID OUTPUT_UID PROFILE_PATH EVIDENCE_ROOT SERMON_MANIFEST ACCEPTED_BY"
+  print -u2 "  $0 worship APP_PATH INPUT_UID OUTPUT_UID PROFILE_PATH EVIDENCE_ROOT SERMON_MANIFEST SERMON_ACCEPTANCE_DIR TRUSTED_SIGNERS"
   print -u2 ""
   print -u2 "Optional environment: STABILITY_SECONDS=7200 SOUNDCHECK_SECONDS=30 RECORDING_RESERVE_GB=20"
   print -u2 "Short engineering runs require REHEARSAL_ONLY=1 and never mint production proof."
@@ -22,12 +22,14 @@ output_uid="$4"
 profile_path="$5"
 evidence_root="$6"
 sermon_manifest="${7:-}"
-accepted_by="${8:-}"
+sermon_acceptance_directory="${8:-}"
+trusted_signers="${9:-}"
 stability_seconds="${STABILITY_SECONDS:-7200}"
 soundcheck_seconds="${SOUNDCHECK_SECONDS:-30}"
 recording_reserve_gb="${RECORDING_RESERVE_GB:-20}"
 rehearsal_only="${REHEARSAL_ONLY:-0}"
 app_binary="${app_path}/Contents/MacOS/AutoMix Native"
+script_directory="${0:A:h}"
 
 if [[ "${phase}" != "sermon" && "${phase}" != "worship" ]]; then
   usage
@@ -102,8 +104,10 @@ if [[ -z "${encoder_health_url}" || -z "${egress_health_url}" ]]; then
 fi
 
 if [[ "${phase}" == "worship" ]]; then
-  if [[ -z "${sermon_manifest}" || -z "${accepted_by}" ]]; then
-    print -u2 "Worship proof requires a verified sermon manifest and the accepting operator's name."
+  if [[ -z "${sermon_manifest}" ||
+        -z "${sermon_acceptance_directory}" ||
+        -z "${trusted_signers}" ]]; then
+    print -u2 "Worship proof requires a verified sermon manifest, signed acceptance bundle, and trusted-signer file."
     usage
     exit 2
   fi
@@ -118,16 +122,12 @@ if [[ "${phase}" == "worship" ]]; then
     print -u2 "Worship is blocked: the supplied manifest is not passed sermon hardware proof."
     exit 3
   fi
-
-  acceptance_plist="${phase_directory}/sermon-acceptance.plist"
-  acceptance_json="${phase_directory}/sermon-acceptance.json"
-  /usr/bin/plutil -create xml1 "${acceptance_plist}"
-  /usr/bin/plutil -insert acceptedBy -string "${accepted_by}" "${acceptance_plist}"
-  /usr/bin/plutil -insert acceptedAtUTC -string "${timestamp}" "${acceptance_plist}"
-  /usr/bin/plutil -insert sermonManifest -string "${sermon_manifest}" "${acceptance_plist}"
-  /usr/bin/plutil -insert decision -string "approved to begin supervised worship proof" "${acceptance_plist}"
-  /usr/bin/plutil -convert json -o "${acceptance_json}" "${acceptance_plist}"
-  /bin/rm "${acceptance_plist}"
+  "${script_directory}/verify-proof-acceptance.sh" \
+    --acceptance-dir "${sermon_acceptance_directory}" \
+    --trusted-signers "${trusted_signers}" \
+    --expected-phase sermon \
+    --expected-decision approved \
+    --manifest "${sermon_manifest}"
 fi
 
 health_stop_file="${phase_directory}/.stop-health-monitor"
@@ -259,4 +259,5 @@ else
     --require-production-duration
   print "${phase:u} hardware proof passed: ${manifest}"
   print "${phase:u} continuous recording proof passed: ${recording_report}"
+  print "Review the complete evidence, then record the post-review decision with scripts/record-proof-acceptance.sh."
 fi

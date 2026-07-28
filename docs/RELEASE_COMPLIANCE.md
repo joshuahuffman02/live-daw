@@ -47,5 +47,7 @@ notarize, install, or run `AutoMix Native.app`.
 - each staged run's `continuous-recording-proof.json` and complete checkpointed
   64-input-plus-program segment directory;
 - Apple, DVS, and any JUCE licence/account records that apply;
-- the venue profile and signed sermon/worship acceptance bundles, with secrets
-  excluded.
+- the venue profile and SSH-signed sermon/worship acceptance bundles, with secrets
+  excluded;
+- the venue-maintained SSH `allowed_signers` trust file. Keep operator private keys
+  outside the validation archive and restrict their filesystem/Keychain access.

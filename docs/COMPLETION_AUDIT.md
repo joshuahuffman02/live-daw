@@ -25,8 +25,8 @@ hardware proof.
 | Realtime safety and human authority | No-allocation guards for engine, automixer, reverb/delay, brain mailbox, native input/render/recording/overrun paths; SAFE/FREEZE/manual controls and tests | Verified in deterministic and simulated native paths. Real callback timing/xrun behavior remains a rig measurement. |
 | Signed/notarized production artifact | Hardened Runtime, audio-input entitlement, fail-closed release builder, signature/notary/staple/Gatekeeper verification, proof runner binding | Pipeline verified through unsigned/ad-hoc negative and entitlement tests. No Developer ID Application identity or notary profile is installed, so no production artifact exists yet. |
 | Real 64-channel 96 kHz HD96/Dante proof | Full-check runner, semantic manifest verifier, simulation-resistant source checks, notarized-build gate | Not achieved. Current inventory contains only built-in 48 kHz speakers and the explicit simulated HD96 device. |
-| Sermon-autopilot milestone | Sermon-first staged runner, minimum two-hour health/stability proof, named acceptance contract | Not achieved; requires the production rig and supervised service. |
-| Worship autonomy acceptance | Verified sermon prerequisite, recorded-service comparison, supervised worship proof, named acceptance | Not achieved and deliberately gated behind sermon acceptance. |
+| Sermon-autopilot milestone | Sermon-first staged runner, minimum two-hour health/stability/recording proof, post-review SSH-signed decision bundle, trusted-signer and evidence-hash verifier | Software gate verified; the approval itself is not achieved because it requires the production rig, complete evidence, and a supervised service. |
+| Worship autonomy acceptance | Cryptographically verified approved sermon prerequisite bound to the exact manifest, recorded-service comparison, supervised worship proof, equivalent signed final go-live decision | Not achieved and deliberately gated behind verified sermon acceptance. |
 | Operator UI/UX | Native operator shell, remote monitor, monitor wall, setup/onboarding, keyboard/screen-reader paths, responsive layouts, and critical-state visual hierarchy; `docs/UI_UX_AUDIT.md`; `design-qa.md` | Full product-flow audit and redesign implemented. Native/web builds and UI-facing tests pass locally; real operators must still validate the production rig workflow under service conditions. |
 
 ## Latest verified local results
@@ -43,6 +43,9 @@ hardware proof.
 - Staged recording proof: full stability-window capture, planned-capacity and live
   reserve gates, segment/header/frame verification, zero-drop requirement, and the
   two-hour production-vs-rehearsal gate are implemented and behavior-tested.
+- Acceptance chain: signed-bundle verifier self-test passes, including rejection of
+  evidence modified after signing; worship requires a trusted approved sermon signer
+  and an exact accepted-manifest hash match.
 - Operator UI/UX redesign: native, remote, monitor, setup, accessibility, and
   responsive-layout changes committed as `f3e6e74`.
 - Private repository publication: local `main` tracks the published private `main`.

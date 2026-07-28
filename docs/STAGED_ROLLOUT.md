@@ -50,10 +50,47 @@ STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
    missing speech, clipping, failover, restart, clock correction at the limit, or
    recorder loss blocks worship.
 
+Record that decision only after the review. The venue owns an SSH signing key and an
+`allowed_signers` file kept outside the evidence bundle:
+
+```text
+operator@example.org ssh-ed25519 AAAA... venue-acceptance
+```
+
+For an approved sermon, bind the exact proof and supporting evidence:
+
+```sh
+./scripts/record-proof-acceptance.sh \
+  --phase sermon --decision approved \
+  --reviewer "OPERATOR NAME" --signer "operator@example.org" \
+  --signing-key "/secure/operator_ed25519" \
+  --trusted-signers "/secure/live-daw-allowed-signers" \
+  --source-commit "40_CHARACTER_GIT_SHA" \
+  --app "/Applications/AutoMix Native.app" \
+  --build-metadata "/Volumes/Proof/Release/build-metadata.json" \
+  --manifest "/Volumes/Proof/AutoMix/sermon-.../automix-core-audio-full-check-....json" \
+  --recording-report "/Volumes/Proof/AutoMix/sermon-.../automix-continuous-recording-.../continuous-recording-proof.json" \
+  --app-integrity "/Volumes/Proof/AutoMix/sermon-.../app-integrity.txt" \
+  --stream-health "/Volumes/Proof/AutoMix/sermon-.../stream-health-observations.tsv" \
+  --external-failover "/Volumes/Proof/AutoMix/sermon-.../external-failover-evidence.json" \
+  --latency-lipsync "/Volumes/Proof/AutoMix/sermon-.../latency-lipsync-evidence.json" \
+  --runtime-resilience "/Volumes/Proof/AutoMix/sermon-.../runtime-resilience-evidence.json" \
+  --replay-comparison "/Volumes/Proof/AutoMix/sermon-.../replay-comparison.json" \
+  --output-root "/Volumes/Proof/AutoMix/acceptance" \
+  --notes "Reviewed complete sermon evidence; no blocking exceptions."
+```
+
+The command independently re-verifies the notarized app, full-check manifest,
+two-hour recording, encoder/egress observations, and all required evidence files. It
+also requires the release build metadata to bind the accepted source commit, hashes
+the complete evidence index into `acceptance.json`, signs that exact JSON with the
+operator key, and verifies the result against the venue trust file. A signed
+`rejected` decision is retained just as durably but cannot unlock worship.
+
 ## Phase 2 — worship
 
-Worship cannot run until the sermon manifest verifies as real hardware proof and a
-named operator is recorded:
+Worship cannot run until the sermon manifest verifies as real hardware proof and its
+post-review approval signature verifies against the venue trust file:
 
 ```sh
 STABILITY_SECONDS=7200 ./scripts/run-staged-hardware-proof.sh worship \
@@ -62,14 +99,16 @@ STABILITY_SECONDS=7200 ./scripts/run-staged-hardware-proof.sh worship \
   "$HOME/Library/Application Support/AutoMix Native/VenueProfile.json" \
   "/Volumes/Proof/AutoMix" \
   "/Volumes/Proof/AutoMix/sermon-.../automix-core-audio-full-check-....json" \
-  "OPERATOR NAME"
+  "/Volumes/Proof/AutoMix/acceptance/sermon-acceptance-..." \
+  "/secure/live-daw-allowed-signers"
 ```
 
-The runner verifies the sermon scene and `hardwareProofPassed=true`, writes a durable
-acceptance JSON, then runs the worship full check. Start worship in SHADOW rehearsal,
-then one supervised live service. Review vocal priority, stereo imaging, playback,
-transients, limiter work, integrated loudness, scene transitions, and every manual
-override.
+The runner verifies the sermon scene and `hardwareProofPassed=true`, the acceptance
+signature and trusted signer identity, every signed evidence hash, and the exact
+sermon-manifest hash before it starts the worship full check. Start worship in SHADOW
+rehearsal, then one supervised live service. Review vocal priority, stereo imaging,
+playback, transients, limiter work, integrated loudness, scene transitions, and every
+manual override.
 
 Short commissioning exercises cannot be mistaken for production proof. Use, for
 example,
@@ -92,7 +131,21 @@ shorter than 7,200 seconds.
 Declare the mixer autonomous only when both scene manifests have
 `hardwareProofPassed=true`, the external backup remained broadcast-safe through kill
 tests, end-to-end A/V sync is measured, encoder and public egress stayed healthy, and
-the reviewing operator signs the bundle. Keep SAFE, FREEZE, Stop, and manual
+the reviewing operator records an approved, signed worship acceptance bundle using
+the same command with `--phase worship` and
+`--sermon-acceptance-dir`. The final worship bundle includes the sermon acceptance
+JSON and signature hashes, so the complete promotion chain is preserved. Verify any
+bundle with:
+
+```sh
+./scripts/verify-proof-acceptance.sh \
+  --acceptance-dir "/Volumes/Proof/AutoMix/acceptance/worship-acceptance-..." \
+  --trusted-signers "/secure/live-daw-allowed-signers" \
+  --expected-phase worship \
+  --expected-decision approved
+```
+
+Keep SAFE, FREEZE, Stop, and manual
 channel-processing overrides available during every service. New device UIDs, Dante
 patches, clock
 leaders, buffer sizes, encoder settings, or material role-map changes invalidate the

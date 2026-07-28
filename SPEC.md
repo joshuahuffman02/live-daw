@@ -155,6 +155,13 @@ Target: native Apple Silicon macOS `.app` on an M-series Mac.
   source/config/safety/reference metrics, and a 20 Hz JSONL trace of every channel
   and master automation decision. The corpus comparison and shadow-mode promotion
   contract is defined in `docs/REPLAY_EVALUATION.md`.
+- Human promotion authority: sermon and worship decisions are recorded only after
+  evidence review in SSH-signed acceptance bundles. The signed payload binds the
+  source commit, reviewer, decision scope, exact full-check/recording reports, app
+  integrity, stream health, external failover, latency, runtime-resilience, and replay
+  comparison hashes. Worship proof requires an approved sermon signature from a
+  venue-maintained trusted-signer list and an exact accepted-manifest hash match;
+  final go-live requires the equivalent approved worship bundle.
 
 Build and verification:
 

@@ -470,8 +470,9 @@ The app does not configure the Midas console. It expects Dante to already exist:
   [`../docs/RUNTIME_RESILIENCE.md`](../docs/RUNTIME_RESILIENCE.md) for the LaunchAgent,
   session-resume contract, and kill-test procedure.
 - Hardware rollout is gated sermon-first, then worship only after a verified real
-  sermon manifest and named operator acceptance. Stability proof supports up to four
-  hours; the evidence runner and acceptance criteria are in
+  sermon manifest and a post-review, SSH-signed operator acceptance whose trusted
+  identity, evidence hashes, and exact sermon-manifest hash verify. Stability proof
+  supports up to four hours; the evidence runner and acceptance criteria are in
   [`../docs/STAGED_ROLLOUT.md`](../docs/STAGED_ROLLOUT.md).
 - The Soundcheck controls expose each phase explicitly: recording frames, saving the
   WAV file, then analyzing the saved payload for the report.
@@ -543,7 +544,10 @@ Run this on the actual HD96/Dante rig before trusting it live:
     development/ad-hoc builds and records signature, notarization, Gatekeeper, and
     executable-hash evidence before the run. Production mode also requires and
     verifies at least two hours of continuous 64-input-plus-program recording;
-    shorter `REHEARSAL_ONLY=1` runs cannot mint production proof.
+    shorter `REHEARSAL_ONLY=1` runs cannot mint production proof. After reviewing a
+    production run, use `scripts/record-proof-acceptance.sh`; the worship gate accepts
+    only an approved sermon bundle that passes `scripts/verify-proof-acceptance.sh`
+    against the venue's trusted-signer file.
 
 The current app has been build-verified locally, XCTest-verified through the simulated
 native bridge, and DSP-verified without hardware. Real Dante clocking, channel order,
