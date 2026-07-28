@@ -50,7 +50,19 @@ Do not move the app after installing the LaunchAgent. Re-run the installer if th
 path changes. A LaunchAgent is not a replacement for the independent hardware backup
 in `docs/EXTERNAL_FAILOVER.md`.
 
-## 3. Encoder and public-egress probes
+## 3. External primary-audio heartbeat
+
+The Remote Monitoring server's token-free `/health` endpoint is fail-closed for an
+external relay/controller. It returns HTTP 200 only for the exact non-simulated
+64-channel/96 kHz HD96/Dante route, isolated output, running engine, fresh input and
+output callbacks, and a control-loop update no older than one second. Any failed
+condition returns HTTP 503; a crashed app or Mac is unreachable. The external
+controller must poll at least twice per second with a request timeout no longer than
+one second, select and latch backup on any non-200, stale, malformed, or unreachable
+result, and allow return to primary only by operator action. See
+`EXTERNAL_FAILOVER.md` for the complete topology and contract.
+
+## 4. Encoder and public-egress probes
 
 The optional Encoder Health and Public Egress fields poll every two seconds while the
 audio engine is running. Each URL must be token-free HTTP(S) and return a fresh JSON

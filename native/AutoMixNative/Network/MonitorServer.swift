@@ -124,7 +124,7 @@ final class MonitorServer: @unchecked Sendable {
     private func route(_ request: HTTPRequest, _ conn: HTTPConnection) {
         switch (request.method, request.path) {
         case ("GET", "/health"):
-            sendJSON(conn, object: ["ok": true, "name": service.healthName], close: true)
+            sendPrimaryAudioHeartbeat(conn)
         case ("GET", "/events"):
             startSSE(conn)
         case ("POST", "/pair"):
@@ -214,6 +214,23 @@ final class MonitorServer: @unchecked Sendable {
 
     // MARK: - Helpers
 
+    private func sendPrimaryAudioHeartbeat(_ conn: HTTPConnection) {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        let heartbeat = service.currentPrimaryAudioHeartbeat().evaluated(at: nowMs)
+        let body = (try? JSONEncoder().encode(heartbeat)) ?? Data(
+            #"{"ok":false,"healthy":false,"streaming":false,"audioActive":false}"#.utf8
+        )
+        conn.send(
+            Self.response(
+                status: heartbeat.healthy ? 200 : 503,
+                contentType: "application/json; charset=utf-8",
+                body: body,
+                extraHeaders: ["Cache-Control": "no-store"]
+            ),
+            close: true
+        )
+    }
+
     private func sendJSON(_ conn: HTTPConnection,
                           object: [String: Any],
                           status: Int = 200,
@@ -243,6 +260,7 @@ final class MonitorServer: @unchecked Sendable {
         case 400: reason = "Bad Request"
         case 401: reason = "Unauthorized"
         case 404: reason = "Not Found"
+        case 503: reason = "Service Unavailable"
         default: reason = "Status"
         }
         var head = "HTTP/1.1 \(status) \(reason)\r\n"

@@ -5,6 +5,113 @@ struct StaticResource {
     let contentType: String
 }
 
+struct PrimaryAudioHeartbeat: Codable, Equatable, Sendable {
+    static let currentFormatVersion = 1
+    static let kind = "automix-primary-audio-heartbeat"
+    static let maximumFreshAgeMs: Int64 = 1_000
+
+    var formatVersion: Int
+    var kind: String
+    var ok: Bool
+    var healthy: Bool
+    var streaming: Bool
+    var audioActive: Bool
+    var timestampMs: Int64
+    var name: String
+    var detail: String
+    var engineRunning: Bool
+    var routeHealthy: Bool
+    var inputCallbackAgeMs: Double
+    var outputCallbackAgeMs: Double
+    var manualReturnRequired: Bool
+
+    static func make(
+        name: String,
+        nowMs: Int64,
+        operatorStopped: Bool,
+        engineRunning: Bool,
+        routeHealthy: Bool,
+        routeDetail: String,
+        inputCallbackAgeMs: Double,
+        outputCallbackAgeMs: Double,
+        callbackStallMs: Double = 1_000
+    ) -> PrimaryAudioHeartbeat {
+        let normalizedInputAge = inputCallbackAgeMs.isFinite ? inputCallbackAgeMs : -1
+        let normalizedOutputAge = outputCallbackAgeMs.isFinite ? outputCallbackAgeMs : -1
+        let callbacksStarted = normalizedInputAge >= 0 && normalizedOutputAge >= 0
+        let callbacksFresh = callbacksStarted &&
+            normalizedInputAge < callbackStallMs &&
+            normalizedOutputAge < callbackStallMs
+        let healthy = !operatorStopped && engineRunning && routeHealthy && callbacksFresh
+        let streaming = healthy
+        let audioActive = healthy
+
+        let detail: String
+        if operatorStopped {
+            detail = "operator stopped primary audio"
+        } else if !engineRunning {
+            detail = "audio engine stopped"
+        } else if !routeHealthy {
+            detail = routeDetail.isEmpty ? "production route unhealthy" : routeDetail
+        } else if !callbacksStarted {
+            detail = "audio callbacks have not started"
+        } else if normalizedInputAge >= callbackStallMs {
+            detail = "input callback stalled"
+        } else if normalizedOutputAge >= callbackStallMs {
+            detail = "output callback stalled"
+        } else {
+            detail = "primary audio carrier healthy"
+        }
+
+        return PrimaryAudioHeartbeat(
+            formatVersion: Self.currentFormatVersion,
+            kind: Self.kind,
+            ok: healthy,
+            healthy: healthy,
+            streaming: streaming,
+            audioActive: audioActive,
+            timestampMs: nowMs,
+            name: name,
+            detail: detail,
+            engineRunning: engineRunning,
+            routeHealthy: routeHealthy,
+            inputCallbackAgeMs: normalizedInputAge,
+            outputCallbackAgeMs: normalizedOutputAge,
+            manualReturnRequired: true
+        )
+    }
+
+    static func unavailable(name: String) -> PrimaryAudioHeartbeat {
+        make(
+            name: name,
+            nowMs: 0,
+            operatorStopped: false,
+            engineRunning: false,
+            routeHealthy: false,
+            routeDetail: "heartbeat not initialized",
+            inputCallbackAgeMs: -1,
+            outputCallbackAgeMs: -1
+        )
+    }
+
+    func evaluated(at nowMs: Int64) -> PrimaryAudioHeartbeat {
+        guard healthy else { return self }
+        let ageMs = nowMs - timestampMs
+        guard ageMs >= 0, ageMs <= Self.maximumFreshAgeMs else {
+            var stale = self
+            stale.ok = false
+            stale.healthy = false
+            stale.streaming = false
+            stale.audioActive = false
+            stale.detail = ageMs < 0
+                ? "heartbeat timestamp is in the future"
+                : "heartbeat stale"
+            return stale
+        }
+        return self
+    }
+}
+
 // The only surface MonitorServer/HTTPConnection see. Thread-safe: every method may
 // be called from the server's background queue. Keeps the transport ignorant of
 // Core Audio / AppModel.
@@ -12,6 +119,7 @@ protocol MonitorService: AnyObject {
     var pairingCode: String { get }
     var healthName: String { get }
     var isPairingLockedOut: Bool { get }
+    func currentPrimaryAudioHeartbeat() -> PrimaryAudioHeartbeat
     func currentSnapshotJSON() -> Data
     func staticResource(forPath path: String) -> StaticResource?
     func pair(code: String, clientLabel: String) -> String?
@@ -27,6 +135,7 @@ final class MonitorServiceCore: MonitorService, @unchecked Sendable {
 
     private let resources: StaticResourceProvider
     private let lock = NSLock()
+    private var primaryAudioHeartbeat: PrimaryAudioHeartbeat
     private var snapshotData = Data("{}".utf8)
     private var commandHandler: ((RemoteCommand, @escaping (CommandResult) -> Void) -> Void)?
 
@@ -36,6 +145,7 @@ final class MonitorServiceCore: MonitorService, @unchecked Sendable {
         self.pairingStore = pairingStore
         self.healthName = healthName
         self.resources = resources
+        self.primaryAudioHeartbeat = .unavailable(name: healthName)
     }
 
     var pairingCode: String { pairingStore.code }
@@ -44,6 +154,15 @@ final class MonitorServiceCore: MonitorService, @unchecked Sendable {
 
     func publish(_ data: Data) {
         lock.lock(); snapshotData = data; lock.unlock()
+    }
+
+    func publishPrimaryAudioHeartbeat(_ heartbeat: PrimaryAudioHeartbeat) {
+        lock.lock(); primaryAudioHeartbeat = heartbeat; lock.unlock()
+    }
+
+    func currentPrimaryAudioHeartbeat() -> PrimaryAudioHeartbeat {
+        lock.lock(); defer { lock.unlock() }
+        return primaryAudioHeartbeat
     }
 
     func currentSnapshotJSON() -> Data {

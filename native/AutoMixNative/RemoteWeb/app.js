@@ -32,6 +32,9 @@ function render(s) {
   $("runText").textContent = s.isRunning ? "Auto mix running" : "Engine stopped";
   const pipeline = s.pipeline || {};
   const pipelineParts = [];
+  if (pipeline.primaryHeartbeatState && pipeline.primaryHeartbeatState !== "disabled") {
+    pipelineParts.push(`failover heartbeat ${pipeline.primaryHeartbeatState}`);
+  }
   if (pipeline.encoderState && pipeline.encoderState !== "disabled") {
     pipelineParts.push(`encoder ${pipeline.encoderState}`);
   }

@@ -12,7 +12,7 @@ hardware proof.
 | Version control and CI | Private repository at `github.com/joshuahuffman02/live-daw`; clean published `main`; `.github/workflows/ci.yml` builds/tests evidence contracts, DSP, replay, JUCE, web, native Debug/Release, and the monitor smoke | Source is published. A slice is called green only when the hosted macOS 15 workflow succeeds for its exact commit; the stable workflow link below is the source of truth. |
 | Behavior-tested speech automixer | `appliance/dsp/Automixer.h`; 96 kHz acquisition, equal-share, silence ducking, handoff, and no-allocation assertions in `appliance/tests/test_dsp.cpp` | Verified in deterministic tests. |
 | Measurement-driven gain staging, activity/noise floor, adaptive gates, level riding, slow loudness normalization | `appliance/src/BrainThread.h`; measurement, loudness, limiter-backoff, FREEZE/SAFE, and shadow tests in `appliance/tests/test_dsp.cpp` | Verified in deterministic control-loop tests and native bridge integration. |
-| Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE verified. Independent hardware/encoder fallback is fully specified but must be built and kill-tested on the venue system. |
+| Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; stale-aware fail-closed `/health` primary-audio heartbeat; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE and the application-side external heartbeat contract are verified. The normally de-energized relay/encoder backup path must still be built and kill-tested on the venue system. |
 | Safe scene transitions, manual overrides, Planning Center driving | Smoothed targets in the DSP/brain; full processing and mix-override bridge tests; Planning Center mapping/timed-cue tests; Keychain credential storage | Software verified. Live API/service-plan exercise still needs venue credentials and an actual service plan. |
 | Worship roles and stereo linking | Role profiles for speech, vocals, guitars, bass, drums, keys, percussion, and playback; linked detector/control tests; profile/preflight coverage tests | Verified in deterministic and native simulation tests. |
 | Latency and lip-sync reporting | Fixed limiter latency impulse test; native route estimate and persisted measured A/V path; `docs/LATENCY_AND_LIPSYNC.md` | Calculation/reporting verified. End-to-end camera/encoder measurement and multi-hour drift observation require the real chain. |
@@ -33,7 +33,7 @@ hardware proof.
 
 - Deterministic DSP: **117 passed, 0 failed**.
 - Replay evaluator: self-test passed.
-- Native XCTest: **236 passed, 0 failed**.
+- Native XCTest: **243 passed, 0 failed**.
 - Remote monitor: static/auth/pairing/cookie/command/SSE smoke passed.
 - Web proof: clean install, typecheck, production build, and `npm audit` passed
   with **0 known vulnerabilities**.

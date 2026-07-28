@@ -9,6 +9,18 @@ enum MonitorSmoke {
         let store = PairingStore(code: "424242")
         let core = MonitorServiceCore(pairingStore: store, healthName: "smoke-venue")
         core.setCommandHandler { _, done in done(CommandResult(ok: true, message: "echo")) }
+        let heartbeatNowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        let healthyHeartbeat = PrimaryAudioHeartbeat.make(
+            name: "smoke-venue",
+            nowMs: heartbeatNowMs,
+            operatorStopped: false,
+            engineRunning: true,
+            routeHealthy: true,
+            routeDetail: "fixture route ready",
+            inputCallbackAgeMs: 10,
+            outputCallbackAgeMs: 12
+        )
+        core.publishPrimaryAudioHeartbeat(healthyHeartbeat)
 
         let snapshot = TelemetryAssembler.assemble(
             ts: 1, venueName: "smoke-venue", isRunning: true, safe: false, freeze: false,
@@ -41,10 +53,51 @@ enum MonitorSmoke {
         }
 
         // 1) health
-        if let (status, body, _) = httpRequest(base + "/health") {
+        if let (status, body, headers) = httpRequest(base + "/health") {
             check("health 200", status == 200, "status \(status)")
-            check("health ok:true", String(data: body, encoding: .utf8)?.contains("\"ok\":true") == true)
+            let heartbeat = try? JSONDecoder().decode(PrimaryAudioHeartbeat.self, from: body)
+            check("health contract decodes", heartbeat != nil)
+            check("health is primary-audio ready",
+                  heartbeat?.ok == true &&
+                    heartbeat?.healthy == true &&
+                    heartbeat?.streaming == true &&
+                    heartbeat?.audioActive == true)
+            check("health requires manual return", heartbeat?.manualReturnRequired == true)
+            check("health response is not cacheable", headers["cache-control"] == "no-store")
         } else { check("health reachable", false) }
+
+        let stoppedHeartbeat = PrimaryAudioHeartbeat.make(
+            name: "smoke-venue",
+            nowMs: Int64(Date().timeIntervalSince1970 * 1_000),
+            operatorStopped: true,
+            engineRunning: false,
+            routeHealthy: false,
+            routeDetail: "fixture route stopped",
+            inputCallbackAgeMs: -1,
+            outputCallbackAgeMs: -1
+        )
+        core.publishPrimaryAudioHeartbeat(stoppedHeartbeat)
+        if let (status, body, _) = httpRequest(base + "/health") {
+            let heartbeat = try? JSONDecoder().decode(PrimaryAudioHeartbeat.self, from: body)
+            check("stopped primary returns 503", status == 503, "status \(status)")
+            check("stopped primary fails closed", heartbeat?.healthy == false)
+        } else { check("stopped health reachable", false) }
+
+        var staleHeartbeat = healthyHeartbeat
+        staleHeartbeat.timestampMs =
+            Int64(Date().timeIntervalSince1970 * 1_000) -
+            PrimaryAudioHeartbeat.maximumFreshAgeMs -
+            1
+        core.publishPrimaryAudioHeartbeat(staleHeartbeat)
+        if let (status, body, _) = httpRequest(base + "/health") {
+            let heartbeat = try? JSONDecoder().decode(PrimaryAudioHeartbeat.self, from: body)
+            check("stale primary returns 503", status == 503, "status \(status)")
+            check("stale primary fails closed",
+                  heartbeat?.healthy == false && heartbeat?.detail == "heartbeat stale")
+        } else { check("stale health reachable", false) }
+        var refreshedHeartbeat = healthyHeartbeat
+        refreshedHeartbeat.timestampMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        core.publishPrimaryAudioHeartbeat(refreshedHeartbeat)
 
         // 2) static PWA shell
         if let (status, body, headers) = httpRequest(base + "/index.html") {

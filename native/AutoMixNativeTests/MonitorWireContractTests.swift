@@ -28,6 +28,8 @@ final class MonitorWireContractTests: XCTestCase {
                 lastCallbackFrames: 256, maxCallbackFrames: 256
             ),
             pipeline: PipelineTelemetry(
+                primaryHeartbeatState: .healthy,
+                primaryHeartbeatDetail: "primary audio carrier healthy",
                 encoderState: .healthy,
                 encoderDetail: "ingest live",
                 egressState: .healthy,
@@ -72,7 +74,134 @@ final class MonitorWireContractTests: XCTestCase {
         XCTAssertNotNil(stream["momentaryLufs"])
         XCTAssertNotNil(stream["limiterGrDb"])
         let pipeline = try XCTUnwrap(object["pipeline"] as? [String: Any])
+        XCTAssertEqual(pipeline["primaryHeartbeatState"] as? String, "healthy")
         XCTAssertEqual(pipeline["encoderState"] as? String, "healthy")
+    }
+
+    func testPrimaryAudioHeartbeatRequiresRunningRouteAndFreshCallbacks() {
+        let heartbeat = PrimaryAudioHeartbeat.make(
+            name: "venue",
+            nowMs: 10_000,
+            operatorStopped: false,
+            engineRunning: true,
+            routeHealthy: true,
+            routeDetail: "route ready",
+            inputCallbackAgeMs: 20,
+            outputCallbackAgeMs: 25
+        )
+
+        XCTAssertTrue(heartbeat.ok)
+        XCTAssertTrue(heartbeat.healthy)
+        XCTAssertTrue(heartbeat.streaming)
+        XCTAssertTrue(heartbeat.audioActive)
+        XCTAssertTrue(heartbeat.manualReturnRequired)
+
+        let stalled = PrimaryAudioHeartbeat.make(
+            name: "venue",
+            nowMs: 10_000,
+            operatorStopped: false,
+            engineRunning: true,
+            routeHealthy: true,
+            routeDetail: "route ready",
+            inputCallbackAgeMs: 1_000,
+            outputCallbackAgeMs: 25
+        )
+        XCTAssertFalse(stalled.healthy)
+        XCTAssertFalse(stalled.streaming)
+        XCTAssertFalse(stalled.audioActive)
+        XCTAssertEqual(stalled.detail, "input callback stalled")
+
+        let wrongRoute = PrimaryAudioHeartbeat.make(
+            name: "venue",
+            nowMs: 10_000,
+            operatorStopped: false,
+            engineRunning: true,
+            routeHealthy: false,
+            routeDetail: "wrong output UID",
+            inputCallbackAgeMs: 20,
+            outputCallbackAgeMs: 25
+        )
+        XCTAssertFalse(wrongRoute.healthy)
+        XCTAssertFalse(wrongRoute.streaming)
+        XCTAssertFalse(wrongRoute.audioActive)
+        XCTAssertEqual(wrongRoute.detail, "wrong output UID")
+    }
+
+    func testPrimaryAudioHeartbeatNormalizesNonfiniteCallbackTelemetry() throws {
+        let heartbeat = PrimaryAudioHeartbeat.make(
+            name: "venue",
+            nowMs: 10_000,
+            operatorStopped: false,
+            engineRunning: true,
+            routeHealthy: true,
+            routeDetail: "route ready",
+            inputCallbackAgeMs: .nan,
+            outputCallbackAgeMs: .infinity
+        )
+
+        XCTAssertFalse(heartbeat.healthy)
+        XCTAssertEqual(heartbeat.inputCallbackAgeMs, -1)
+        XCTAssertEqual(heartbeat.outputCallbackAgeMs, -1)
+        let data = try JSONEncoder().encode(heartbeat)
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        for key in [
+            "formatVersion", "kind", "ok", "healthy", "streaming", "audioActive",
+            "timestampMs", "name", "detail", "engineRunning", "routeHealthy",
+            "inputCallbackAgeMs", "outputCallbackAgeMs", "manualReturnRequired"
+        ] {
+            XCTAssertNotNil(object[key], "missing heartbeat key \(key)")
+        }
+    }
+
+    func testPrimaryAudioHeartbeatFailsClosedWhenStaleOrFutureDated() {
+        let heartbeat = PrimaryAudioHeartbeat.make(
+            name: "venue",
+            nowMs: 10_000,
+            operatorStopped: false,
+            engineRunning: true,
+            routeHealthy: true,
+            routeDetail: "route ready",
+            inputCallbackAgeMs: 20,
+            outputCallbackAgeMs: 25
+        )
+
+        XCTAssertTrue(
+            heartbeat.evaluated(
+                at: 10_000 + PrimaryAudioHeartbeat.maximumFreshAgeMs
+            ).healthy
+        )
+        let stale = heartbeat.evaluated(
+            at: 10_001 + PrimaryAudioHeartbeat.maximumFreshAgeMs
+        )
+        XCTAssertFalse(stale.healthy)
+        XCTAssertEqual(stale.detail, "heartbeat stale")
+
+        let future = heartbeat.evaluated(at: 9_999)
+        XCTAssertFalse(future.healthy)
+        XCTAssertEqual(future.detail, "heartbeat timestamp is in the future")
+    }
+
+    func testMonitorServiceHealthDefaultsFailClosedAndPublishesAtomically() {
+        let core = MonitorServiceCore(
+            pairingStore: PairingStore(code: "424242"),
+            healthName: "venue"
+        )
+        XCTAssertFalse(core.currentPrimaryAudioHeartbeat().healthy)
+
+        let heartbeat = PrimaryAudioHeartbeat.make(
+            name: "venue",
+            nowMs: 10_000,
+            operatorStopped: false,
+            engineRunning: true,
+            routeHealthy: true,
+            routeDetail: "route ready",
+            inputCallbackAgeMs: 20,
+            outputCallbackAgeMs: 25
+        )
+        core.publishPrimaryAudioHeartbeat(heartbeat)
+        XCTAssertEqual(core.currentPrimaryAudioHeartbeat(), heartbeat)
     }
 
     func testAlertSeverityIsComparableForMaxEscalation() {

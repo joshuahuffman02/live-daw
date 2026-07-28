@@ -481,6 +481,13 @@ The app does not configure the Midas console. It expects Dante to already exist:
   the complete file for route, continuity, activity, candidate movement, and
   non-application semantics; see
   [`../docs/SHADOW_DECISION_EVIDENCE.md`](../docs/SHADOW_DECISION_EVIDENCE.md).
+- The embedded monitor server's token-free `/health` endpoint is the supported
+  external primary-audio heartbeat. It fails closed with HTTP 503 for operator Stop,
+  a stopped engine, non-production/simulated/wrong route, callback stall, or a
+  control-loop update older than one second. An external controller must poll at
+  least twice per second with a request timeout no longer than one second, treat
+  unreachable/non-200/stale results as backup, latch backup, and require manual
+  return; see [`../docs/EXTERNAL_FAILOVER.md`](../docs/EXTERNAL_FAILOVER.md).
 - The Soundcheck controls expose each phase explicitly: recording frames, saving the
   WAV file, then analyzing the saved payload for the report.
 - Stability Monitor runs a longer non-recording validation from the control side and

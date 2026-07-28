@@ -1158,6 +1158,17 @@ final class AppModel: ObservableObject {
         return !channelCountState.isWarning
     }
 
+    var primaryAudioHeartbeatRouteHealth: PrimaryAudioHeartbeatRouteHealth {
+        PrimaryAudioHeartbeatRouteHealth.make(
+            inputDevice: engine.runningInputDeviceInfo(),
+            outputDevice: engine.runningOutputDeviceInfo(),
+            selectedInputUID: selectedInputUID,
+            selectedOutputUID: selectedOutputUID,
+            detectedInputChannels: engine.inputChannelCount,
+            detectedSampleRate: engine.sampleRate
+        )
+    }
+
     var inputDevices: [AMDeviceInfo] {
         devices.filter { $0.inputChannels > 0 }
     }
@@ -4030,6 +4041,73 @@ struct HD96RunningRouteHealth: Equatable {
             failedChecks: report.checks.filter { check in
                 runtimeCheckNames.contains(check.name) && !check.passed
             }
+        )
+    }
+}
+
+struct PrimaryAudioHeartbeatRouteHealth: Equatable {
+    var isReady: Bool
+    var summary: String
+
+    static func make(
+        inputDevice: AMDeviceInfo?,
+        outputDevice: AMDeviceInfo?,
+        selectedInputUID: String,
+        selectedOutputUID: String,
+        detectedInputChannels: Int,
+        detectedSampleRate: Double
+    ) -> PrimaryAudioHeartbeatRouteHealth {
+        guard let inputDevice, let outputDevice else {
+            return PrimaryAudioHeartbeatRouteHealth(
+                isReady: false,
+                summary: "production Core Audio route is not running"
+            )
+        }
+        guard !selectedInputUID.isEmpty,
+              !selectedOutputUID.isEmpty,
+              inputDevice.uid == selectedInputUID,
+              outputDevice.uid == selectedOutputUID
+        else {
+            return PrimaryAudioHeartbeatRouteHealth(
+                isReady: false,
+                summary: "running route does not match the configured input/output UIDs"
+            )
+        }
+
+        let inputIdentity = "\(inputDevice.name) \(inputDevice.uid)".lowercased()
+        let outputIdentity = "\(outputDevice.name) \(outputDevice.uid)".lowercased()
+        let productionRouteIdentified =
+            inputIdentity.contains("dante") ||
+            inputIdentity.contains("hd96") ||
+            inputIdentity.contains("heritage-d") ||
+            inputIdentity.contains("heritage d")
+        guard productionRouteIdentified,
+              !inputIdentity.contains("simulat"),
+              !outputIdentity.contains("simulat")
+        else {
+            return PrimaryAudioHeartbeatRouteHealth(
+                isReady: false,
+                summary: "route is not an identified non-simulated HD96/Dante production path"
+            )
+        }
+
+        let runningHealth = HD96RunningRouteHealth.make(
+            inputDevice: inputDevice,
+            outputDevice: outputDevice,
+            expectedInputChannels: 64,
+            detectedInputChannels: detectedInputChannels,
+            detectedSampleRate: detectedSampleRate
+        )
+        guard runningHealth.isReady else {
+            return PrimaryAudioHeartbeatRouteHealth(
+                isReady: false,
+                summary: runningHealth.warningMessage
+            )
+        }
+
+        return PrimaryAudioHeartbeatRouteHealth(
+            isReady: true,
+            summary: "64-channel/96 kHz HD96/Dante route and isolated output ready"
         )
     }
 }

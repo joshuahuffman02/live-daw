@@ -1,8 +1,8 @@
 "use strict";
 
-const CACHE = "automix-shell-v4";
+const CACHE = "automix-shell-v5";
 const SHELL = [
-  "/", "/index.html", "/app.js?v=4", "/style.css?v=4",
+  "/", "/index.html", "/app.js?v=5", "/style.css?v=5",
   "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"
 ];
 

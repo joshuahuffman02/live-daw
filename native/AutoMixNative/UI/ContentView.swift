@@ -1157,6 +1157,16 @@ private struct NativeConsoleBar: View {
                         if let bridge = model.monitorBridge {
                             Text("· \(bridge.connectedClientCount) linked")
                                 .foregroundStyle(AutoMixPalette.secondaryText)
+                            Text(
+                                bridge.primaryHeartbeatStatus.hasPrefix("healthy")
+                                    ? "· primary ready"
+                                    : "· backup required"
+                            )
+                            .foregroundStyle(
+                                bridge.primaryHeartbeatStatus.hasPrefix("healthy")
+                                    ? AutoMixPalette.green
+                                    : AutoMixPalette.amber
+                            )
                         }
                     }
                     .font(.system(size: 10, weight: .medium))

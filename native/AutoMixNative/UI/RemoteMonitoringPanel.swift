@@ -61,6 +61,28 @@ struct RemoteMonitoringPanel: View {
                         }
                     }
 
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Fail-safe primary heartbeat", systemImage: "waveform.path.ecg")
+                            .font(.caption.weight(.semibold))
+                        Text(bridge.primaryHeartbeatURLString)
+                            .font(.system(.caption2, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                        Text(bridge.primaryHeartbeatStatus)
+                            .font(.caption)
+                            .foregroundStyle(
+                                bridge.primaryHeartbeatStatus.hasPrefix("healthy")
+                                    ? .green
+                                    : .orange
+                            )
+                        Text("An external fail-safe controller may poll this token-free URL. Any non-200 response, stale payload, or unreachable app must select backup; return to primary stays manual at the external switch.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     Text("Open the URL on a phone on this Wi-Fi, enter the code to control, and Add to Home Screen for background alerts. macOS may ask to allow incoming connections the first time.")
                         .font(.caption)
                         .foregroundStyle(.secondary)

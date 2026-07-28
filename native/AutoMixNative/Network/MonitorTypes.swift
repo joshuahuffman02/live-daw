@@ -60,12 +60,16 @@ struct CounterTelemetry: Codable, Equatable {
 }
 
 struct PipelineTelemetry: Codable, Equatable {
+    let primaryHeartbeatState: StreamHealthState
+    let primaryHeartbeatDetail: String
     let encoderState: StreamHealthState
     let encoderDetail: String
     let egressState: StreamHealthState
     let egressDetail: String
 
     static let disabled = PipelineTelemetry(
+        primaryHeartbeatState: .disabled,
+        primaryHeartbeatDetail: "endpoint off",
         encoderState: .disabled,
         encoderDetail: "not configured",
         egressState: .disabled,

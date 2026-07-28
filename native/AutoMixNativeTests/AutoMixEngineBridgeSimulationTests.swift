@@ -2339,6 +2339,148 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertTrue(health.warningMessage.localizedCaseInsensitiveContains("Midas HD96"))
     }
 
+    func testPrimaryAudioHeartbeatRouteRequiresExactProductionHD96Route() {
+        let input = AMDeviceInfo(
+            uid: "dante.input",
+            name: "Dante Virtual Soundcard",
+            inputChannels: 64,
+            outputChannels: 0,
+            sampleRate: 96_000
+        )
+        let output = AMDeviceInfo(
+            uid: "stream.output",
+            name: "Stream Encoder Output",
+            inputChannels: 0,
+            outputChannels: 2,
+            sampleRate: 96_000
+        )
+
+        let health = PrimaryAudioHeartbeatRouteHealth.make(
+            inputDevice: input,
+            outputDevice: output,
+            selectedInputUID: input.uid,
+            selectedOutputUID: output.uid,
+            detectedInputChannels: 64,
+            detectedSampleRate: 96_000
+        )
+
+        XCTAssertTrue(health.isReady)
+        XCTAssertTrue(health.summary.localizedCaseInsensitiveContains("64-channel"))
+
+        let wrongSelection = PrimaryAudioHeartbeatRouteHealth.make(
+            inputDevice: input,
+            outputDevice: output,
+            selectedInputUID: "different.input",
+            selectedOutputUID: output.uid,
+            detectedInputChannels: 64,
+            detectedSampleRate: 96_000
+        )
+        XCTAssertFalse(wrongSelection.isReady)
+        XCTAssertTrue(wrongSelection.summary.localizedCaseInsensitiveContains("configured"))
+    }
+
+    func testPrimaryAudioHeartbeatRouteRejectsSimulationAndGenericInput() {
+        let output = AMDeviceInfo(
+            uid: "stream.output",
+            name: "Stream Encoder Output",
+            inputChannels: 0,
+            outputChannels: 2,
+            sampleRate: 96_000
+        )
+        let simulated = AMDeviceInfo(
+            uid: "com.livedaw.automix.simulated-hd96-dante",
+            name: "Simulated HD96 Dante Split",
+            inputChannels: 64,
+            outputChannels: 0,
+            sampleRate: 96_000
+        )
+        let generic = AMDeviceInfo(
+            uid: "generic.64",
+            name: "Generic 64 Channel Interface",
+            inputChannels: 64,
+            outputChannels: 0,
+            sampleRate: 96_000
+        )
+
+        for input in [simulated, generic] {
+            let health = PrimaryAudioHeartbeatRouteHealth.make(
+                inputDevice: input,
+                outputDevice: output,
+                selectedInputUID: input.uid,
+                selectedOutputUID: output.uid,
+                detectedInputChannels: 64,
+                detectedSampleRate: 96_000
+            )
+            XCTAssertFalse(health.isReady)
+            XCTAssertTrue(health.summary.localizedCaseInsensitiveContains("non-simulated"))
+        }
+
+        let realInput = AMDeviceInfo(
+            uid: "dante.input",
+            name: "Dante Virtual Soundcard",
+            inputChannels: 64,
+            outputChannels: 0,
+            sampleRate: 96_000
+        )
+        let simulatedOutput = AMDeviceInfo(
+            uid: "simulated.output",
+            name: "Simulated Stream Encoder Output",
+            inputChannels: 0,
+            outputChannels: 2,
+            sampleRate: 96_000
+        )
+        let simulatedOutputHealth = PrimaryAudioHeartbeatRouteHealth.make(
+            inputDevice: realInput,
+            outputDevice: simulatedOutput,
+            selectedInputUID: realInput.uid,
+            selectedOutputUID: simulatedOutput.uid,
+            detectedInputChannels: 64,
+            detectedSampleRate: 96_000
+        )
+        XCTAssertFalse(simulatedOutputHealth.isReady)
+        XCTAssertTrue(
+            simulatedOutputHealth.summary.localizedCaseInsensitiveContains("non-simulated")
+        )
+    }
+
+    @MainActor
+    func testSimulatedRuntimeCannotEnergizePrimaryAudioHeartbeat() throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(
+            profileDirectory: profileDirectory,
+            autoStartRemoteMonitoring: false
+        )
+        model.debugStopPollingForTesting()
+        model.automaticContinuousRecordingEnabled = false
+        model.shadowMode = false
+        defer {
+            if model.isRunning {
+                model.stopEngine()
+            }
+            model.debugStopPollingForTesting()
+            try? FileManager.default.removeItem(at: profileDirectory)
+        }
+
+        try model.debugStartSimulatedForRecoveryTesting()
+        let heartbeat = try XCTUnwrap(
+            model.monitorBridge?.primaryAudioHeartbeatSnapshot
+        )
+        XCTAssertFalse(heartbeat.healthy)
+        XCTAssertFalse(heartbeat.streaming)
+        XCTAssertFalse(heartbeat.audioActive)
+        XCTAssertTrue(heartbeat.detail.localizedCaseInsensitiveContains("non-simulated"))
+
+        let telemetry = try XCTUnwrap(
+            model.monitorBridge?.debugTelemetrySnapshotForTesting
+        )
+        XCTAssertEqual(telemetry.pipeline.primaryHeartbeatState, .unhealthy)
+        XCTAssertTrue(
+            telemetry.alerts.contains { $0.id == "primary-failover-heartbeat" }
+        )
+        XCTAssertEqual(telemetry.severity, .critical)
+    }
+
     func testVenueProfileDefaultsExpectedInputChannelsForOlderProfiles() throws {
         let data = Data("""
         {

@@ -9,6 +9,7 @@ final class MonitorBridge: ObservableObject {
     @Published private(set) var listeningStatus = "stopped"
     @Published private(set) var connectedClientCount = 0
     @Published private(set) var pairedClientCount = 0
+    @Published private(set) var primaryHeartbeatStatus = "unavailable · endpoint off"
 
     let pairingStore = PairingStore()
 
@@ -51,8 +52,29 @@ final class MonitorBridge: ObservableObject {
         return "http://\(host):\(port)"
     }
 
+    var primaryHeartbeatURLString: String {
+        "\(urlString)/health"
+    }
+
+    var primaryAudioHeartbeatSnapshot: PrimaryAudioHeartbeat {
+        core.currentPrimaryAudioHeartbeat()
+    }
+
+#if DEBUG
+    var debugTelemetrySnapshotForTesting: TelemetrySnapshot? {
+        try? JSONDecoder().decode(
+            TelemetrySnapshot.self,
+            from: core.currentSnapshotJSON()
+        )
+    }
+#endif
+
     func start() {
         guard server == nil else { return }
+        // Never carry a previously healthy sample across an endpoint restart.
+        // The next control-loop tick must prove the route and callbacks again.
+        core.publishPrimaryAudioHeartbeat(.unavailable(name: venueName))
+        primaryHeartbeatStatus = "backup required · heartbeat not initialized"
         let server = MonitorServer(service: core, port: port, advertiseBonjour: advertiseBonjour)
         server.onStateChange = { [weak self] status in
             Task { @MainActor in self?.listeningStatus = status }
@@ -63,6 +85,7 @@ final class MonitorBridge: ObservableObject {
             listeningStatus = "starting"
         } catch {
             listeningStatus = "failed: \(error.localizedDescription)"
+            primaryHeartbeatStatus = "unavailable · endpoint failed"
         }
     }
 
@@ -71,6 +94,8 @@ final class MonitorBridge: ObservableObject {
         server = nil
         listeningStatus = "stopped"
         connectedClientCount = 0
+        core.publishPrimaryAudioHeartbeat(.unavailable(name: venueName))
+        primaryHeartbeatStatus = "unavailable · endpoint off"
     }
 
     func revokeAllPairings() {
@@ -82,6 +107,25 @@ final class MonitorBridge: ObservableObject {
     // snapshot read by all SSE clients.
     func captureAndPublish(nowMs: Int64) {
         guard let model = appModel else { return }
+
+        let routeHealth = model.primaryAudioHeartbeatRouteHealth
+        let heartbeat = PrimaryAudioHeartbeat.make(
+            name: venueName,
+            nowMs: nowMs,
+            operatorStopped: model.operatorStoppedEngine,
+            engineRunning: model.isRunning,
+            routeHealthy: routeHealth.isReady,
+            routeDetail: routeHealth.summary,
+            inputCallbackAgeMs: model.inputCallbackAgeMs,
+            outputCallbackAgeMs: model.outputCallbackAgeMs
+        )
+        core.publishPrimaryAudioHeartbeat(heartbeat)
+        let heartbeatStatus = server == nil
+            ? "unavailable · endpoint off"
+            : "\(heartbeat.healthy ? "healthy" : "backup required") · \(heartbeat.detail)"
+        if primaryHeartbeatStatus != heartbeatStatus {
+            primaryHeartbeatStatus = heartbeatStatus
+        }
 
         // Skip the snapshot build + JSON encode + alert pass entirely when nothing is
         // watching and nothing is running — keeps an idle app at zero cost.
@@ -135,7 +179,18 @@ final class MonitorBridge: ObservableObject {
             encoderHealth: model.encoderHealth,
             egressHealth: model.egressHealth
         )
-        let (alerts, severity) = evaluator.step(alertInput, nowMs: nowMs)
+        var (alerts, severity) = evaluator.step(alertInput, nowMs: nowMs)
+        if model.isRunning && !heartbeat.healthy {
+            alerts.append(
+                Alert(
+                    id: "primary-failover-heartbeat",
+                    severity: .critical,
+                    title: "Primary heartbeat unhealthy",
+                    detail: heartbeat.detail
+                )
+            )
+            severity = max(severity, .critical)
+        }
 
         let snapshot = TelemetryAssembler.assemble(
             ts: nowMs,
@@ -153,6 +208,8 @@ final class MonitorBridge: ObservableObject {
             stream: stream,
             counters: counters,
             pipeline: PipelineTelemetry(
+                primaryHeartbeatState: heartbeat.healthy ? .healthy : .unhealthy,
+                primaryHeartbeatDetail: heartbeat.detail,
                 encoderState: model.encoderHealth.state,
                 encoderDetail: model.encoderHealth.detail,
                 egressState: model.egressHealth.state,

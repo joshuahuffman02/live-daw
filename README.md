@@ -213,7 +213,11 @@ Current native milestone:
   verification and bounded backoff, restores continuous-capture intent, and writes
   ordered durable incident JSONL; optional encoder-ingest and public-egress endpoints
   provide fresh-payload verification to the desktop and remote alert path, with the
-  crash-relaunch/session-resume procedure documented in
+  embedded monitor server also serving a fail-closed `/health` primary-audio
+  heartbeat for an external relay/controller (HTTP 200 only for the exact real
+  64-channel/96 kHz HD96/Dante route and fresh callbacks/control loop; otherwise
+  503; backup selection remains latched/manual-return hardware); the
+  crash-relaunch/session-resume procedure is documented in
   [`docs/RUNTIME_RESILIENCE.md`](docs/RUNTIME_RESILIENCE.md); staged promotion
   preserves and re-verifies continuous dual-probe coverage using
   [`docs/STREAM_HEALTH_EVIDENCE.md`](docs/STREAM_HEALTH_EVIDENCE.md) and binds a
