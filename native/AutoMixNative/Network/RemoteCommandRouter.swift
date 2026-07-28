@@ -5,7 +5,6 @@ import Foundation
 // the index is out of range so the router can answer the phone honestly.
 protocol RemoteControlTarget: AnyObject {
     func remoteSetSafe(_ on: Bool)
-    func remoteSetFreeze(_ on: Bool)
     func remoteSetScene(_ scene: String) -> Bool
     func remoteSetMute(idx: Int, on: Bool) -> Bool
     func remoteSetFaderOverride(idx: Int, on: Bool, db: Double) -> Bool
@@ -20,9 +19,11 @@ enum RemoteCommandRouter {
             target.remoteSetSafe(on)
             return CommandResult(ok: true)
 
-        case .setFreeze(let on):
-            target.remoteSetFreeze(on)
-            return CommandResult(ok: true)
+        case .setFreeze:
+            return CommandResult(
+                ok: false,
+                message: "FREEZE is local-only; use the Mac"
+            )
 
         case .setScene(let scene):
             return target.remoteSetScene(scene)
@@ -55,6 +56,26 @@ enum RemoteCommandRouter {
 
     private static func outOfRange(_ idx: Int) -> CommandResult {
         CommandResult(ok: false, message: "channel \(idx) out of range")
+    }
+}
+
+enum RemoteCommandExecutor {
+    static func execute(
+        _ command: RemoteCommand,
+        to target: RemoteControlTarget,
+        nowMs: Int64,
+        deadlineMs: Int64
+    ) -> CommandResult {
+        guard RemoteCommandExecutionWindow.canExecute(
+            nowMs: nowMs,
+            deadlineMs: deadlineMs
+        ) else {
+            return CommandResult(
+                ok: false,
+                message: "control expired before execution"
+            )
+        }
+        return RemoteCommandRouter.apply(command, to: target)
     }
 }
 

@@ -34,13 +34,21 @@ final class MonitorBridge: ObservableObject {
             pairingStore: pairingStore,
             healthName: venueName
         )
-        core.setCommandHandler { [weak self] command, completion in
+        core.setCommandHandler { [weak self] command, deadlineMs, completion in
             Task { @MainActor in
                 guard let self, let model = self.appModel else {
                     completion(CommandResult(ok: false, message: "control unavailable"))
                     return
                 }
-                completion(RemoteCommandRouter.apply(command, to: model))
+                let nowMs = Int64(ProcessInfo.processInfo.systemUptime * 1_000)
+                completion(
+                    RemoteCommandExecutor.execute(
+                        command,
+                        to: model,
+                        nowMs: nowMs,
+                        deadlineMs: deadlineMs
+                    )
+                )
             }
         }
     }
@@ -221,7 +229,7 @@ final class MonitorBridge: ObservableObject {
         )
 
         if let data = try? JSONEncoder().encode(snapshot) {
-            core.publish(data)
+            core.publish(data, timestampMs: nowMs)
         }
         // Only publish when changed — reassigning @Published every tick forces the whole
         // UI to re-render 10x/sec for nothing.

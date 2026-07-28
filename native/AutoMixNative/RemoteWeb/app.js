@@ -1,6 +1,11 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const {
+  TelemetryFreshness,
+  commandPayload,
+  isTelemetrySnapshot
+} = globalThis.AutoMixRemoteSafety;
 const SCENE_LABELS = {
   preService: "Pre-Service", worship: "Worship", sermon: "Sermon",
   prayer: "Prayer", postService: "Post-Service"
@@ -16,6 +21,10 @@ let alarm = null;             // WebAudio alarm controller
 let pairReturnFocus = null;
 let safeReleaseArmed = false;
 let safeReleaseTimer = null;
+let commandStatusTimer = null;
+let telemetryFresh = false;
+let hasReceivedValidTelemetry = false;
+const telemetryGate = new TelemetryFreshness(1500);
 
 // ---- meters ----
 function dbToPct(db) { return Math.max(0, Math.min(1, (db + 80) / 80)) * 100; }
@@ -26,7 +35,6 @@ function fmtDb(db) { return db <= -99 ? "−∞" : db.toFixed(1) + " dB"; }
 function render(s) {
   lastSnap = s;
   $("venue").textContent = s.venueName || "AutoMix";
-  setConn(true);
 
   $("runDot").className = "dot " + (s.isRunning ? "run" : "stop");
   $("runText").textContent = s.isRunning ? "Auto mix running" : "Engine stopped";
@@ -67,6 +75,7 @@ function render(s) {
   safeBtn.setAttribute("aria-pressed", String(s.safe));
 
   renderAlerts(s);
+  applyRemoteControlAvailability();
 }
 
 function setMeter(meterId, dbId, db) {
@@ -83,6 +92,7 @@ function renderScenes(s) {
     s.scenes.forEach((sc) => {
       const b = document.createElement("button");
       b.className = "pill"; b.dataset.scene = sc; b.textContent = sceneLabel(sc);
+      b.dataset.remoteControl = "true";
       b.type = "button";
       b.onclick = () => sendCommand({ type: "setScene", scene: sc });
       host.appendChild(b);
@@ -136,6 +146,7 @@ function renderChannels(s) {
 
     const mute = document.createElement("button");
     mute.className = "mutebtn" + (c.muted ? " on" : "");
+    mute.dataset.remoteControl = "true";
     mute.textContent = c.muted ? "M" : "○";
     mute.setAttribute("aria-label", (c.muted ? "Unmute " : "Mute ") + c.name);
     mute.onclick = () => sendCommand({ type: "setMute", idx: c.idx, on: !c.muted });
@@ -156,6 +167,7 @@ function channelDetail(c) {
   fader.innerHTML = `<span>Fader</span>`;
   const fIn = document.createElement("input");
   fIn.type = "range"; fIn.min = -80; fIn.max = 12; fIn.step = 0.5; fIn.value = c.faderDb;
+  fIn.dataset.remoteControl = "true";
   const fVal = document.createElement("span"); fVal.className = "val"; fVal.textContent = c.faderDb.toFixed(1);
   fIn.oninput = () => { fVal.textContent = (+fIn.value).toFixed(1); };
   fIn.onchange = () => sendCommand({ type: "setFaderOverride", idx: c.idx, on: true, db: +fIn.value });
@@ -165,12 +177,14 @@ function channelDetail(c) {
   pan.innerHTML = `<span>Pan</span>`;
   const pIn = document.createElement("input");
   pIn.type = "range"; pIn.min = -1; pIn.max = 1; pIn.step = 0.05; pIn.value = c.pan;
+  pIn.dataset.remoteControl = "true";
   const pVal = document.createElement("span"); pVal.className = "val"; pVal.textContent = c.pan.toFixed(2);
   pIn.oninput = () => { pVal.textContent = (+pIn.value).toFixed(2); };
   pIn.onchange = () => sendCommand({ type: "setPanOverride", idx: c.idx, on: true, pan: +pIn.value });
   pan.append(pIn, pVal);
 
   const clear = document.createElement("button");
+  clear.dataset.remoteControl = "true";
   clear.textContent = "Clear overrides (back to auto)";
   clear.onclick = () => sendCommand({ type: "clearOverride", idx: c.idx });
 
@@ -217,7 +231,7 @@ function esc(s) {
 
 function faultHTML(a, critical) {
   const actions = (a.actions || []).includes("engageSafe")
-    ? `<button class="primary" data-act="safe">Engage SAFE now</button>` : "";
+    ? `<button class="primary" data-act="safe" data-remote-control="true">Engage SAFE now</button>` : "";
   return `<div class="fic">⚠</div><div class="ftitle">${esc(a.title)}</div>` +
     `<div class="fdetail">${esc(a.detail)}</div>` +
     `<div class="factions">${actions}` +
@@ -259,28 +273,158 @@ function notify(a) {
 }
 
 // ---- networking ----
-function connectSSE() {
-  const es = new EventSource("/events");
-  es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch (err) {} };
-  es.onerror = () => { setConn(false); };
+function nowMonotonicMs() {
+  return performance.now();
 }
 
-function setConn(up) {
+function applyRemoteControlAvailability() {
+  document.querySelectorAll("[data-remote-control=true]").forEach((control) => {
+    control.disabled = !telemetryFresh;
+  });
+}
+
+function setTelemetryAvailability(fresh, label, detail) {
+  telemetryFresh = fresh;
   const c = $("conn");
-  c.textContent = up ? "linked" : "reconnecting";
-  c.className = up ? "conn-up" : "conn-down";
+  c.textContent = label;
+  c.className = fresh ? "conn-up" : "conn-down";
+  $("controlLock").classList.toggle("hidden", fresh);
+  $("controlLockDetail").textContent = detail ||
+    "Live telemetry is unavailable. Use the Mac or external backup; displayed values may be stale.";
+  document.body.classList.toggle("telemetry-stale", !fresh);
+  if (!fresh) resetSafeReleaseArm();
+  applyRemoteControlAvailability();
+}
+
+function showCommandStatus(message, isError) {
+  const host = $("commandStatus");
+  host.textContent = message;
+  host.className = isError ? "command-status error" : "command-status success";
+  if (commandStatusTimer) window.clearTimeout(commandStatusTimer);
+  commandStatusTimer = null;
+  if (!isError) {
+    commandStatusTimer = window.setTimeout(() => {
+      host.textContent = "";
+      host.className = "command-status";
+    }, 3000);
+  }
+}
+
+function receiveTelemetry(raw) {
+  let snapshot;
+  try {
+    snapshot = JSON.parse(raw);
+  } catch (error) {
+    telemetryGate.markTransportUnavailable();
+    setTelemetryAvailability(
+      false,
+      hasReceivedValidTelemetry ? "invalid telemetry" : "waiting for live telemetry",
+      hasReceivedValidTelemetry
+        ? "The Mac sent malformed telemetry. Controls remain locked; use the Mac or external backup."
+        : "Waiting for the first complete snapshot from the Mac."
+    );
+    return;
+  }
+  if (!isTelemetrySnapshot(snapshot)) {
+    telemetryGate.markTransportUnavailable();
+    setTelemetryAvailability(
+      false,
+      hasReceivedValidTelemetry ? "invalid telemetry" : "waiting for live telemetry",
+      hasReceivedValidTelemetry
+        ? "The telemetry contract is incomplete. Controls remain locked; reload after checking the Mac."
+        : "Waiting for the first complete snapshot from the Mac."
+    );
+    return;
+  }
+
+  hasReceivedValidTelemetry = true;
+  const fresh = telemetryGate.observe(snapshot.ts, nowMonotonicMs());
+  try {
+    render(snapshot);
+  } catch (error) {
+    telemetryGate.markTransportUnavailable();
+    setTelemetryAvailability(false, "invalid telemetry",
+      "The telemetry payload could not be rendered safely. Controls remain locked; reload after checking the Mac.");
+    return;
+  }
+  const awaitingProgress = !fresh && !telemetryGate.hasObservedProgress;
+  setTelemetryAvailability(
+    fresh,
+    fresh ? "linked" : (awaitingProgress ? "verifying live telemetry" : "telemetry stale"),
+    fresh ? "" :
+      (awaitingProgress
+        ? "Waiting for the Mac snapshot timestamp to advance before remote control unlocks."
+        : "Telemetry is connected but no longer advancing. Use the Mac or external backup; displayed values are stale.")
+  );
+}
+
+function connectSSE() {
+  const es = new EventSource("/events");
+  es.onopen = () => {
+    if (!telemetryFresh) {
+      setTelemetryAvailability(false, "waiting for live telemetry",
+        "The connection is open, but a fresh advancing snapshot is still required before control.");
+    }
+  };
+  es.onmessage = (event) => receiveTelemetry(event.data);
+  es.onerror = () => {
+    telemetryGate.markTransportUnavailable();
+    setTelemetryAvailability(false, "reconnecting",
+      "Connection to the Mac was lost. Controls are locked; use the Mac or external backup.");
+  };
 }
 
 async function sendCommand(cmd) {
+  const freshNow = telemetryGate.isFresh(nowMonotonicMs());
+  if (!(telemetryFresh && freshNow && lastSnap)) {
+    setTelemetryAvailability(false, "telemetry stale",
+      "A fresh advancing snapshot is required before remote control.");
+    showCommandStatus("Command not sent — remote telemetry is not live.", true);
+    return;
+  }
+
+  let payload;
+  try {
+    payload = commandPayload(cmd, lastSnap.ts);
+  } catch (error) {
+    setTelemetryAvailability(false, "invalid telemetry",
+      "The current snapshot cannot safely authorize a command.");
+    showCommandStatus("Command not sent — reload the remote console.", true);
+    return;
+  }
+
   try {
     const res = await fetch("/command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cmd),
+      body: JSON.stringify(payload),
       credentials: "same-origin"
     });
-    if (res.status === 401) openPair();
-  } catch (e) {}
+    const data = await res.json().catch(() => ({
+      ok: false,
+      message: "invalid response from the Mac"
+    }));
+    if (res.status === 401) {
+      showCommandStatus("Pair this device before using remote control.", true);
+      openPair();
+      return;
+    }
+    if (!(res.ok && data.ok)) {
+      if ([409, 503, 504].includes(res.status)) {
+        telemetryGate.markTransportUnavailable();
+        setTelemetryAvailability(false, "control unavailable",
+          data.message || "The Mac rejected stale control state.");
+      }
+      showCommandStatus(data.message || `Command failed (HTTP ${res.status}).`, true);
+      return;
+    }
+    showCommandStatus(data.message || "Command accepted by the Mac.", false);
+  } catch (error) {
+    telemetryGate.markTransportUnavailable();
+    setTelemetryAvailability(false, "command connection lost",
+      "The Mac did not acknowledge the command. Verify locally before retrying.");
+    showCommandStatus("No acknowledgement — verify the Mac before retrying.", true);
+  }
 }
 
 function openPair() {
@@ -324,7 +468,11 @@ function handleSafeControl() {
     return;
   }
   resetSafeReleaseArm();
-  sendCommand({ type: "setSafe", on: false });
+  sendCommand({
+    type: "setSafe",
+    on: false,
+    confirmSafeRelease: true
+  });
 }
 
 async function doPair() {
@@ -352,6 +500,8 @@ async function doPair() {
 function boot() {
   $("main").classList.remove("hidden");
   $("footer").classList.remove("hidden");
+  setTelemetryAvailability(false, "connecting",
+    "Waiting for the first fresh snapshot from the Mac.");
   $("safeBtn").onclick = handleSafeControl;
   $("channelSearch").oninput = (event) => {
     channelQuery = event.target.value.trim();
@@ -393,6 +543,23 @@ function boot() {
         event.preventDefault();
         first.focus();
       }
+    }
+  });
+  window.setInterval(() => {
+    if (telemetryFresh && !telemetryGate.isFresh(nowMonotonicMs())) {
+      setTelemetryAvailability(false, "telemetry stale",
+        "Telemetry stopped advancing. Use the Mac or external backup; displayed values are stale.");
+    }
+  }, 250);
+  window.addEventListener("offline", () => {
+    telemetryGate.markTransportUnavailable();
+    setTelemetryAvailability(false, "network offline",
+      "This device is offline. Controls are locked; use the Mac or external backup.");
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !telemetryGate.isFresh(nowMonotonicMs())) {
+      setTelemetryAvailability(false, "telemetry stale",
+        "Fresh telemetry is required after returning to the console.");
     }
   });
   connectSSE();

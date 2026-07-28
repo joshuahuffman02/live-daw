@@ -9,10 +9,6 @@ extension AppModel: RemoteControlTarget {
         MainActor.assumeIsolated { self.safeBypass = on }
     }
 
-    nonisolated func remoteSetFreeze(_ on: Bool) {
-        MainActor.assumeIsolated { self.frozen = on }
-    }
-
     nonisolated func remoteSetScene(_ scene: String) -> Bool {
         MainActor.assumeIsolated {
             guard let mixScene = MixScene(rawValue: scene) else { return false }

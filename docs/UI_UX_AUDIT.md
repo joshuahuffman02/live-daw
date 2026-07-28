@@ -273,10 +273,73 @@ The following screenshots were captured after the second-pass changes from the r
 - Remote pairing focus boundary: passed against the rebuilt/versioned PWA shell.
 - Diff whitespace validation: passed.
 
+## Remote-control safety hardening
+
+This follow-up combined UX/accessibility audit exercised the rebuilt remote PWA at a
+390 × 844 phone viewport against the running native Debug app. It focused on the
+control lifecycle during startup, live telemetry, loss of the Mac/server, and
+automatic recovery.
+
+### Current evidence
+
+![Fresh telemetry with controls ready](ui-ux-audit/remote-control-safety/01-live-telemetry-controls-ready.png)
+
+![Lost telemetry with all remote mutations locked](ui-ux-audit/remote-control-safety/02-telemetry-lost-controls-locked.png)
+
+### Flow health
+
+1. **Initial connection — healthy.** The PWA says `verifying live telemetry`, exposes
+   a persistent lock banner, and keeps mutations disabled until it sees the snapshot
+   timestamp advance. The transition lasts roughly one 10 Hz update and was verified
+   in the live accessibility tree; it is too brief to serve as a stable screenshot.
+2. **Advancing telemetry — healthy.** The lock banner clears only after timestamp
+   progression. The header says `linked`; scene, channel, and SAFE controls enable.
+3. **Mac/server loss — healthy.** The header changes to `reconnecting`, the red
+   **Remote controls locked** banner explains the safe next action, stale meter fills
+   are visually subdued, and all 70 mutation controls in the exercised snapshot are
+   semantically disabled. Search, filters, and detail expansion remain usable because
+   they do not alter the mix.
+4. **Automatic recovery — healthy.** EventSource reconnects without a reload, requires
+   timestamp progression again, then removes the banner and re-enables all 70
+   mutation controls.
+5. **Command delivery — healthy in integration evidence.** Commands carry the source
+   snapshot timestamp; the server rejects missing/stale state, rejects stalled
+   producer state, requires explicit SAFE-release confirmation, and returns a bounded
+   failure when the control handler does not acknowledge. A monotonic execution clock
+   expires work delayed more than 750 ms before routing, so it cannot execute after
+   the phone reports timeout.
+
+### Audit findings
+
+- The first rendered implementation briefly called the server's initial empty frame
+  `invalid telemetry`. It now uses the calmer and more accurate `waiting` /
+  `verifying` states until a complete advancing snapshot exists.
+- A first snapshot is no longer sufficient to unlock control. This closes the
+  reconnect case where the embedded server can immediately replay its last encoded
+  frame before the main loop publishes a new one.
+- A telemetry timestamp must move forward. A backward jump immediately resets the
+  freshness gate and requires a new two-frame baseline, preventing a clock regression
+  from masquerading as producer activity.
+- The loss state preserves the established console hierarchy. The high-priority lock
+  explanation is visible without obscuring the last-known mix, while disabled state,
+  amber connection text, red boundaries, and subdued meters reinforce that those
+  values are historical.
+- The lock banner is an assertive live region, the command result is a polite live
+  region, native `disabled` semantics cover every mutation control, and the viewport
+  permits browser zoom. The
+  screenshots support visual review only; a real VoiceOver/TalkBack session is still
+  required before claiming screen-reader conformance.
+
+No actionable P0, P1, or P2 finding remains in this bounded remote-control-loss flow.
+The remaining evidence gap is a real phone on the venue management Wi-Fi with an
+operator, including background/resume and a deliberate access-point interruption.
+
 ## Remaining product-level work
 
 - Test the native app with HD96/Dante hardware at the real venue and capture a full operator rehearsal on the production display.
 - Run a rehearsal usability study with a technical director who did not build the system.
 - Validate color contrast and keyboard/screen-reader behavior with automated and manual accessibility tooling.
-- Decide which controls are allowed on the remote surface during LIVE mode, then test loss-of-network and stale-telemetry behavior with operators.
+- Validate the implemented LIVE policy—SAFE, scenes, and channel overrides remote;
+  FREEZE local-only—and the fail-closed loss/recovery behavior with real operators on
+  the venue Wi-Fi.
 - Establish design tokens shared by SwiftUI, the remote PWA, and the browser proof so safety, warning, healthy, and manual-override states stay semantically consistent.

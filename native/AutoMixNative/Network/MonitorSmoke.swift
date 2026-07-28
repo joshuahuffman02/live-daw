@@ -8,7 +8,9 @@ enum MonitorSmoke {
     static func run() -> Int32 {
         let store = PairingStore(code: "424242")
         let core = MonitorServiceCore(pairingStore: store, healthName: "smoke-venue")
-        core.setCommandHandler { _, done in done(CommandResult(ok: true, message: "echo")) }
+        core.setCommandHandler { _, _, done in
+            done(CommandResult(ok: true, message: "echo"))
+        }
         let heartbeatNowMs = Int64(Date().timeIntervalSince1970 * 1_000)
         let healthyHeartbeat = PrimaryAudioHeartbeat.make(
             name: "smoke-venue",
@@ -22,17 +24,47 @@ enum MonitorSmoke {
         )
         core.publishPrimaryAudioHeartbeat(healthyHeartbeat)
 
-        let snapshot = TelemetryAssembler.assemble(
-            ts: 1, venueName: "smoke-venue", isRunning: true, safe: false, freeze: false,
-            watchdogSafe: false, scene: "worship", scenes: ["worship", "sermon"],
-            sampleRate: 96_000, inputChannelCount: 64, bpm: 120, bpmConfidence: 0.8,
-            stream: StreamTelemetry(l: -8, r: -8, momentaryLufs: -14, shortLufs: -14,
-                                    integratedLufs: -14, limiterGrDb: -1),
-            counters: CounterTelemetry(dropouts: 0, callbackOverruns: 0, deadlineMisses: 0,
-                                       outputUnderruns: 0, outputOverruns: 0,
-                                       lastCallbackFrames: 256, maxCallbackFrames: 256),
-            channels: [], alerts: [], severity: .none)
-        core.publish((try? JSONEncoder().encode(snapshot)) ?? Data())
+        func publishSnapshot(at timestampMs: Int64) {
+            let snapshot = TelemetryAssembler.assemble(
+                ts: timestampMs,
+                venueName: "smoke-venue",
+                isRunning: true,
+                safe: false,
+                freeze: false,
+                watchdogSafe: false,
+                scene: "worship",
+                scenes: ["worship", "sermon"],
+                sampleRate: 96_000,
+                inputChannelCount: 64,
+                bpm: 120,
+                bpmConfidence: 0.8,
+                stream: StreamTelemetry(
+                    l: -8,
+                    r: -8,
+                    momentaryLufs: -14,
+                    shortLufs: -14,
+                    integratedLufs: -14,
+                    limiterGrDb: -1
+                ),
+                counters: CounterTelemetry(
+                    dropouts: 0,
+                    callbackOverruns: 0,
+                    deadlineMisses: 0,
+                    outputUnderruns: 0,
+                    outputOverruns: 0,
+                    lastCallbackFrames: 256,
+                    maxCallbackFrames: 256
+                ),
+                channels: [],
+                alerts: [],
+                severity: .none
+            )
+            core.publish(
+                (try? JSONEncoder().encode(snapshot)) ?? Data(),
+                timestampMs: timestampMs
+            )
+        }
+        publishSnapshot(at: heartbeatNowMs)
 
         let server = MonitorServer(service: core, port: 0, advertiseBonjour: false, pushInterval: 0.05)
         do { try server.start() } catch {
@@ -103,10 +135,19 @@ enum MonitorSmoke {
         if let (status, body, headers) = httpRequest(base + "/index.html") {
             check("static index 200", status == 200, "status \(status)")
             check("static index is the dashboard", String(data: body, encoding: .utf8)?.contains("AutoMix Remote") == true)
+            check("static index loads safety gate",
+                  String(data: body, encoding: .utf8)?.contains("/safety.js?v=6") == true)
             check("static response blocks framing", headers["x-frame-options"] == "DENY")
             check("static response has CSP",
                   headers["content-security-policy"]?.contains("default-src 'self'") == true)
         } else { check("static index reachable", false) }
+        if let (status, body, headers) = httpRequest(base + "/safety.js?v=6") {
+            check("safety gate asset 200", status == 200, "status \(status)")
+            check("safety gate asset is bundled",
+                  String(data: body, encoding: .utf8)?.contains("TelemetryFreshness") == true)
+            check("safety gate asset has JavaScript content type",
+                  headers["content-type"]?.contains("application/javascript") == true)
+        } else { check("safety gate asset reachable", false) }
 
         // 3) command rejected without token
         if let (status, _, _) = httpRequest(base + "/command", method: "POST",
@@ -152,15 +193,113 @@ enum MonitorSmoke {
             check("legacy token header rejected", status == 401, "status \(status)")
         }
 
-        // 7) command accepted with the HttpOnly cookie
+        // 7) paired control still fails closed without a fresh client snapshot.
+        let commandSnapshotTs = Int64(Date().timeIntervalSince1970 * 1_000)
+        publishSnapshot(at: commandSnapshotTs)
+        if let (status, body, headers) = httpRequest(
+            base + "/command",
+            method: "POST",
+            body: Data(#"{"type":"setSafe","on":true}"#.utf8),
+            headers: ["Cookie": cookie]
+        ) {
+            check("command without snapshot rejected", status == 409, "status \(status)")
+            check("freshness rejection is not cacheable", headers["cache-control"] == "no-store")
+            check("freshness rejection explains reload",
+                  String(data: body, encoding: .utf8)?.contains("fresh telemetry") == true)
+        } else { check("freshness-gated command reachable", false) }
+
+        let staleClientTs =
+            commandSnapshotTs -
+            RemoteControlFreshness.maximumClientSnapshotLagMs -
+            1
+        if let (status, body, _) = httpRequest(
+            base + "/command",
+            method: "POST",
+            body: Data(
+                #"{"type":"setSafe","on":true,"snapshotTs":\#(staleClientTs)}"#.utf8
+            ),
+            headers: ["Cookie": cookie]
+        ) {
+            check("stale client command rejected", status == 409, "status \(status)")
+            check("stale client rejection is explicit",
+                  String(data: body, encoding: .utf8)?.contains("stale remote telemetry") == true)
+        } else { check("stale client command reachable", false) }
+
+        let staleServerTs =
+            Int64(Date().timeIntervalSince1970 * 1_000) -
+            RemoteControlFreshness.maximumServerSnapshotAgeMs -
+            1
+        publishSnapshot(at: staleServerTs)
+        if let (status, body, _) = httpRequest(
+            base + "/command",
+            method: "POST",
+            body: Data(
+                #"{"type":"setSafe","on":true,"snapshotTs":\#(staleServerTs)}"#.utf8
+            ),
+            headers: ["Cookie": cookie]
+        ) {
+            check("stalled producer command rejected", status == 503, "status \(status)")
+            check("stalled producer rejection is explicit",
+                  String(data: body, encoding: .utf8)?.contains("telemetry is stale") == true)
+        } else { check("stalled producer command reachable", false) }
+
+        // 8) a fresh snapshot-bound command is accepted with the HttpOnly cookie.
+        let refreshedCommandTs = Int64(Date().timeIntervalSince1970 * 1_000)
+        publishSnapshot(at: refreshedCommandTs)
         if let (status, body, _) = httpRequest(base + "/command", method: "POST",
-                                               body: Data(#"{"type":"setSafe","on":true}"#.utf8),
+                                               body: Data(
+                                                #"{"type":"setSafe","on":true,"snapshotTs":\#(refreshedCommandTs)}"#.utf8
+                                               ),
                                                headers: ["Cookie": cookie]) {
             check("command accepted with cookie", status == 200, "status \(status)")
             check("command ok:true", String(data: body, encoding: .utf8)?.contains("\"ok\":true") == true)
         } else { check("command with cookie reachable", false) }
 
-        // 8) SSE stream delivers a snapshot frame
+        if let (status, body, _) = httpRequest(
+            base + "/command",
+            method: "POST",
+            body: Data(
+                #"{"type":"setSafe","on":false,"snapshotTs":\#(refreshedCommandTs)}"#.utf8
+            ),
+            headers: ["Cookie": cookie]
+        ) {
+            check("unconfirmed SAFE release rejected", status == 409, "status \(status)")
+            check("SAFE release rejection is explicit",
+                  String(data: body, encoding: .utf8)?.contains("explicit confirmation") == true)
+        } else { check("unconfirmed SAFE release receives response", false) }
+
+        if let (status, body, _) = httpRequest(
+            base + "/command",
+            method: "POST",
+            body: Data(
+                #"{"type":"setSafe","on":false,"confirmSafeRelease":true,"snapshotTs":\#(refreshedCommandTs)}"#.utf8
+            ),
+            headers: ["Cookie": cookie]
+        ) {
+            check("confirmed SAFE release accepted", status == 200, "status \(status)")
+            check("confirmed SAFE release ok:true",
+                  String(data: body, encoding: .utf8)?.contains("\"ok\":true") == true)
+        } else { check("confirmed SAFE release reachable", false) }
+
+        // 9) a main-actor/control handler stall receives a bounded failure response.
+        core.setCommandHandler { _, _, _ in }
+        if let (status, body, _) = httpRequest(
+            base + "/command",
+            method: "POST",
+            body: Data(
+                #"{"type":"setSafe","on":true,"snapshotTs":\#(refreshedCommandTs)}"#.utf8
+            ),
+            headers: ["Cookie": cookie]
+        ) {
+            check("hung command times out", status == 504, "status \(status)")
+            check("hung command timeout is explicit",
+                  String(data: body, encoding: .utf8)?.contains("verify the Mac") == true)
+        } else { check("hung command receives response", false) }
+        core.setCommandHandler { _, _, done in
+            done(CommandResult(ok: true, message: "echo"))
+        }
+
+        // 10) SSE stream delivers a snapshot frame.
         if let frame = readSSEFrame(base + "/events") {
             check("SSE frame is data: event", frame.hasPrefix("data: "))
             check("SSE frame carries snapshot", frame.contains("smoke-venue"))

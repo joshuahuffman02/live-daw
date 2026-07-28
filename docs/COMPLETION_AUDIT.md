@@ -21,20 +21,24 @@ hardware proof.
 | Separate-device drift mitigation/shared clock | Bounded `AsyncOutputClock`, ring telemetry, correction-limit gates, route clock preflight, stability-report tests | Algorithm and gates verified. Real independent-device or Aggregate Device run remains hardware evidence. |
 | Reproducible replay/evaluation and decision log | `appliance/tools/replay_eval.cpp`; deterministic self-test; CRC/config/metrics/20 Hz trace contract in `docs/REPLAY_EVALUATION.md` | Harness verified. Promotion still requires representative recorded services and operator-approved references. |
 | SHADOW-first progressive autonomy | Candidate-only shadow behavior tests; venue profiles default SHADOW on; native one-second 64-channel candidate-decision JSONL; semantic coverage/route/non-application verifier; manifest/commit-bound `rollout-observation` evidence; `docs/STAGED_ROLLOUT.md` | Workflow and signed promotion gates are verified. An approved bundle now requires a full, continuous, non-simulated native SHADOW capture, supervised service, and reviewed real Planning Center cue trace. Those venue events have not yet occurred. |
-| Dependency and security hygiene | Locked npm graph, zero high-level audit findings, current React/Vite/TypeScript/JUCE patch, pinned CI actions, least-privilege CI token, HttpOnly cookie-only remote control, pairing lockout/bounds, CSP | Verified locally and in the hosted macOS pipeline. |
-| Realtime safety and human authority | No-allocation guards for engine, automixer, reverb/delay, brain mailbox, native input/render/recording/overrun paths; SAFE/FREEZE/manual controls and tests | Verified in deterministic and simulated native paths. Real callback timing/xrun behavior remains a rig measurement. |
+| Dependency and security hygiene | Locked npm graph, zero high-level audit findings, current React/Vite/TypeScript/JUCE patch, pinned CI actions, least-privilege CI token, HttpOnly cookie-only remote control, pairing lockout/bounds, snapshot-bound remote commands, CSP | Verified locally and in the hosted macOS pipeline. |
+| Realtime safety and human authority | No-allocation guards for engine, automixer, reverb/delay, brain mailbox, native input/render/recording/overrun paths; SAFE/FREEZE/manual controls and tests; fail-closed remote mutation on stale telemetry, 750 ms pre-routing expiry, one-second acknowledgement timeout, and local-only FREEZE | Verified in deterministic and simulated native paths. Real callback timing/xrun behavior remains a rig measurement. |
 | Signed/notarized production artifact | Hardened Runtime, audio-input entitlement, fail-closed release builder, signature/notary/staple/Gatekeeper verification, proof runner binding | Pipeline verified through unsigned/ad-hoc negative and entitlement tests. No Developer ID Application identity or notary profile is installed, so no production artifact exists yet. |
 | Real 64-channel 96 kHz HD96/Dante proof | Full-check runner, semantic manifest verifier, simulation-resistant source checks, notarized-build gate | Not achieved. Current inventory contains only built-in 48 kHz speakers and the explicit simulated HD96 device. |
 | Sermon-autopilot milestone | Sermon-first staged runner, minimum two-hour health/stability/recording proof, post-review SSH-signed decision bundle, trusted-signer and evidence-hash verifier | Software gate verified; the approval itself is not achieved because it requires the production rig, complete evidence, and a supervised service. |
 | Worship autonomy acceptance | Cryptographically verified approved sermon prerequisite bound to the exact manifest, recorded-service comparison, supervised worship proof, equivalent signed final go-live decision | Not achieved and deliberately gated behind verified sermon acceptance. |
-| Operator UI/UX | Native operator shell, remote monitor, monitor wall, setup/onboarding, keyboard/screen-reader paths, responsive layouts, and critical-state visual hierarchy; `docs/UI_UX_AUDIT.md`; `design-qa.md` | Full product-flow audit and redesign implemented. Native/web builds and UI-facing tests pass locally; real operators must still validate the production rig workflow under service conditions. |
+| Operator UI/UX | Native operator shell, remote monitor, monitor wall, setup/onboarding, keyboard/screen-reader paths, responsive layouts, critical-state visual hierarchy, and stale-telemetry remote-control lock; `docs/UI_UX_AUDIT.md`; `design-qa.md` | Full product-flow audit and redesign implemented. Native/web builds and UI-facing tests pass locally; real operators must still validate the production rig workflow under service conditions. |
 
 ## Latest verified local results
 
 - Deterministic DSP: **117 passed, 0 failed**.
 - Replay evaluator: self-test passed.
-- Native XCTest: **243 passed, 0 failed**.
-- Remote monitor: static/auth/pairing/cookie/command/SSE smoke passed.
+- Native XCTest: **249 passed, 0 failed**.
+- Remote monitor: static/auth/pairing/cookie, heartbeat, snapshot-freshness,
+  SAFE-release confirmation, bounded command timeout, and SSE smoke passed.
+- Remote browser control safety: **6 passed, 0 failed** for forward-only timestamp
+  progression, duplicate-frame stall detection, backward-clock reset,
+  transport loss/recovery, contract validation, and command-to-snapshot binding.
 - Web proof: clean install, typecheck, production build, and `npm audit` passed
   with **0 known vulnerabilities**.
 - JUCE 8.0.15 portability target: strict Release build and CTest passed.
@@ -59,7 +63,8 @@ hardware proof.
   requires a trusted approved sermon signer and an exact accepted-manifest hash
   match.
 - Operator UI/UX redesign: native, remote, monitor, setup, accessibility, and
-  responsive-layout changes committed as `f3e6e74`.
+  responsive-layout changes committed as `f3e6e74`; the later remote safety audit
+  verifies fail-closed startup, telemetry loss, and automatic recovery at phone size.
 - Private repository publication: local `main` tracks the published private `main`.
 - Hosted macOS 15
   [CI workflow](https://github.com/joshuahuffman02/live-daw/actions/workflows/ci.yml)

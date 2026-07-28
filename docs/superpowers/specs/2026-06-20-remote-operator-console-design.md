@@ -2,7 +2,7 @@
 
 Date: 2026-06-20
 Component: `native/AutoMixNative` (AutoMix Native macOS app)
-Status: Approved design, pending implementation plan
+Status: Implemented and production-safety hardened
 
 ## Goal
 
@@ -60,7 +60,7 @@ Core Audio + C++ build (zero third-party deps today).
 |---|---|---|
 | `MonitorServer` | Owns `NWListener`, accepts connections, dispatches to `HTTPConnection`. Start/stop lifecycle. Bonjour advertise. | `MonitorService` |
 | `HTTPConnection` | Per-connection HTTP/1.1 request parse, route match, response write, SSE keep-alive loop. | `MonitorService` |
-| `MonitorService` (protocol) | The boundary the server sees: `currentSnapshotJSON() -> Data`, `apply(_ command: RemoteCommand) -> CommandResult`, `verify(pairingCode:) -> String?` (returns token), `isValid(token:) -> Bool`. | — |
+| `MonitorService` (protocol) | The boundary the server sees: current snapshot JSON + timestamp, primary heartbeat, command application, pairing, and token validation. | — |
 | `TelemetrySnapshot` (Codable) | JSON contract pushed over SSE (see Data contracts). | — |
 | `RemoteCommand` (Codable enum) | Commands accepted via POST (see Data contracts). | — |
 | `CommandResult` (Codable) | `{ ok: Bool, message: String? }`. | — |
@@ -97,9 +97,9 @@ those bundled files. No build step.
 |---|---|---|---|
 | GET | `/` and static paths (`/app.js`, `/style.css`, `/manifest.webmanifest`, `/sw.js`, `/icons/*`) | none | Serve the PWA shell. |
 | GET | `/events` | none (view) | SSE stream of `TelemetrySnapshot` at ~10 Hz + immediate first frame. |
-| POST | `/pair` | code in body | Body `{code}`; on match returns `{token}` and sets it as a cookie. |
-| POST | `/command` | token | Body = `RemoteCommand`; returns `CommandResult`. 401 without a valid token. |
-| GET | `/health` | none | `{ ok: true, name, version }` for discovery/debugging. |
+| POST | `/pair` | code in body | Body `{code}`; on match returns `{ok:true}` and sets the token only as an HttpOnly cookie. |
+| POST | `/command` | cookie token | Body = `RemoteCommand` plus required recent `snapshotTs`; returns a bounded `CommandResult`. 401 without a valid token, 409 for stale/missing client state, 503 for stale producer state, 504 for an unacknowledged control path. A monotonic execution clock expires main-actor work before routing after 750 ms so it cannot execute late. |
+| GET | `/health` | none | Fail-closed primary-audio heartbeat; see `docs/EXTERNAL_FAILOVER.md`. |
 
 ## Data contracts
 
@@ -143,8 +143,10 @@ The snapshot is pre-encoded to `Data` once per 10 Hz tick and shared by all clie
 
 ```jsonc
 // one of:
-{ "type": "setSafe", "on": true }
-{ "type": "setFreeze", "on": true }
+{ "type": "setSafe", "on": true, "snapshotTs": 1718900000000 }
+{ "type": "setSafe", "on": false, "confirmSafeRelease": true,
+  "snapshotTs": 1718900000000 }
+{ "type": "setFreeze", "on": true, "snapshotTs": 1718900000000 } // rejected
 { "type": "setScene", "scene": "sermon" }
 { "type": "setMute", "idx": 7, "on": true }
 { "type": "setFaderOverride", "idx": 7, "on": true, "db": -6.0 }
@@ -152,12 +154,17 @@ The snapshot is pre-encoded to `Data` once per 10 Hz tick and shared by all clie
 { "type": "clearOverride", "idx": 7 }      // clears fader+pan override, unmutes
 ```
 
+Every live command includes `snapshotTs`; the examples after `setSafe` omit it only
+for readability. The current phone surface does not expose `setFreeze`, and the
+server router rejects it as local-only. SAFE release additionally requires
+`confirmSafeRelease: true`.
+
 ### Command → AppModel mapping (reuse existing paths, no new audio code)
 
 | Command | AppModel action |
 |---|---|
 | `setSafe` | set `safeBypass` (existing atomic path) |
-| `setFreeze` | set `frozen` |
+| `setFreeze` | rejected as local-only; FREEZE remains available on the Mac |
 | `setScene` | set `selectedScene` (drives BrainThread + profile save) |
 | `setMute` | on `ChannelMapping`: set `faderOverrideEnabled = true`, `faderDb = -80` (the floor = effectively silent); track `muted` flag separately so unmute can restore prior fader. Then `channelDidChange`. |
 | `setFaderOverride` | set `faderOverrideEnabled`, clamp `faderDb` to `-80...12`, `channelDidChange` |
@@ -187,7 +194,7 @@ of running history (timers for "sustained for N s"). Thresholds in one
 | `loudness-band` | integrated LUFS outside −20…−9 sustained > 10s (running) | warning |
 | `route-drift` | sample rate / channel count / format / output isolation changed while running (from `statusText` health flags) | warning |
 | `dead-channel` | a role-assigned channel < −90 dB while ≥1 peer in same role group active, sustained > 5s | info |
-| `link-lost` | client-side only: SSE `onerror`/no frame > 3s | warning |
+| `link-lost` | client-side only: SSE error immediately, or timestamp fails to advance for 1.5s | persistent control lock |
 
 `fault = any critical`. `severity = max over alerts`. Sustained-timers live in the
 evaluator's small mutable state (not pure across calls, so it's a stateful struct with
@@ -220,6 +227,8 @@ QR generation uses `CoreImage` `CIQRCodeGenerator` (system framework, no depende
 ## PWA structure (`RemoteWeb/`, zero build step)
 
 - `index.html` — shell; loads `style.css`, `app.js`; links `manifest.webmanifest`.
+- `safety.js` — dependency-free, Node-tested timestamp-progression and command-binding
+  state machine.
 - `app.js` — opens `EventSource('/events')`, renders snapshot, handles pairing,
   sends commands via `fetch('/command')`, manages alarm audio + notifications +
   fault takeover. Vanilla JS, no framework.

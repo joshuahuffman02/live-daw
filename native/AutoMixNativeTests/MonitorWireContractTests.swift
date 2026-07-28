@@ -204,6 +204,128 @@ final class MonitorWireContractTests: XCTestCase {
         XCTAssertEqual(core.currentPrimaryAudioHeartbeat(), heartbeat)
     }
 
+    func testRemoteControlFreshnessAcceptsOnlyRecentServerAndClientSnapshots() {
+        let nowMs: Int64 = 10_000
+        XCTAssertNil(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs: nowMs,
+                clientSnapshotTs: nowMs
+            )
+        )
+        XCTAssertNil(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs:
+                    nowMs - RemoteControlFreshness.maximumServerSnapshotAgeMs,
+                clientSnapshotTs:
+                    nowMs -
+                    RemoteControlFreshness.maximumServerSnapshotAgeMs -
+                    RemoteControlFreshness.maximumClientSnapshotLagMs
+            )
+        )
+    }
+
+    func testRemoteControlFreshnessRejectsMissingOrInvalidServerTelemetry() {
+        let nowMs: Int64 = 10_000
+        XCTAssertEqual(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs: nowMs,
+                clientSnapshotTs: nil
+            ),
+            .clientSnapshotMissing
+        )
+        XCTAssertEqual(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs: 0,
+                clientSnapshotTs: nowMs
+            ),
+            .serverSnapshotUnavailable
+        )
+        XCTAssertEqual(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs: nowMs + 1,
+                clientSnapshotTs: nowMs
+            ),
+            .serverSnapshotFuture
+        )
+        XCTAssertEqual(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs:
+                    nowMs - RemoteControlFreshness.maximumServerSnapshotAgeMs - 1,
+                clientSnapshotTs: nowMs
+            ),
+            .serverSnapshotStale
+        )
+    }
+
+    func testRemoteControlFreshnessRejectsFutureOrStaleClientView() {
+        let nowMs: Int64 = 10_000
+        XCTAssertEqual(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs: nowMs,
+                clientSnapshotTs: nowMs + 1
+            ),
+            .clientSnapshotFuture
+        )
+        XCTAssertEqual(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs: nowMs,
+                clientSnapshotTs:
+                    nowMs - RemoteControlFreshness.maximumClientSnapshotLagMs - 1
+            ),
+            .clientSnapshotStale
+        )
+        XCTAssertEqual(
+            RemoteControlFreshness.rejection(
+                nowMs: nowMs,
+                serverSnapshotTs: nowMs,
+                clientSnapshotTs: Int64.min
+            ),
+            .clientSnapshotStale
+        )
+    }
+
+    func testMonitorServicePublishesSnapshotDataAndTimestampTogether() {
+        let core = MonitorServiceCore(
+            pairingStore: PairingStore(code: "424242"),
+            healthName: "venue"
+        )
+        let data = Data(#"{"ts":1234}"#.utf8)
+        core.publish(data, timestampMs: 1_234)
+        XCTAssertEqual(core.currentSnapshotJSON(), data)
+        XCTAssertEqual(core.currentSnapshotTimestampMs(), 1_234)
+    }
+
+    func testRemoteCommandExecutionWindowRejectsLateMainActorWork() {
+        let startedAtMs: Int64 = 10_000
+        let deadlineMs = RemoteCommandExecutionWindow.deadlineMs(
+            startedAtMs: startedAtMs
+        )
+        XCTAssertEqual(
+            deadlineMs,
+            startedAtMs + RemoteCommandExecutionWindow.maximumExecutionDelayMs
+        )
+        XCTAssertTrue(
+            RemoteCommandExecutionWindow.canExecute(
+                nowMs: deadlineMs,
+                deadlineMs: deadlineMs
+            )
+        )
+        XCTAssertFalse(
+            RemoteCommandExecutionWindow.canExecute(
+                nowMs: deadlineMs + 1,
+                deadlineMs: deadlineMs
+            )
+        )
+    }
+
     func testAlertSeverityIsComparableForMaxEscalation() {
         XCTAssertLessThan(AlertSeverity.none, AlertSeverity.info)
         XCTAssertLessThan(AlertSeverity.info, AlertSeverity.warning)
@@ -220,6 +342,16 @@ final class MonitorWireContractTests: XCTestCase {
 
         XCTAssertEqual(try decode(#"{"type":"setSafe","on":true}"#),
                        .setSafe(on: true))
+        XCTAssertEqual(
+            try decode(#"{"type":"setSafe","on":true,"snapshotTs":1234}"#),
+            .setSafe(on: true)
+        )
+        XCTAssertEqual(
+            try decode(
+                #"{"type":"setSafe","on":false,"confirmSafeRelease":true,"snapshotTs":1234}"#
+            ),
+            .setSafe(on: false)
+        )
         XCTAssertEqual(try decode(#"{"type":"setFreeze","on":false}"#),
                        .setFreeze(on: false))
         XCTAssertEqual(try decode(#"{"type":"setScene","scene":"sermon"}"#),

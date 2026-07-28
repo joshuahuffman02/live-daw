@@ -9,11 +9,13 @@ final class MonitorServer: @unchecked Sendable {
     private let preferredPort: UInt16
     private let advertiseBonjour: Bool
     private let pushInterval: TimeInterval
+    private let commandTimeout: TimeInterval
     private let queue = DispatchQueue(label: "com.livedaw.automix.monitor")
 
     private var listener: NWListener?
     private var connections: [UUID: HTTPConnection] = [:]
     private var sseIDs: Set<UUID> = []
+    private var pendingCommandIDs: Set<UUID> = []
     private var pushTimer: DispatchSourceTimer?
 
     private var _actualPort: UInt16?               // mutated only on `queue`
@@ -23,11 +25,13 @@ final class MonitorServer: @unchecked Sendable {
     init(service: MonitorService,
          port: UInt16 = 8420,
          advertiseBonjour: Bool = true,
-         pushInterval: TimeInterval = 0.1) {
+         pushInterval: TimeInterval = 0.1,
+         commandTimeout: TimeInterval = 1.0) {
         self.service = service
         self.preferredPort = port
         self.advertiseBonjour = advertiseBonjour
         self.pushInterval = pushInterval
+        self.commandTimeout = commandTimeout
     }
 
     func start() throws {
@@ -77,6 +81,7 @@ final class MonitorServer: @unchecked Sendable {
             for connection in connections.values { connection.close() }
             connections.removeAll()
             sseIDs.removeAll()
+            pendingCommandIDs.removeAll()
             listener?.cancel()
             listener = nil
         }
@@ -177,6 +182,11 @@ final class MonitorServer: @unchecked Sendable {
     }
 
     private func handleCommand(_ request: HTTPRequest, _ conn: HTTPConnection) {
+        struct CommandMetadata: Decodable {
+            let snapshotTs: Int64?
+            let confirmSafeRelease: Bool?
+        }
+
         let token = request.cookie("amtoken") ?? ""
         guard service.isPaired(token: token) else {
             sendJSON(conn, object: ["ok": false, "message": "pair to control"],
@@ -190,11 +200,64 @@ final class MonitorServer: @unchecked Sendable {
                      extraHeaders: ["Cache-Control": "no-store"])
             return
         }
+        let metadata = try? JSONDecoder().decode(CommandMetadata.self, from: request.body)
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        if let rejection = RemoteControlFreshness.rejection(
+            nowMs: nowMs,
+            serverSnapshotTs: service.currentSnapshotTimestampMs(),
+            clientSnapshotTs: metadata?.snapshotTs
+        ) {
+            sendJSON(
+                conn,
+                object: ["ok": false, "message": rejection.message],
+                status: rejection.isServerUnavailable ? 503 : 409,
+                close: true,
+                extraHeaders: ["Cache-Control": "no-store"]
+            )
+            return
+        }
+        if case .setSafe(on: false) = command,
+           metadata?.confirmSafeRelease != true {
+            sendJSON(
+                conn,
+                object: [
+                    "ok": false,
+                    "message": "SAFE release requires explicit confirmation"
+                ],
+                status: 409,
+                close: true,
+                extraHeaders: ["Cache-Control": "no-store"]
+            )
+            return
+        }
+
         let connectionID = conn.id
-        service.applyCommand(command) { [weak self] result in
+        let commandID = UUID()
+        let executionDeadlineMs = RemoteCommandExecutionWindow.deadlineMs(
+            startedAtMs: Int64(ProcessInfo.processInfo.systemUptime * 1_000)
+        )
+        pendingCommandIDs.insert(commandID)
+        queue.asyncAfter(deadline: .now() + commandTimeout) { [weak self] in
+            guard let self, self.pendingCommandIDs.remove(commandID) != nil,
+                  let conn = self.connections[connectionID]
+            else { return }
+            self.sendJSON(
+                conn,
+                object: [
+                    "ok": false,
+                    "message": "control timed out; verify the Mac before retrying"
+                ],
+                status: 504,
+                close: true,
+                extraHeaders: ["Cache-Control": "no-store"]
+            )
+        }
+        service.applyCommand(command, deadlineMs: executionDeadlineMs) { [weak self] result in
             // Hop back onto the monitor queue so HTTPConnection is only touched there.
             self?.queue.async { [weak self] in
-                guard let self, let conn = self.connections[connectionID] else { return }
+                guard let self, self.pendingCommandIDs.remove(commandID) != nil,
+                      let conn = self.connections[connectionID]
+                else { return }
                 let data = (try? JSONEncoder().encode(result)) ?? Data(#"{"ok":false}"#.utf8)
                 conn.send(Self.response(status: result.ok ? 200 : 400,
                                         contentType: "application/json; charset=utf-8",
@@ -259,8 +322,10 @@ final class MonitorServer: @unchecked Sendable {
         case 200: reason = "OK"
         case 400: reason = "Bad Request"
         case 401: reason = "Unauthorized"
+        case 409: reason = "Conflict"
         case 404: reason = "Not Found"
         case 503: reason = "Service Unavailable"
+        case 504: reason = "Gateway Timeout"
         default: reason = "Status"
         }
         var head = "HTTP/1.1 \(status) \(reason)\r\n"

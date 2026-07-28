@@ -4,7 +4,6 @@ import XCTest
 
 private final class SpyTarget: RemoteControlTarget {
     var safe: Bool?
-    var freeze: Bool?
     var scene: String?
     var knownScenes: Set<String> = ["worship", "sermon", "patch"]
     var validIdx: Range<Int> = 0..<32
@@ -15,7 +14,6 @@ private final class SpyTarget: RemoteControlTarget {
     var clearedIdx: [Int] = []
 
     func remoteSetSafe(_ on: Bool) { safe = on }
-    func remoteSetFreeze(_ on: Bool) { freeze = on }
 
     func remoteSetScene(_ scene: String) -> Bool {
         guard knownScenes.contains(scene) else { return false }
@@ -45,12 +43,13 @@ private final class SpyTarget: RemoteControlTarget {
 }
 
 final class RemoteCommandRoutingTests: XCTestCase {
-    func testSafeAndFreezeRoute() {
+    func testSafeRoutesAndFreezeRemainsLocalOnly() {
         let spy = SpyTarget()
         XCTAssertTrue(RemoteCommandRouter.apply(.setSafe(on: true), to: spy).ok)
         XCTAssertEqual(spy.safe, true)
-        XCTAssertTrue(RemoteCommandRouter.apply(.setFreeze(on: true), to: spy).ok)
-        XCTAssertEqual(spy.freeze, true)
+        let freeze = RemoteCommandRouter.apply(.setFreeze(on: true), to: spy)
+        XCTAssertFalse(freeze.ok)
+        XCTAssertTrue(freeze.message?.localizedCaseInsensitiveContains("local-only") == true)
     }
 
     func testKnownSceneSucceedsUnknownSceneFails() {
@@ -98,5 +97,27 @@ final class RemoteCommandRoutingTests: XCTestCase {
         XCTAssertFalse(result.ok)
         XCTAssertNotNil(result.message)
         XCTAssertTrue(spy.muteCalls.isEmpty)
+    }
+
+    func testExpiredCommandNeverMutatesTargetButFreshCommandDoes() {
+        let spy = SpyTarget()
+        let expired = RemoteCommandExecutor.execute(
+            .setSafe(on: false),
+            to: spy,
+            nowMs: 1_001,
+            deadlineMs: 1_000
+        )
+        XCTAssertFalse(expired.ok)
+        XCTAssertTrue(expired.message?.localizedCaseInsensitiveContains("expired") == true)
+        XCTAssertNil(spy.safe)
+
+        let fresh = RemoteCommandExecutor.execute(
+            .setSafe(on: true),
+            to: spy,
+            nowMs: 1_000,
+            deadlineMs: 1_000
+        )
+        XCTAssertTrue(fresh.ok)
+        XCTAssertEqual(spy.safe, true)
     }
 }

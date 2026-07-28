@@ -112,6 +112,93 @@ struct PrimaryAudioHeartbeat: Codable, Equatable, Sendable {
     }
 }
 
+enum RemoteControlFreshnessRejection: Equatable {
+    case clientSnapshotMissing
+    case serverSnapshotUnavailable
+    case serverSnapshotFuture
+    case serverSnapshotStale
+    case clientSnapshotFuture
+    case clientSnapshotStale
+
+    var message: String {
+        switch self {
+        case .clientSnapshotMissing:
+            return "fresh telemetry required; reload the remote console"
+        case .serverSnapshotUnavailable:
+            return "live control unavailable; telemetry has not started"
+        case .serverSnapshotFuture:
+            return "live control unavailable; telemetry clock is invalid"
+        case .serverSnapshotStale:
+            return "live control unavailable; telemetry is stale"
+        case .clientSnapshotFuture:
+            return "command rejected; client telemetry is newer than the server"
+        case .clientSnapshotStale:
+            return "command rejected; refresh stale remote telemetry"
+        }
+    }
+
+    var isServerUnavailable: Bool {
+        switch self {
+        case .serverSnapshotUnavailable, .serverSnapshotFuture, .serverSnapshotStale:
+            return true
+        case .clientSnapshotMissing, .clientSnapshotFuture, .clientSnapshotStale:
+            return false
+        }
+    }
+}
+
+struct RemoteControlFreshness {
+    // The app publishes at 10 Hz. A 1.5-second window tolerates brief scheduler/network
+    // jitter but locks control well before a remote operator could reasonably trust
+    // the displayed state.
+    static let maximumServerSnapshotAgeMs: Int64 = 1_500
+    static let maximumClientSnapshotLagMs: Int64 = 1_500
+
+    static func rejection(
+        nowMs: Int64,
+        serverSnapshotTs: Int64,
+        clientSnapshotTs: Int64?
+    ) -> RemoteControlFreshnessRejection? {
+        guard let clientSnapshotTs else {
+            return .clientSnapshotMissing
+        }
+        guard serverSnapshotTs > 0 else {
+            return .serverSnapshotUnavailable
+        }
+        guard serverSnapshotTs <= nowMs else {
+            return .serverSnapshotFuture
+        }
+        guard serverSnapshotTs >= nowMs - maximumServerSnapshotAgeMs else {
+            return .serverSnapshotStale
+        }
+        guard clientSnapshotTs > 0 else {
+            return .clientSnapshotStale
+        }
+        guard clientSnapshotTs <= serverSnapshotTs else {
+            return .clientSnapshotFuture
+        }
+        guard clientSnapshotTs >= serverSnapshotTs - maximumClientSnapshotLagMs else {
+            return .clientSnapshotStale
+        }
+        return nil
+    }
+}
+
+struct RemoteCommandExecutionWindow {
+    // Leave response-time margin after the main actor applies a command. If the main
+    // actor is blocked beyond this point, the queued command is discarded instead of
+    // mutating the mix after the phone has already received a timeout.
+    static let maximumExecutionDelayMs: Int64 = 750
+
+    static func deadlineMs(startedAtMs: Int64) -> Int64 {
+        startedAtMs + maximumExecutionDelayMs
+    }
+
+    static func canExecute(nowMs: Int64, deadlineMs: Int64) -> Bool {
+        nowMs <= deadlineMs
+    }
+}
+
 // The only surface MonitorServer/HTTPConnection see. Thread-safe: every method may
 // be called from the server's background queue. Keeps the transport ignorant of
 // Core Audio / AppModel.
@@ -121,10 +208,15 @@ protocol MonitorService: AnyObject {
     var isPairingLockedOut: Bool { get }
     func currentPrimaryAudioHeartbeat() -> PrimaryAudioHeartbeat
     func currentSnapshotJSON() -> Data
+    func currentSnapshotTimestampMs() -> Int64
     func staticResource(forPath path: String) -> StaticResource?
     func pair(code: String, clientLabel: String) -> String?
     func isPaired(token: String) -> Bool
-    func applyCommand(_ command: RemoteCommand, completion: @escaping (CommandResult) -> Void)
+    func applyCommand(
+        _ command: RemoteCommand,
+        deadlineMs: Int64,
+        completion: @escaping (CommandResult) -> Void
+    )
 }
 
 // Concrete, non-isolated, thread-safe implementation. The @MainActor MonitorBridge
@@ -137,7 +229,12 @@ final class MonitorServiceCore: MonitorService, @unchecked Sendable {
     private let lock = NSLock()
     private var primaryAudioHeartbeat: PrimaryAudioHeartbeat
     private var snapshotData = Data("{}".utf8)
-    private var commandHandler: ((RemoteCommand, @escaping (CommandResult) -> Void) -> Void)?
+    private var snapshotTimestampMs: Int64 = 0
+    private var commandHandler: ((
+        RemoteCommand,
+        Int64,
+        @escaping (CommandResult) -> Void
+    ) -> Void)?
 
     init(pairingStore: PairingStore,
          healthName: String,
@@ -152,8 +249,11 @@ final class MonitorServiceCore: MonitorService, @unchecked Sendable {
 
     var isPairingLockedOut: Bool { pairingStore.isLockedOut }
 
-    func publish(_ data: Data) {
-        lock.lock(); snapshotData = data; lock.unlock()
+    func publish(_ data: Data, timestampMs: Int64) {
+        lock.lock()
+        snapshotData = data
+        snapshotTimestampMs = timestampMs
+        lock.unlock()
     }
 
     func publishPrimaryAudioHeartbeat(_ heartbeat: PrimaryAudioHeartbeat) {
@@ -170,7 +270,16 @@ final class MonitorServiceCore: MonitorService, @unchecked Sendable {
         return snapshotData
     }
 
-    func setCommandHandler(_ handler: @escaping (RemoteCommand, @escaping (CommandResult) -> Void) -> Void) {
+    func currentSnapshotTimestampMs() -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        return snapshotTimestampMs
+    }
+
+    func setCommandHandler(_ handler: @escaping (
+        RemoteCommand,
+        Int64,
+        @escaping (CommandResult) -> Void
+    ) -> Void) {
         lock.lock(); commandHandler = handler; lock.unlock()
     }
 
@@ -186,13 +295,17 @@ final class MonitorServiceCore: MonitorService, @unchecked Sendable {
         pairingStore.isValid(token: token)
     }
 
-    func applyCommand(_ command: RemoteCommand, completion: @escaping (CommandResult) -> Void) {
+    func applyCommand(
+        _ command: RemoteCommand,
+        deadlineMs: Int64,
+        completion: @escaping (CommandResult) -> Void
+    ) {
         lock.lock(); let handler = commandHandler; lock.unlock()
         guard let handler else {
             completion(CommandResult(ok: false, message: "control unavailable"))
             return
         }
-        handler(command, completion)
+        handler(command, deadlineMs, completion)
     }
 }
 

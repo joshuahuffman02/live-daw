@@ -216,7 +216,11 @@ Current native milestone:
   embedded monitor server also serving a fail-closed `/health` primary-audio
   heartbeat for an external relay/controller (HTTP 200 only for the exact real
   64-channel/96 kHz HD96/Dante route and fresh callbacks/control loop; otherwise
-  503; backup selection remains latched/manual-return hardware); the
+  503; backup selection remains latched/manual-return hardware); remote mutations
+  also fail closed unless the phone has advancing telemetry and sends the recent
+  snapshot timestamp it displayed, with stale/missing state rejected and every
+  control acknowledgement bounded to one second while late queued work expires
+  before it can mutate the mix; the
   crash-relaunch/session-resume procedure is documented in
   [`docs/RUNTIME_RESILIENCE.md`](docs/RUNTIME_RESILIENCE.md); staged promotion
   preserves and re-verifies continuous dual-probe coverage using

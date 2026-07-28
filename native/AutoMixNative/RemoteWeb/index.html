@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0b0c">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -11,15 +11,24 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
 <link rel="icon" href="/icons/icon-192.png">
-<link rel="stylesheet" href="/style.css?v=5">
+<link rel="stylesheet" href="/style.css?v=6">
 <title>AutoMix Remote</title>
 </head>
 <body>
 <div id="app">
   <header id="topbar">
-    <div class="venue"><span id="venue">AutoMix</span> · <span id="conn" class="conn-down">connecting</span></div>
+    <div class="venue">
+      <span id="venue" class="venue-name">AutoMix</span>
+      <span class="venue-separator" aria-hidden="true">·</span>
+      <span id="conn" class="conn-down">connecting</span>
+    </div>
     <button id="alarmStop" class="hidden" type="button">Silence</button>
   </header>
+
+  <section id="controlLock" class="control-lock" role="alert" aria-live="assertive">
+    <div class="control-lock-title">Remote controls locked</div>
+    <div id="controlLockDetail">Waiting for live telemetry from the Mac.</div>
+  </section>
 
   <section id="fault" class="hidden" aria-live="assertive"></section>
 
@@ -60,7 +69,8 @@
   </main>
 
   <footer id="footer" class="hidden">
-    <button id="safeBtn" type="button" class="safe">Engage SAFE</button>
+    <div id="commandStatus" class="command-status" role="status" aria-live="polite"></div>
+    <button id="safeBtn" type="button" class="safe" data-remote-control="true" disabled>Engage SAFE</button>
   </footer>
 
   <section id="pair" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pairTitle" aria-describedby="pairDescription">
@@ -75,6 +85,7 @@
     </div>
   </section>
 </div>
-<script src="/app.js?v=5"></script>
+<script src="/safety.js?v=6"></script>
+<script src="/app.js?v=6"></script>
 </body>
 </html>

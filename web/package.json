@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node --check ../native/AutoMixNative/RemoteWeb/safety.js && node --check ../native/AutoMixNative/RemoteWeb/app.js && node --check ../native/AutoMixNative/RemoteWeb/sw.js && node --test ../scripts/test-remote-web-safety.cjs && tsc --noEmit"
   },
   "dependencies": {
     "react": "^19.2.8",

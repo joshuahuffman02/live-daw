@@ -315,6 +315,20 @@ same paths the desktop buttons use.
   scenes. Monitoring is view-open; control requires a paired, HttpOnly browser cookie,
   so a stray device on the network cannot act. The cookie is never exposed to
   JavaScript or persistent browser storage.
+- Remote mutation stays locked until the phone has observed two advancing telemetry
+  timestamps. An SSE error, malformed snapshot, non-advancing timestamp for 1.5
+  seconds, offline event, background-resume with stale data, or unacknowledged command
+  disables every scene, channel, and SAFE control and leaves a persistent
+  **Remote controls locked** banner. Search, filters, and channel-detail inspection
+  remain available because they do not change the mix.
+- Every command is bound to the snapshot timestamp the operator saw. The Mac rejects
+  missing/future/stale client state with HTTP 409, rejects a stale producer with 503,
+  and returns 504 if the main-actor control path does not acknowledge within one
+  second. A monotonic execution clock expires work that waits more than 750 ms for
+  the main actor before routing, so a timed-out command cannot mutate the mix later.
+  The phone shows command success/failure instead of swallowing it. SAFE engagement
+  remains one action; SAFE release requires the existing two-step UI plus an explicit
+  server-side confirmation marker. FREEZE is deliberately local-only.
 - Add to Home Screen to install the PWA; a critical fault (stream silent, watchdog
   SAFE, engine stopped, …) flashes the screen red, sounds an alarm, and fires a Web
   Notification. Alert conditions are computed authoritatively on the Mac
@@ -329,7 +343,9 @@ same paths the desktop buttons use.
 
 Headless end-to-end check (no phone, no rig): starts the server on an ephemeral
 loopback port with a canned snapshot and exercises static serving, `/health`, auth
-gating, pairing, command routing, and the SSE stream.
+gating, pairing, snapshot-bound commands, stale producer/client rejection, SAFE
+release confirmation, bounded command timeout, and the SSE stream. The browser-side
+freshness state machine also has dependency-free Node tests.
 
 ```bash
 "$APP" --monitor-smoke   # prints per-check status, exits 0 on pass
