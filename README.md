@@ -214,7 +214,9 @@ Current native milestone:
   ordered durable incident JSONL; optional encoder-ingest and public-egress endpoints
   provide fresh-payload verification to the desktop and remote alert path, with the
   crash-relaunch/session-resume procedure documented in
-  [`docs/RUNTIME_RESILIENCE.md`](docs/RUNTIME_RESILIENCE.md);
+  [`docs/RUNTIME_RESILIENCE.md`](docs/RUNTIME_RESILIENCE.md); staged promotion
+  preserves and re-verifies continuous dual-probe coverage using
+  [`docs/STREAM_HEALTH_EVIDENCE.md`](docs/STREAM_HEALTH_EVIDENCE.md);
 - supports a gated sermon-first then worship hardware rollout with multi-hour
   stability windows, manifest verification, and named human acceptance before the
   worship proof; see [`docs/STAGED_ROLLOUT.md`](docs/STAGED_ROLLOUT.md);

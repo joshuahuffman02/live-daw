@@ -71,6 +71,12 @@ Use an encoder/sidecar endpoint for the first probe and an independently observe
 platform/CDN playback endpoint for the second. A generic web page returning HTTP 200
 does not prove a stream is live and does not satisfy this contract.
 
+The staged proof persists the payload booleans, endpoint timestamp, calculated age,
+and request timestamp for both probes. The signed-acceptance contract in
+`STREAM_HEALTH_EVIDENCE.md` requires fresh, gap-bounded, all-healthy coverage across
+the requested soundcheck and stability window; one isolated unhealthy observation
+remains reviewable but cannot be promoted.
+
 ## Acceptance drill
 
 Before go-live, record evidence for each:

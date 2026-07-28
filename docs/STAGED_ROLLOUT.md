@@ -43,9 +43,12 @@ STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
    `stream-health-observations.tsv`, the continuous-recording proof report and its
    raw/program segments, and the external-failover recording. The runner probes both
    configured health endpoints throughout the full check and blocks after two
-   consecutive failures or a missing healthy observation. The recording verifier
-   requires zero dropped frames, exact segment/header/frame accounting, 66-channel
-   96 kHz float WAVs, the free-space reserve, and at least two persisted hours.
+   consecutive failures or a missing healthy observation. Its final semantic gate
+   additionally requires zero unhealthy rows, fresh endpoint timestamps, a maximum
+   seven-second observation gap, and at least 95% coverage of the requested window,
+   as specified in `STREAM_HEALTH_EVIDENCE.md`. The recording verifier requires zero
+   dropped frames, exact segment/header/frame accounting, 66-channel 96 kHz float
+   WAVs, the free-space reserve, and at least two persisted hours.
 5. A named operator accepts or rejects advancement. Any unexplained critical incident,
    missing speech, clipping, failover, restart, clock correction at the limit, or
    recorder loss blocks worship.
@@ -81,11 +84,12 @@ For an approved sermon, bind the exact proof and supporting evidence:
 ```
 
 The command independently re-verifies the notarized app, full-check manifest,
-two-hour recording, encoder/egress observations, and the semantic production-evidence
-contract in `PRODUCTION_EVIDENCE_FORMAT.md`. It checks that failover, A/V sync/drift,
-recovery drills, and replay results pass their numeric and behavioral gates; hashes
-every referenced attachment; binds all four reports to the selected manifest; and
-binds the replay candidate to the release source commit. It then hashes the complete
+two-hour recording, continuous encoder/egress coverage in
+`STREAM_HEALTH_EVIDENCE.md`, and the semantic production-evidence contract in
+`PRODUCTION_EVIDENCE_FORMAT.md`. It checks that failover, A/V sync/drift, recovery
+drills, and replay results pass their numeric and behavioral gates; hashes every
+referenced attachment; binds all four reports to the selected manifest; and binds
+the replay candidate to the release source commit. It then hashes the complete
 evidence index into `acceptance.json`, signs that exact JSON with the operator key,
 and verifies the result against the venue trust file. A signed `rejected` decision is
 retained just as durably but cannot unlock worship.

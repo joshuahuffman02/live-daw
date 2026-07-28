@@ -155,16 +155,13 @@ if [[ "${manifest_scene}" != "${phase}" ||
   exit 4
 fi
 
-if ! /usr/bin/awk -F '\t' '
-  NR > 1 && $2 == "encoder" && $3 == "healthy" { encoder = 1 }
-  NR > 1 && $2 == "egress" && $3 == "healthy" { egress = 1 }
-  END { exit !(encoder && egress) }
-' "${stream_health_path}"; then
-  print -u2 "Stream-health evidence lacks healthy encoder and egress observations."
-  exit 4
-fi
-
 script_directory="${0:A:h}"
+"${script_directory}/verify-stream-health-evidence.sh" \
+  --stream-health "${stream_health_path}" \
+  --manifest "${manifest_path}" \
+  --expected-phase "${phase}" \
+  --require-production-duration
+
 production_evidence_arguments=(
   --external-failover "${external_failover_path}"
   --latency-lipsync "${latency_lipsync_path}"

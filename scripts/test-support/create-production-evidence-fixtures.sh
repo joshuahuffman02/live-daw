@@ -77,7 +77,13 @@ create_production_evidence_fixtures() {
   typeset -gA production_evidence_attachments
   local manifest_sha
 
-  production_fixture_attachment "${root}" full-check-manifest.json
+  REPLY="${root}/full-check-manifest.json"
+  /usr/bin/plutil -create xml1 "${REPLY}"
+  /usr/bin/plutil -insert scene -string sermon "${REPLY}"
+  /usr/bin/plutil -insert hardwareProofPassed -bool true "${REPLY}"
+  /usr/bin/plutil -insert soundcheckSeconds -float 30.0 "${REPLY}"
+  /usr/bin/plutil -insert stabilitySeconds -float 7200.0 "${REPLY}"
+  /usr/bin/plutil -convert json "${REPLY}"
   production_evidence_attachments[full-check-manifest]="${REPLY}"
   manifest_sha="$(/usr/bin/shasum -a 256 "${REPLY}" | /usr/bin/awk '{print $1}')"
 

@@ -43,11 +43,13 @@ hardware proof.
 - Staged recording proof: full stability-window capture, planned-capacity and live
   reserve gates, segment/header/frame verification, zero-drop requirement, and the
   two-hour production-vs-rehearsal gate are implemented and behavior-tested.
-- Acceptance chain: signed-bundle and semantic production-evidence self-tests pass.
-  They reject evidence modified after signing, slow/unsafe failover, excessive or
-  inconsistent A/V drift, failed recovery behavior, unsafe replay, a mismatched
-  replay commit, and reports bound to another manifest. Worship requires a trusted
-  approved sermon signer and an exact accepted-manifest hash match.
+- Acceptance chain: signed-bundle, continuous stream-health, and semantic
+  production-evidence self-tests pass. They reject evidence modified after signing,
+  unhealthy/stale/gapped/short stream observations, slow/unsafe failover, excessive
+  or inconsistent A/V drift, failed recovery behavior, unsafe replay, a mismatched
+  replay commit, wrong rollout phase, and reports bound to another manifest. Worship
+  requires a trusted approved sermon signer and an exact accepted-manifest hash
+  match.
 - Operator UI/UX redesign: native, remote, monitor, setup, accessibility, and
   responsive-layout changes committed as `f3e6e74`.
 - Private repository publication: local `main` tracks the published private `main`.

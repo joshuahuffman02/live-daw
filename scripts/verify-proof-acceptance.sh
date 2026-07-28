@@ -188,6 +188,12 @@ if [[ -n "${expected_manifest_sha}" && "${manifest_hash_matched}" != "1" ]]; the
   exit 6
 fi
 
+"${script_directory}/verify-stream-health-evidence.sh" \
+  --stream-health "${verified_evidence_paths[stream-health]}" \
+  --manifest "${verified_evidence_paths[full-check-manifest]}" \
+  --expected-phase "${phase}" \
+  --require-production-duration >/dev/null
+
 production_evidence_arguments=(
   --external-failover "${verified_evidence_paths[external-failover]}"
   --latency-lipsync "${verified_evidence_paths[latency-lipsync]}"

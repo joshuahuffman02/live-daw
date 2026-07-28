@@ -133,7 +133,7 @@ fi
 health_stop_file="${phase_directory}/.stop-health-monitor"
 health_failure_file="${phase_directory}/.stream-health-failed"
 health_log="${phase_directory}/stream-health-observations.tsv"
-print -r -- $'timestampMs\tprobe\tstate\tdetail' > "${health_log}"
+print -r -- $'checkedAtMs\tprobe\tstate\tresponseTimestampMs\tageMs\thealthy\tstreaming\taudioActive\tdetail' > "${health_log}"
 
 monitor_health_endpoint() {
   local probe_name="$1"
@@ -145,6 +145,11 @@ monitor_health_endpoint() {
     local now_ms="$(( $(date +%s) * 1000 ))"
     local state="healthy"
     local detail="fresh live payload"
+    local healthy=""
+    local streaming=""
+    local audio_active=""
+    local observed_ms=""
+    local age_ms=""
     if ! /usr/bin/curl --silent --show-error --fail --max-time 3 \
       -H "Accept: application/json" \
       -o "${response_file}" \
@@ -152,16 +157,16 @@ monitor_health_endpoint() {
       state="unhealthy"
       detail="HTTP request failed"
     else
-      local healthy="$(/usr/bin/plutil -extract healthy raw -o - "${response_file}" 2>/dev/null || true)"
-      local streaming="$(/usr/bin/plutil -extract streaming raw -o - "${response_file}" 2>/dev/null || true)"
-      local audio_active="$(/usr/bin/plutil -extract audioActive raw -o - "${response_file}" 2>/dev/null || true)"
-      local observed_ms="$(/usr/bin/plutil -extract timestampMs raw -o - "${response_file}" 2>/dev/null || true)"
+      healthy="$(/usr/bin/plutil -extract healthy raw -o - "${response_file}" 2>/dev/null || true)"
+      streaming="$(/usr/bin/plutil -extract streaming raw -o - "${response_file}" 2>/dev/null || true)"
+      audio_active="$(/usr/bin/plutil -extract audioActive raw -o - "${response_file}" 2>/dev/null || true)"
+      observed_ms="$(/usr/bin/plutil -extract timestampMs raw -o - "${response_file}" 2>/dev/null || true)"
       if [[ "${healthy}" != "true" || "${streaming}" != "true" || "${audio_active}" != "true" ||
             ! "${observed_ms}" =~ '^[0-9]+$' ]]; then
         state="unhealthy"
         detail="invalid or unhealthy JSON contract"
       else
-        local age_ms="$(( now_ms - observed_ms ))"
+        age_ms="$(( now_ms - observed_ms ))"
         if (( age_ms < -5000 || age_ms > 15000 )); then
           state="unhealthy"
           detail="stale or future health timestamp"
@@ -169,7 +174,7 @@ monitor_health_endpoint() {
       fi
     fi
 
-    print -r -- "${now_ms}"$'\t'"${probe_name}"$'\t'"${state}"$'\t'"${detail}" >> "${health_log}"
+    print -r -- "${now_ms}"$'\t'"${probe_name}"$'\t'"${state}"$'\t'"${observed_ms}"$'\t'"${age_ms}"$'\t'"${healthy}"$'\t'"${streaming}"$'\t'"${audio_active}"$'\t'"${detail}" >> "${health_log}"
     if [[ "${state}" == "healthy" ]]; then
       consecutive_failures=0
       /usr/bin/touch "${phase_directory}/.${probe_name}-health-seen"
@@ -236,6 +241,16 @@ fi
 
 manifest="${manifests[1]}"
 "${app_binary}" --smoke-test --verify-full-check --manifest "${manifest}"
+stream_health_arguments=(
+  --stream-health "${health_log}"
+  --manifest "${manifest}"
+  --expected-phase "${phase}"
+)
+if [[ "${rehearsal_only}" != "1" ]]; then
+  stream_health_arguments+=(--require-production-duration)
+fi
+"${script_directory}/verify-stream-health-evidence.sh" \
+  "${stream_health_arguments[@]}"
 
 recording_reports=(
   "${phase_directory}"/automix-continuous-recording-*/continuous-recording-proof.json(N)

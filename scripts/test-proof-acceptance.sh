@@ -20,6 +20,20 @@ print -r -- "operator@example.test $(<"${key_path}.pub")" > "${trusted_signers}"
 source "${script_directory}/test-support/create-production-evidence-fixtures.sh"
 create_production_evidence_fixtures "${fixture_root}/production-evidence"
 
+write_stream_health_fixture() {
+  local output="$1"
+  /usr/bin/awk 'BEGIN {
+    print "checkedAtMs\tprobe\tstate\tresponseTimestampMs\tageMs\thealthy\tstreaming\taudioActive\tdetail"
+    base = 1780000000000
+    for (offset = 0; offset <= 7230000; offset += 2000) {
+      checked = base + offset
+      response = checked - 1000
+      print checked "\tencoder\thealthy\t" response "\t1000\ttrue\ttrue\ttrue\tfresh live payload"
+      print checked "\tegress\thealthy\t" response "\t1000\ttrue\ttrue\ttrue\tfresh live payload"
+    }
+  }' > "${output}"
+}
+
 labels=(
   build-metadata
   full-check-manifest
@@ -42,6 +56,8 @@ for label in "${labels[@]}"; do
     path="${production_evidence_paths[${label}]}"
   elif [[ "${label}" == "full-check-manifest" ]]; then
     path="${production_evidence_attachments[full-check-manifest]}"
+  elif [[ "${label}" == "stream-health" ]]; then
+    write_stream_health_fixture "${path}"
   else
     print -r -- "fixture ${label}" > "${path}"
   fi
@@ -105,7 +121,7 @@ if "${script_directory}/verify-proof-acceptance.sh" \
   exit 1
 fi
 
-print -r -- "fixture stream-health" > "${evidence_paths[stream-health]}"
+write_stream_health_fixture "${evidence_paths[stream-health]}"
 print -r -- " " >> "${json}"
 if "${script_directory}/verify-proof-acceptance.sh" \
     --acceptance-dir "${bundle}" \
