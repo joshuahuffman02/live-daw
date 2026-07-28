@@ -790,10 +790,12 @@ static std::pair<double, double> renderBrainTone(bool manualOverride) {
         manual.pan = 1.0f;
         CHECK(brain.setManualChannelParams(0, manual, app::OverrideFader | app::OverridePan), "accepts manual fader/pan override for behavior test");
     }
-    brain.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-    brain.applyTo(eng);
-    brain.stop();
+    // Manual precedence is a pure control decision; advance exactly 1.5 seconds
+    // at 20 Hz instead of depending on a live thread receiving enough time slices.
+    for (int tick = 0; tick < 30; ++tick) {
+        brain.runOneOfflineControlTick();
+    }
+    brain.applyOfflineTo(eng);
 
     std::vector<float> in(frames), oL(frames), oR(frames);
     std::vector<const float*> ptrs{in.data()};
