@@ -492,7 +492,10 @@ The app does not configure the Midas console. It expects Dante to already exist:
   plus exact-input streaming-track and `InputVolumeMeters` evidence into the encoder
   contract at
   `http://127.0.0.1:8421/health`; see
-  [`../encoder/README.md`](../encoder/README.md). See
+  [`../encoder/README.md`](../encoder/README.md). The public HLS observer separately
+  requires an advancing CDN sequence and a decoded audio frame from the newest
+  segment; deploy it offsite as documented in
+  [`../egress/README.md`](../egress/README.md). See
   [`../docs/RUNTIME_RESILIENCE.md`](../docs/RUNTIME_RESILIENCE.md) for the LaunchAgent,
   session-resume contract, and kill-test procedure.
 - Hardware rollout is gated sermon-first, then worship only after a verified real

@@ -70,7 +70,7 @@ The no-JUCE build also creates `automix_replay`; CTest runs its synthetic end-to
 self-test. Full usage and the decision-log contract are in
 [`../docs/REPLAY_EVALUATION.md`](../docs/REPLAY_EVALUATION.md).
 
-The full appliance pulls JUCE 8 via CMake FetchContent on first configure. Its
+The full appliance pulls JUCE 9 via CMake FetchContent on first configure. Its
 production target treats compiler warnings as errors and is built in CI:
 
 ```bash
@@ -119,6 +119,6 @@ cmake --build build --target BroadcastMixer
 - The current route treats licensed Dante Virtual Soundcard as external Core Audio
   software and does not bundle a Dante SDK. Any future embedded Dante integration or
   redistribution of Audinate software needs its own licensing review.
-- This optional executable links JUCE 8, unlike the production Swift/Core Audio app.
+- This optional executable links JUCE 9, unlike the production Swift/Core Audio app.
   Resolve its commercial/AGPL distribution basis before shipping it; see
   [`../docs/RELEASE_COMPLIANCE.md`](../docs/RELEASE_COMPLIANCE.md).

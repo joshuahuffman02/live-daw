@@ -101,6 +101,17 @@ between carrier presence and program content are documented in
 Encoder Health; the Public Egress URL must remain an independent platform/CDN
 observer.
 
+For HLS public playback, deploy `egress/hls_health_bridge.py` on a separate host
+and Internet connection. It follows the public HTTPS master/audio playlists,
+requires media-sequence progress, retrieves the newest completed CDN segment, and
+uses FFmpeg to decode an audio frame. Health fails closed for non-public peers,
+redirect/TLS/HTTP errors, finite or encrypted playlists, stalled/reset sequences,
+bad maps/ranges, missing segments, and audio decode failure. A decoded silent frame
+remains a valid carrier; AutoMix's independent program-silence alert detects missing
+content. Keep the full HLS URL in the observer's owner-only file and expose only the
+token-free `/health` endpoint over a VPN/firewall ACL. Deployment is documented in
+`egress/README.md`.
+
 The staged proof persists the payload booleans, endpoint timestamp, calculated age,
 and request timestamp for both probes. The signed-acceptance contract in
 `STREAM_HEALTH_EVIDENCE.md` requires fresh, gap-bounded, all-healthy coverage across
@@ -116,8 +127,10 @@ Before go-live, record evidence for each:
 3. Keep continuous capture active through a forced engine failure; verify a new
    recording directory and valid WAV headers.
 4. Stop/reconnect OBS, remove the configured OBS program-audio input, and return
-   stale/unhealthy encoder JSON; verify the bridge, desktop, and remote paths fail
-   closed and recover only after fresh exact-input meter and stream-status evidence.
+   stale/unhealthy encoder JSON; then stall public HLS progression and remove its
+   audio carrier. Verify both bridges, desktop, and remote paths fail closed and
+   recover only after fresh exact-input encoder evidence plus a new decoded public
+   CDN segment.
 5. Kill the app abnormally; verify LaunchAgent relaunch and session/capture resume.
 6. Click operator Stop; verify no automatic engine restart.
 7. Run every external-failover kill test and remain on backup until manual return.

@@ -29,6 +29,7 @@ jobs:
           plutil -lint native/AutoMixNative/AutoMixNative.entitlements
           plutil -lint native/launchd/com.livedaw.automixnative.plist.template
           plutil -lint encoder/com.livedaw.obshealthbridge.plist.template
+          plutil -lint egress/com.livedaw.hlsegresshealth.plist.template
 
       - name: Verify production and signed acceptance contracts
         run: |
@@ -50,6 +51,13 @@ jobs:
           brew bundle --file Brewfile
           xcodegen generate --spec native/project.yml --project native
           git diff --exit-code -- native/AutoMixNative.xcodeproj/project.pbxproj
+
+      - name: Verify public HLS egress observer
+        env:
+          AUTOMIX_REQUIRE_FFMPEG_TEST: "1"
+        run: |
+          python3 -W error::ResourceWarning -m unittest -v \
+            egress/test_hls_health_bridge.py
 
       - name: Build and test deterministic DSP
         run: |

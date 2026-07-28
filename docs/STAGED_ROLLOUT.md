@@ -12,7 +12,9 @@ first because speech automation has fewer interacting sources than a worship mix
 - External static backup and fail-safe switching pass every kill test in
   `EXTERNAL_FAILOVER.md`.
 - Encoder and public-egress health endpoints are configured and independently
-  observed.
+  observed. Use the authenticated local OBS bridge and an HLS observer on a
+  separate host/Internet connection; connect the latter through a restricted
+  VPN/firewall path as described in `egress/README.md`.
 - The signed app is installed at its permanent path; the LaunchAgent is installed.
   The proof runner independently requires a valid signature, stapled notarization
   ticket, and Gatekeeper acceptance, then records the signing details and executable

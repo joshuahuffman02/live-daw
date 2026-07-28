@@ -25,16 +25,16 @@ are maintained in the
 
 ## Optional JUCE portability appliance
 
-The separate CMake target `BroadcastMixer` links JUCE 8. Do not distribute that
+The separate CMake target `BroadcastMixer` links JUCE 9. Do not distribute that
 binary until the owner has documented either:
 
 1. an applicable JUCE commercial licence, or
 2. release under and compliance with the AGPLv3 terms.
 
-JUCE states that version 8 is dual-licensed under its commercial licence and AGPLv3;
+JUCE states that version 9 is dual-licensed under its commercial licence and AGPLv3;
 the current terms and eligibility limits belong to JUCE, not this repository. Review
 the [official JUCE licensing page](https://juce.com/get-juce/) and
-[JUCE 8 EULA](https://juce.com/legal/juce-8-licence/) for the actual decision.
+[JUCE 9 EULA](https://juce.com/legal/juce-9-licence/) for the actual decision.
 
 The JUCE shell is a portability/validation target. It is not required to sign,
 notarize, install, or run `AutoMix Native.app`.

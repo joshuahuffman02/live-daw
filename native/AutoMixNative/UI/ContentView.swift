@@ -1618,7 +1618,7 @@ private struct DeviceControlPanel: View {
                             value: model.egressHealth.summary,
                             warning: model.egressHealth.isFailure
                         )
-                        Text("Each optional endpoint must return fresh JSON: {\"healthy\":true,\"streaming\":true,\"audioActive\":true,\"timestampMs\":…}. Use token-free health URLs; configured URLs are stored in the local venue profile.")
+                        Text("Use the local OBS bridge for Encoder Health and an offsite playback observer for Public Egress. Each endpoint must return fresh JSON: {\"healthy\":true,\"streaming\":true,\"audioActive\":true,\"timestampMs\":…}. Use token-free health URLs; configured URLs are stored in the local venue profile.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

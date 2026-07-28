@@ -17,11 +17,11 @@ hardware proof.
 | Worship roles and stereo linking | Role profiles for speech, vocals, guitars, bass, drums, keys, percussion, and playback; linked detector/control tests; profile/preflight coverage tests | Verified in deterministic and native simulation tests. |
 | Latency and lip-sync reporting | Fixed limiter latency impulse test; native route estimate and persisted measured A/V path; `docs/LATENCY_AND_LIPSYNC.md` | Calculation/reporting verified. End-to-end camera/encoder measurement and multi-hour drift observation require the real chain. |
 | Continuous raw/program recording | Preallocated SPSC recording path, 60-second checkpoint segments, capacity/retention controls, remapped-input-order and no-allocation tests; staged full-window recorder; `ContinuousRecordingProofReport` segment/frame/capacity verifier | Software and the headless proof integration are verified. Current internal disk still has insufficient space for the two-hour 64+2-channel hardware run. |
-| Encoder/public-egress health, device recovery, relaunch, incident logging | Health contract and alert tests; dependency-free authenticated OBS WebSocket v5 bridge with advancing encoder counters, exact program-input track/meter binding, LaunchAgent installer, and 25 protocol/state/server tests; exact-route recovery/backoff tests; app LaunchAgent installer; incident JSONL; `docs/RUNTIME_RESILIENCE.md` | Generic and concrete OBS encoder software paths are verified. The installed OBS instance still needs its real BlackHole/capture input, authenticated WebSocket configuration, live stream exercise, independent public-egress endpoint, and crash/device drills. |
+| Encoder/public-egress health, device recovery, relaunch, incident logging | Health contract and alert tests; authenticated OBS WebSocket bridge with advancing counters and exact track/meter binding; independently deployable public HLS observer requiring public-peer sequence advancement, newest-segment retrieval, and decoded audio; both LaunchAgent installers; 25 OBS plus 26 egress protocol/state/server tests; exact-route recovery/backoff; app LaunchAgent; incident JSONL; `docs/RUNTIME_RESILIENCE.md` | Concrete encoder and public-playback observer software paths are verified. The venue still needs its real BlackHole/capture input, authenticated OBS configuration, offsite/VPN egress deployment, real live stream, and crash/device drills. |
 | Separate-device drift mitigation/shared clock | Bounded `AsyncOutputClock`, ring telemetry, correction-limit gates, route clock preflight, stability-report tests | Algorithm and gates verified. Real independent-device or Aggregate Device run remains hardware evidence. |
 | Reproducible replay/evaluation and decision log | `appliance/tools/replay_eval.cpp`; deterministic self-test; CRC/config/metrics/20 Hz trace contract in `docs/REPLAY_EVALUATION.md` | Harness verified. Promotion still requires representative recorded services and operator-approved references. |
 | SHADOW-first progressive autonomy | Candidate-only shadow behavior tests; venue profiles default SHADOW on; native one-second 64-channel candidate-decision JSONL; semantic coverage/route/non-application verifier; manifest/commit-bound `rollout-observation` evidence; `docs/STAGED_ROLLOUT.md` | Workflow and signed promotion gates are verified. An approved bundle now requires a full, continuous, non-simulated native SHADOW capture, supervised service, and reviewed real Planning Center cue trace. Those venue events have not yet occurred. |
-| Dependency and security hygiene | Locked npm graph, zero high-level audit findings, current React/Vite/TypeScript/JUCE patch, pinned CI actions, least-privilege CI token, HttpOnly cookie-only remote control, pairing lockout/bounds, snapshot-bound remote commands, CSP | Verified locally and in the hosted macOS pipeline. |
+| Dependency and security hygiene | Locked npm graph, zero high-level audit findings, current React/Vite/TypeScript/JUCE releases, pinned CI actions, least-privilege CI token, HttpOnly cookie-only remote control, pairing lockout/bounds, snapshot-bound remote commands, CSP | Verified locally and in the hosted macOS pipeline. |
 | Realtime safety and human authority | No-allocation guards for engine, automixer, reverb/delay, brain mailbox, native input/render/recording/overrun paths; SAFE/FREEZE/manual controls and tests; fail-closed remote mutation on stale telemetry, 750 ms pre-routing expiry, one-second acknowledgement timeout, and local-only FREEZE | Verified in deterministic and simulated native paths. Real callback timing/xrun behavior remains a rig measurement. |
 | Signed/notarized production artifact | Hardened Runtime, audio-input entitlement, fail-closed release builder, signature/notary/staple/Gatekeeper verification, proof runner binding | Pipeline verified through unsigned/ad-hoc negative and entitlement tests. No Developer ID Application identity or notary profile is installed, so no production artifact exists yet. |
 | Real 64-channel 96 kHz HD96/Dante proof | Full-check runner, semantic manifest verifier, simulation-resistant source checks, notarized-build gate | Not achieved. Current inventory contains only built-in 48 kHz speakers and the explicit simulated HD96 device. |
@@ -49,9 +49,14 @@ hardware proof.
   immediate stop/reconnect failure, recovery/session-invalidated behavior, socket
   cleanup, owner-only password handling, loopback confinement, and no-store HTTP
   health.
+- Public HLS egress observer: **26 passed, 0 failed** for production URL/public-peer
+  confinement, redirects and byte ranges, master/audio rendition selection,
+  sequence/delta/map/range parsing, finite/encrypted rejection, owner-only URL
+  handling, real FFmpeg silent-carrier decode, baseline/progression/stall/reset
+  behavior, playback failure, URL redaction, and no-store HTTP health.
 - Web proof: clean install, typecheck, production build, and `npm audit` passed
   with **0 known vulnerabilities**.
-- JUCE 8.0.15 portability target: strict Release build and CTest passed.
+- JUCE 9.0.0 portability target: strict Release build and CTest passed.
 - Xcode project regeneration: deterministic with the declared Brew tools.
 - Full CMake graph: Release build and CTest passed.
 - Staged recording proof: full stability-window capture, planned-capacity and live
@@ -107,6 +112,10 @@ and is intentionally ignored from source control.
   build. Its bundled OBS WebSocket plugin is present. The repository now contains the
   concrete OBS health bridge and installer, but the bridge is not installed because
   OBS does not yet have the real program-audio input or venue WebSocket password.
+- FFmpeg **8.1.2_1** is installed and the public HLS observer's real silent-carrier
+  decode test passes. The observer is not deployed because no public platform HLS
+  playback URL, offsite observer host/network, or private VPN path has been
+  provisioned.
 - Dante/DVS, BlackHole, and Loopback applications: not found. BlackHole 2ch requires
   an administrator-approved package installation and a reboot before it can be
   evaluated as the isolated program-output route.
@@ -120,8 +129,8 @@ and is intentionally ignored from source control.
    HD96 split and clock the complete route at 96 kHz.
 2. Install BlackHole/capture routing, create and verify the exact OBS program-audio
    input and authenticated WebSocket password, install the encoder-health bridge,
-   configure the independent public-egress endpoint, and build the external
-   fail-safe backup/A-B path.
+   deploy the HLS observer on an offsite network through a restricted VPN path, and
+   build the external fail-safe backup/A-B path.
 3. Provide a production recording volume with at least the calculated proof duration
    plus reserve (roughly 200+ GB free for a two-hour run).
 4. Install the Apple Developer ID Application identity and notary Keychain profile;

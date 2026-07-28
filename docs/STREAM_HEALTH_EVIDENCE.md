@@ -56,3 +56,10 @@ Verify a log directly with:
 the log or manifest after signing also fails the outer SHA-256 contract.
 
 The deterministic rejection suite is `scripts/test-stream-health-evidence.sh`.
+
+Use `encoder/obs_health_bridge.py` for the local OBS probe and deploy
+`egress/hls_health_bridge.py` on a separate host/network for a public HLS playback
+probe. The egress observer timestamps verified CDN media-sequence advances only
+after the newest segment produces a decoded audio frame; a cached playlist, finite
+clip, generic web page, or playlist without decodable audio cannot satisfy this
+contract. See `encoder/README.md` and `egress/README.md`.

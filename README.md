@@ -221,8 +221,9 @@ Current native milestone:
   provide fresh-payload verification to the desktop and remote alert path, with the
   dependency-free authenticated OBS WebSocket bridge exposing exact stream and
   program-audio-carrier state at a loopback encoder-health endpoint (see
-  [`encoder/README.md`](encoder/README.md)), while public egress remains an
-  independent CDN/platform observation; the
+  [`encoder/README.md`](encoder/README.md)), and the independently deployable HLS
+  observer proving advancing, downloadable, decodable public CDN audio (see
+  [`egress/README.md`](egress/README.md)); the
   embedded monitor server also serving a fail-closed `/health` primary-audio
   heartbeat for an external relay/controller (HTTP 200 only for the exact real
   64-channel/96 kHz HD96/Dante route and fresh callbacks/control loop; otherwise

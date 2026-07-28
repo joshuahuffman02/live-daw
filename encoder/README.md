@@ -6,7 +6,8 @@ runner. It uses only the Python 3 standard library and binds both OBS and its HT
 health endpoint to loopback.
 
 This is the **encoder** observation. It does not replace the independently observed
-public-platform/CDN **egress** endpoint.
+public-platform/CDN **egress** endpoint; deploy the repository's viewer-side HLS
+observer as documented in [`../egress/README.md`](../egress/README.md).
 
 ## What it proves
 
