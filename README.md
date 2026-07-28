@@ -219,6 +219,10 @@ Current native milestone:
   verification and bounded backoff, restores continuous-capture intent, and writes
   ordered durable incident JSONL; optional encoder-ingest and public-egress endpoints
   provide fresh-payload verification to the desktop and remote alert path, with the
+  dependency-free authenticated OBS WebSocket bridge exposing exact stream and
+  program-audio-carrier state at a loopback encoder-health endpoint (see
+  [`encoder/README.md`](encoder/README.md)), while public egress remains an
+  independent CDN/platform observation; the
   embedded monitor server also serving a fail-closed `/health` primary-audio
   heartbeat for an external relay/controller (HTTP 200 only for the exact real
   64-channel/96 kHz HD96/Dante route and fresh callbacks/control loop; otherwise

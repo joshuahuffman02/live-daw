@@ -487,7 +487,12 @@ The app does not configure the Midas console. It expects Dante to already exist:
   with grace/verification/backoff, reapplies the live state, and resumes continuous
   capture in a new segment directory. Runtime incidents are durable JSONL. Optional
   encoder-ingest and public-egress probes require fresh structured health rather than
-  treating a generic HTTP 200 as proof. See
+  treating a generic HTTP 200 as proof. For OBS, the repository's authenticated
+  loopback WebSocket bridge converts advancing `GetStreamStatus` encoder counters
+  plus exact-input streaming-track and `InputVolumeMeters` evidence into the encoder
+  contract at
+  `http://127.0.0.1:8421/health`; see
+  [`../encoder/README.md`](../encoder/README.md). See
   [`../docs/RUNTIME_RESILIENCE.md`](../docs/RUNTIME_RESILIENCE.md) for the LaunchAgent,
   session-resume contract, and kill-test procedure.
 - Hardware rollout is gated sermon-first, then worship only after a verified real

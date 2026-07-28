@@ -87,6 +87,20 @@ Use an encoder/sidecar endpoint for the first probe and an independently observe
 platform/CDN playback endpoint for the second. A generic web page returning HTTP 200
 does not prove a stream is live and does not satisfy this contract.
 
+For OBS, use the repository's dependency-free
+`encoder/obs_health_bridge.py` and per-user LaunchAgent installer. The bridge
+authenticates to OBS WebSocket v5 on loopback, polls `GetStreamStatus`, verifies
+byte/frame/duration counter progress and clean encoder intervals, checks that the
+configured input remains assigned to the chosen streaming track, and requires fresh
+`InputVolumeMeters` events for that exact name or UUID. It fails closed for
+disconnects, stopped/reconnecting output, stalled counters, skipped frames, high
+congestion, stale or malformed status/track/meter data, a missing/wrong carrier,
+disabled/bad authentication, and protocol errors. Installation and the distinction
+between carrier presence and program content are documented in
+`encoder/README.md`. Configure the resulting `http://127.0.0.1:8421/health` URL as
+Encoder Health; the Public Egress URL must remain an independent platform/CDN
+observer.
+
 The staged proof persists the payload booleans, endpoint timestamp, calculated age,
 and request timestamp for both probes. The signed-acceptance contract in
 `STREAM_HEALTH_EVIDENCE.md` requires fresh, gap-bounded, all-healthy coverage across
@@ -101,7 +115,9 @@ Before go-live, record evidence for each:
 2. Remove and restore the output device; verify bounded retry/backoff and recovery.
 3. Keep continuous capture active through a forced engine failure; verify a new
    recording directory and valid WAV headers.
-4. Return stale and unhealthy encoder JSON; verify desktop and remote critical alerts.
+4. Stop/reconnect OBS, remove the configured OBS program-audio input, and return
+   stale/unhealthy encoder JSON; verify the bridge, desktop, and remote paths fail
+   closed and recover only after fresh exact-input meter and stream-status evidence.
 5. Kill the app abnormally; verify LaunchAgent relaunch and session/capture resume.
 6. Click operator Stop; verify no automatic engine restart.
 7. Run every external-failover kill test and remain on backup until manual return.
