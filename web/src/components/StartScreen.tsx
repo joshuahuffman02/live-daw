@@ -11,17 +11,19 @@ export default function StartScreen({
     <div className="flex min-h-screen items-center justify-center bg-[#0a0b0e] p-6 text-zinc-200">
       <div className="w-full max-w-2xl">
         <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-cyan-400/80">
-          <span className="rec-dot inline-block h-2 w-2 rounded-full bg-red-500" />
-          Autonomous Broadcast Mixer · proof-of-concept
+          <span className="inline-block h-2 w-2 rounded-full bg-cyan-400" aria-hidden="true" />
+          Autonomous broadcast mixer · proof of concept
         </div>
         <h1 className="text-3xl font-semibold tracking-tight text-white">AutoMix</h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-zinc-400">
-          A runnable embodiment of the spec: deterministic per-sample DSP on the audio
-          thread (gain-sharing automix, BS.1770 loudness + true-peak limiter, gate) with
-          a control-rate <span className="text-cyan-400">brain</span> that classifies
-          channels, auto-EQs toward target curves, rides levels to per-scene targets, and
-          de-esses — with manual override, FREEZE, and a hard SAFE bypass. No ML in the
-          audio path.
+          Keep a livestream intelligible, consistent, and broadcast-safe while an
+          autonomous <span className="text-cyan-400">mix brain</span> classifies sources,
+          reduces masking, rides levels, and targets stream loudness. Every automatic move
+          remains observable, can be frozen, and can be replaced by a conservative SAFE mix.
+        </p>
+        <p className="mt-2 max-w-xl text-xs leading-relaxed text-zinc-600">
+          Deterministic per-sample DSP stays on the audio thread; supervisory decisions run
+          at control rate with no ML in the audio path.
         </p>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -32,9 +34,9 @@ export default function StartScreen({
           >
             <div className="text-base font-medium text-white">Synthetic Stage</div>
             <div className="mt-1 text-xs leading-relaxed text-zinc-400">
-              9 simulated church-stage channels (2 speech mics, lead/BGV vocals,
-              acoustic, electric, bass, kick, keys). Watch the classifier, automix,
-              auto-EQ and loudness react. No files needed.
+              10 simulated church-stage channels (2 speech mics, lead/BGV vocals,
+              acoustic, electric, bass, kick, keys, and stereo tracks). Watch the
+              classifier, automix, auto-EQ, and loudness react. No files needed.
             </div>
             <div className="mt-3 text-xs font-medium text-cyan-400 group-hover:underline">Start →</div>
           </button>

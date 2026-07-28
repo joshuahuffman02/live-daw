@@ -62,16 +62,23 @@ export default function ChannelStrip({ id }: { id: number }) {
   return (
     <div
       onClick={() => select(id)}
+      role="group"
+      aria-label={`Channel ${id}: ${ch.name}, detected as ${profile.label}`}
       className={`flex w-[176px] shrink-0 flex-col gap-2 rounded-lg border bg-[#101218] p-2.5 ${
         selected ? 'border-cyan-500/60' : anyOverride ? 'border-amber-500/30' : 'border-[#1c1f27]'
       }`}
     >
       {/* header */}
       <div className="flex items-start justify-between">
-        <div className="min-w-0">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); select(id) }}
+          className="min-w-0 text-left"
+          aria-label={`Edit channel ${id}, ${ch.name}`}
+        >
           <div className="flex items-center gap-1">
             <span className="truncate text-sm font-semibold text-white">{profile.label}</span>
-            {ch.labelLocked && <span title="label locked" className="text-amber-400">🔒</span>}
+            {ch.labelLocked && <span className="rounded bg-amber-500/15 px-1 text-[8px] uppercase tracking-wide text-amber-300">locked</span>}
             {ch.isStereo && <span title="stereo" className="text-[8px] text-zinc-500">ST</span>}
             {ch.clip && <span title="clip" className="ml-auto inline-block h-2 w-2 rounded-full bg-red-500" />}
           </div>
@@ -81,10 +88,16 @@ export default function ChannelStrip({ id }: { id: number }) {
               ? <span className="truncate text-zinc-600" title={`input: ${inputName}`}>← {inputName}</span>
               : <span className="text-red-400">no input</span>}
           </div>
-        </div>
+        </button>
         <div className="flex flex-col items-end">
           <span className={`tnum text-xs font-medium ${confColor}`}>{conf}%</span>
-          <button onClick={(e) => { e.stopPropagation(); toggleLock() }} className="text-[9px] text-zinc-500 hover:text-zinc-300">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); toggleLock() }}
+            aria-pressed={ch.labelLocked}
+            aria-label={`${ch.labelLocked ? 'Unlock' : 'Lock'} detected role for channel ${id}`}
+            className="min-h-6 rounded px-1 text-[9px] text-zinc-500 hover:bg-[#1a1d25] hover:text-zinc-300"
+          >
             {ch.labelLocked ? 'unlock' : 'lock'}
           </button>
         </div>
@@ -95,6 +108,7 @@ export default function ChannelStrip({ id }: { id: number }) {
         value={ch.cls}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onRelabel(e.target.value as SourceClass)}
+        aria-label={`Role for channel ${id}, ${ch.name}`}
         className="w-full rounded border border-[#232733] bg-[#0c0d11] px-1 py-0.5 text-[10px] text-zinc-400"
       >
         {SELECTABLE.map((c) => (
@@ -106,11 +120,15 @@ export default function ChannelStrip({ id }: { id: number }) {
       <div className="flex items-center gap-1">
         <button
           onClick={(e) => { e.stopPropagation(); commit(); toggleMute(id) }}
-          className={`flex-1 rounded px-1 py-1 text-[10px] font-bold transition ${ch.muted ? 'bg-red-600 text-white' : 'bg-[#1a1d25] text-zinc-400 hover:text-zinc-200'}`}
+          aria-pressed={ch.muted}
+          aria-label={`${ch.muted ? 'Unmute' : 'Mute'} channel ${id}, ${ch.name}`}
+          className={`min-h-7 flex-1 rounded px-1 py-1 text-[10px] font-bold transition ${ch.muted ? 'bg-red-600 text-white' : 'bg-[#1a1d25] text-zinc-400 hover:text-zinc-200'}`}
         >M</button>
         <button
           onClick={(e) => { e.stopPropagation(); toggleSolo(id) }}
-          className={`flex-1 rounded px-1 py-1 text-[10px] font-bold transition ${ch.soloed ? 'bg-yellow-400 text-black' : 'bg-[#1a1d25] text-zinc-400 hover:text-zinc-200'}`}
+          aria-pressed={ch.soloed}
+          aria-label={`${ch.soloed ? 'Unsolo' : 'Solo'} channel ${id}, ${ch.name}`}
+          className={`min-h-7 flex-1 rounded px-1 py-1 text-[10px] font-bold transition ${ch.soloed ? 'bg-yellow-400 text-black' : 'bg-[#1a1d25] text-zinc-400 hover:text-zinc-200'}`}
         >S</button>
         {ch.dca > 0 && <span className="rounded bg-[#1a1d25] px-1 py-1 text-[9px] text-violet-300" title="DCA group">D{ch.dca}</span>}
         {ch.sceneSafe && <span className="rounded bg-emerald-500/20 px-1 py-1 text-[9px] text-emerald-300" title="safe from scene recall">SAFE</span>}
@@ -150,6 +168,7 @@ export default function ChannelStrip({ id }: { id: number }) {
           value={clampN(ch.faderDb, -40, 6)}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onFader(parseFloat(e.target.value))}
+          aria-label={`Fader for channel ${id}, ${ch.name}`}
           className="h-1 flex-1 accent-cyan-400"
         />
         <span className="tnum w-10 text-right text-[10px] text-zinc-300">{fmtSigned(ch.faderDb)}</span>
@@ -161,7 +180,9 @@ export default function ChannelStrip({ id }: { id: number }) {
           <button
             key={k}
             onClick={(e) => { e.stopPropagation(); toggleOverride(k) }}
-            className={`flex-1 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide transition ${
+            aria-pressed={ch.overrides[k]}
+            aria-label={`${k === 'eq' ? 'Equalizer' : k === 'comp' ? 'Dynamics' : 'Level'} ${ch.overrides[k] ? 'manual override' : 'automatic'} for channel ${id}, ${ch.name}`}
+            className={`min-h-6 flex-1 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide transition ${
               ch.overrides[k] ? 'bg-amber-500/80 text-black' : 'bg-[#1a1d25] text-zinc-500 hover:text-zinc-300'
             }`}
             title={ch.overrides[k] ? 'manual — AI off' : 'auto — click to take manual'}

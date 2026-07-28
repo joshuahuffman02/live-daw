@@ -34,7 +34,7 @@ export default function ChannelDetail() {
         <span className="text-xs font-semibold uppercase tracking-wider text-zinc-200">
           {PROFILES[ch.cls].label} <span className="text-zinc-600">· {ch.name}</span>
         </span>
-        <button onClick={() => select(null)} className="text-zinc-600 hover:text-zinc-300">×</button>
+        <button onClick={() => select(null)} aria-label={`Close details for ${ch.name}`} className="text-zinc-600 hover:text-zinc-300">×</button>
       </div>
 
       {/* input section */}
@@ -43,15 +43,15 @@ export default function ChannelDetail() {
           <Toggle label="Ø Polarity" on={ch.polarityInv} onClick={() => { commit(); setChannelField(ch.id, { polarityInv: !ch.polarityInv }) }} />
           <Toggle label="Scene-safe" on={ch.sceneSafe} color="emerald" onClick={() => { commit(); toggleSceneSafe(ch.id) }} />
         </div>
-        <Slider label="Delay" value={ch.inputDelayMs} min={0} max={30} step={0.1} unit="ms"
+        <Slider label="Delay" ariaLabel={`Input delay for ${ch.name}`} value={ch.inputDelayMs} min={0} max={30} step={0.1} unit="ms"
           onChange={(v) => setChannelField(ch.id, { inputDelayMs: v })} fmt={(v) => v.toFixed(1)} />
       </Section>
 
       {/* sends */}
       <Section title={`FX Sends ${ch.overrides.reverb ? '· MANUAL' : '· auto'}`}>
-        <Slider label="Reverb" value={ch.reverbSendDb} min={-60} max={0} step={1} unit="dB"
+        <Slider label="Reverb" ariaLabel={`Reverb send for ${ch.name}`} value={ch.reverbSendDb} min={-60} max={0} step={1} unit="dB"
           onChange={(v) => sendDb('reverb', v)} fmt={fmtDb} />
-        <Slider label="Delay" value={ch.delaySendDb} min={-60} max={0} step={1} unit="dB"
+        <Slider label="Delay" ariaLabel={`Delay send for ${ch.name}`} value={ch.delaySendDb} min={-60} max={0} step={1} unit="dB"
           onChange={(v) => sendDb('delay', v)} fmt={fmtDb} />
         {ch.overrides.reverb && (
           <button onClick={() => { commit(); setOverride(ch.id, 'reverb', false) }} className="mt-1 w-full rounded bg-[#1a1d25] py-1 text-[10px] text-cyan-300 hover:bg-[#222631]">↩ return sends to AUTO</button>
@@ -62,6 +62,7 @@ export default function ChannelDetail() {
       <Section title="Routing">
         <Row label="DCA group">
           <select value={ch.dca} onChange={(e) => { commit(); setChannelField(ch.id, { dca: +e.target.value }) }}
+            aria-label={`DCA group for ${ch.name}`}
             className="rounded border border-[#232733] bg-[#0c0d11] px-1 py-0.5 text-[11px] text-zinc-300">
             <option value={0}>None</option>
             {dcaGroups.map((d) => <option key={d.id} value={d.id}>{d.id} · {d.name}</option>)}
@@ -69,6 +70,7 @@ export default function ChannelDetail() {
         </Row>
         <Row label="Mute group">
           <select value={ch.muteGroup} onChange={(e) => { commit(); setChannelField(ch.id, { muteGroup: +e.target.value }) }}
+            aria-label={`Mute group for ${ch.name}`}
             className="rounded border border-[#232733] bg-[#0c0d11] px-1 py-0.5 text-[11px] text-zinc-300">
             <option value={0}>None</option>
             {[1, 2, 3, 4].map((g) => <option key={g} value={g}>Group {g}</option>)}
@@ -100,16 +102,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 function Toggle({ label, on, onClick, color = 'cyan' }: { label: string; on: boolean; onClick: () => void; color?: string }) {
   const active = color === 'emerald' ? 'bg-emerald-500 text-black' : 'bg-cyan-500 text-black'
   return (
-    <button onClick={onClick} className={`flex-1 rounded px-1.5 py-1 text-[10px] font-medium transition ${on ? active : 'bg-[#1a1d25] text-zinc-400 hover:text-zinc-200'}`}>{label}</button>
+    <button onClick={onClick} aria-pressed={on} className={`flex-1 rounded px-1.5 py-1 text-[10px] font-medium transition ${on ? active : 'bg-[#1a1d25] text-zinc-400 hover:text-zinc-200'}`}>{label}</button>
   )
 }
-function Slider({ label, value, min, max, step, unit, onChange, fmt }: {
-  label: string; value: number; min: number; max: number; step: number; unit: string; onChange: (v: number) => void; fmt: (v: number) => string
+function Slider({ label, ariaLabel, value, min, max, step, unit, onChange, fmt }: {
+  label: string; ariaLabel: string; value: number; min: number; max: number; step: number; unit: string; onChange: (v: number) => void; fmt: (v: number) => string
 }) {
   return (
     <div className="flex items-center gap-2">
       <span className="w-12 text-[10px] text-zinc-500">{label}</span>
-      <input type="range" min={min} max={max} step={step} value={clampN(value, min, max)} onChange={(e) => onChange(parseFloat(e.target.value))} className="h-1 flex-1 accent-cyan-400" />
+      <input type="range" min={min} max={max} step={step} value={clampN(value, min, max)} onChange={(e) => onChange(parseFloat(e.target.value))} aria-label={ariaLabel} className="h-1 flex-1 accent-cyan-400" />
       <span className="tnum w-12 text-right text-[10px] text-zinc-300">{fmt(value)}<span className="text-zinc-600">{unit}</span></span>
     </div>
   )

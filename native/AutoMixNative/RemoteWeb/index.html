@@ -11,7 +11,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
 <link rel="icon" href="/icons/icon-192.png">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=4">
 <title>AutoMix Remote</title>
 </head>
 <body>
@@ -42,7 +42,19 @@
     </section>
 
     <section class="card channels">
-      <div class="card-title">Channels</div>
+      <div class="channel-heading">
+        <div class="card-title">Channels</div>
+        <span id="channelCount" class="channel-count">0 shown</span>
+      </div>
+      <label class="channel-search">
+        <span class="sr-only">Find a channel</span>
+        <input id="channelSearch" type="search" placeholder="Find a channel" autocomplete="off">
+      </label>
+      <div id="channelFilters" class="channel-filters" role="group" aria-label="Channel filter">
+        <button type="button" data-filter="all" class="active" aria-pressed="true">All</button>
+        <button type="button" data-filter="active" aria-pressed="false">Active</button>
+        <button type="button" data-filter="muted" aria-pressed="false">Muted</button>
+      </div>
       <div id="channels" class="chlist"></div>
     </section>
   </main>
@@ -51,17 +63,18 @@
     <button id="safeBtn" type="button" class="safe">Engage SAFE</button>
   </footer>
 
-  <section id="pair" class="hidden">
+  <section id="pair" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pairTitle" aria-describedby="pairDescription">
     <div class="pair-card">
-      <h1>Pair to control</h1>
-      <p>Monitoring is live. Enter the 6-digit code shown on the AutoMix Mac to mute channels, change scenes, and engage SAFE.</p>
-      <input id="pairCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+      <h1 id="pairTitle">Pair to control</h1>
+      <p id="pairDescription">Monitoring is live. Enter the 6-digit code shown on the AutoMix Mac to mute channels, change scenes, and engage SAFE.</p>
+      <label class="pair-label" for="pairCode">6-digit pairing code</label>
+      <input id="pairCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="one-time-code" aria-describedby="pairMsg">
       <button id="pairBtn" type="button">Pair this device</button>
-      <div id="pairMsg" class="pairmsg"></div>
+      <div id="pairMsg" class="pairmsg" aria-live="polite"></div>
       <button id="pairSkip" type="button" class="link">Just monitor (view only)</button>
     </div>
   </section>
 </div>
-<script src="/app.js"></script>
+<script src="/app.js?v=4"></script>
 </body>
 </html>

@@ -9,8 +9,13 @@ const sceneLabel = (s) => SCENE_LABELS[s] || (s ? s[0].toUpperCase() + s.slice(1
 
 let expanded = null;          // channel idx whose detail row is open
 let lastSnap = null;
+let channelQuery = "";
+let channelFilter = "all";
 let activeCriticalIds = new Set();
 let alarm = null;             // WebAudio alarm controller
+let pairReturnFocus = null;
+let safeReleaseArmed = false;
+let safeReleaseTimer = null;
 
 // ---- meters ----
 function dbToPct(db) { return Math.max(0, Math.min(1, (db + 80) / 80)) * 100; }
@@ -50,8 +55,13 @@ function render(s) {
   renderChannels(s);
 
   const safeBtn = $("safeBtn");
-  safeBtn.textContent = s.safe ? "SAFE engaged — release" : "Engage SAFE";
+  if (!s.safe) resetSafeReleaseArm();
+  safeBtn.textContent = s.safe
+    ? (safeReleaseArmed ? "Confirm SAFE release" : "SAFE engaged — release")
+    : "Engage SAFE";
   safeBtn.classList.toggle("engaged", s.safe);
+  safeBtn.classList.toggle("confirming", safeReleaseArmed);
+  safeBtn.setAttribute("aria-pressed", String(s.safe));
 
   renderAlerts(s);
 }
@@ -70,26 +80,52 @@ function renderScenes(s) {
     s.scenes.forEach((sc) => {
       const b = document.createElement("button");
       b.className = "pill"; b.dataset.scene = sc; b.textContent = sceneLabel(sc);
+      b.type = "button";
       b.onclick = () => sendCommand({ type: "setScene", scene: sc });
       host.appendChild(b);
     });
   }
-  [...host.children].forEach((b) => b.classList.toggle("active", b.dataset.scene === s.scene));
+  [...host.children].forEach((b) => {
+    const active = b.dataset.scene === s.scene;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-pressed", String(active));
+  });
 }
 
 function renderChannels(s) {
   const host = $("channels");
   host.innerHTML = "";
-  s.channels.forEach((c) => {
+  const q = channelQuery.toLocaleLowerCase();
+  const visible = s.channels.filter((c) => {
+    if (q && !c.name.toLocaleLowerCase().includes(q)) return false;
+    if (channelFilter === "active") return c.levelDb > -70;
+    if (channelFilter === "muted") return c.muted;
+    return true;
+  });
+  $("channelCount").textContent = `${visible.length} of ${s.channels.length}`;
+
+  if (visible.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "substatus";
+    empty.textContent = "No channels match this view.";
+    host.appendChild(empty);
+    return;
+  }
+
+  visible.forEach((c) => {
     const row = document.createElement("div");
     row.className = "ch" + (c.muted ? " muted" : "");
 
-    const name = document.createElement("div");
+    const name = document.createElement("button");
+    name.type = "button";
     name.className = "name"; name.textContent = c.name;
+    name.setAttribute("aria-expanded", String(expanded === c.idx));
+    name.setAttribute("aria-label", `${expanded === c.idx ? "Close" : "Edit"} ${c.name}`);
     name.onclick = () => { expanded = (expanded === c.idx ? null : c.idx); renderChannels(lastSnap); };
 
     const bar = document.createElement("div");
     bar.className = "chbar";
+    bar.setAttribute("aria-hidden", "true");
     const fill = document.createElement("div");
     fill.className = "chfill"; fill.style.width = dbToPct(c.levelDb) + "%";
     fill.style.background = c.muted ? "" : ({ "hot": "var(--red)", "warn": "var(--amber)", "": "var(--green)" }[fillClass(c.levelDb)]);
@@ -111,6 +147,7 @@ function renderChannels(s) {
 function channelDetail(c) {
   const d = document.createElement("div");
   d.className = "chrow-detail";
+  d.setAttribute("aria-label", `${c.name} manual overrides`);
 
   const fader = document.createElement("label");
   fader.innerHTML = `<span>Fader</span>`;
@@ -243,8 +280,49 @@ async function sendCommand(cmd) {
   } catch (e) {}
 }
 
-function openPair() { $("pair").classList.remove("hidden"); }
-function closePair() { $("pair").classList.add("hidden"); }
+function openPair() {
+  pairReturnFocus = document.activeElement;
+  $("pair").classList.remove("hidden");
+  $("topbar").inert = true;
+  $("main").inert = true;
+  $("footer").inert = true;
+  $("pairMsg").textContent = "";
+  window.setTimeout(() => $("pairCode").focus(), 0);
+}
+function closePair() {
+  $("pair").classList.add("hidden");
+  $("topbar").inert = false;
+  $("main").inert = false;
+  $("footer").inert = false;
+  if (pairReturnFocus && pairReturnFocus.focus) pairReturnFocus.focus();
+  pairReturnFocus = null;
+}
+
+function resetSafeReleaseArm() {
+  safeReleaseArmed = false;
+  if (safeReleaseTimer) window.clearTimeout(safeReleaseTimer);
+  safeReleaseTimer = null;
+}
+
+function handleSafeControl() {
+  if (!(lastSnap && lastSnap.safe)) {
+    resetSafeReleaseArm();
+    sendCommand({ type: "setSafe", on: true });
+    return;
+  }
+  if (!safeReleaseArmed) {
+    safeReleaseArmed = true;
+    if (safeReleaseTimer) window.clearTimeout(safeReleaseTimer);
+    safeReleaseTimer = window.setTimeout(() => {
+      resetSafeReleaseArm();
+      if (lastSnap) render(lastSnap);
+    }, 4000);
+    render(lastSnap);
+    return;
+  }
+  resetSafeReleaseArm();
+  sendCommand({ type: "setSafe", on: false });
+}
 
 async function doPair() {
   const code = $("pairCode").value.trim();
@@ -271,10 +349,49 @@ async function doPair() {
 function boot() {
   $("main").classList.remove("hidden");
   $("footer").classList.remove("hidden");
-  $("safeBtn").onclick = () => sendCommand({ type: "setSafe", on: !(lastSnap && lastSnap.safe) });
+  $("safeBtn").onclick = handleSafeControl;
+  $("channelSearch").oninput = (event) => {
+    channelQuery = event.target.value.trim();
+    if (lastSnap) renderChannels(lastSnap);
+  };
+  $("channelFilters").querySelectorAll("button").forEach((button) => {
+    button.onclick = () => {
+      channelFilter = button.dataset.filter;
+      $("channelFilters").querySelectorAll("button").forEach((candidate) => {
+        const active = candidate.dataset.filter === channelFilter;
+        candidate.classList.toggle("active", active);
+        candidate.setAttribute("aria-pressed", String(active));
+      });
+      if (lastSnap) renderChannels(lastSnap);
+    };
+  });
   $("pairBtn").onclick = doPair;
   $("pairSkip").onclick = closePair;
   $("alarmStop").onclick = () => stopAlarm();
+  document.addEventListener("keydown", (event) => {
+    const pairOpen = !$("pair").classList.contains("hidden");
+    if (event.key === "Escape" && pairOpen) closePair();
+    if (event.key === "Enter" && document.activeElement === $("pairCode")) doPair();
+    if (event.key === "Tab" && pairOpen) {
+      const controls = [...$("pair").querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      )].filter((control) => !control.hidden);
+      if (!controls.length) {
+        event.preventDefault();
+        $("pair").focus();
+        return;
+      }
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  });
   connectSSE();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 }

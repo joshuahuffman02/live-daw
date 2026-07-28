@@ -74,6 +74,7 @@ struct AutoMixNativeApp: App {
             ContentView()
         }
         .windowStyle(.titleBar)
+        .defaultSize(width: 1280, height: 720)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }

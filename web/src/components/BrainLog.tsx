@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useStore } from '../store'
 import type { LogEntry } from '../store'
 
@@ -11,17 +12,53 @@ const KIND_COLOR: Record<LogEntry['kind'], string> = {
 }
 
 export default function BrainLog() {
+  const [view, setView] = useState<'operator' | 'all'>('operator')
   const log = useStore((s) => s.log)
+  const visible = view === 'operator'
+    ? log.filter((entry) =>
+        entry.kind !== 'eq' &&
+        !(entry.kind === 'label' && (
+          entry.text.startsWith('Re-labeled ') ||
+          entry.text.includes('input changed — re-identifying')
+        )),
+      )
+    : log
 
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-[#1c1f27] bg-[#101218] p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Decision Log</span>
-        <span className="text-[9px] uppercase tracking-wider text-zinc-600">what & why</span>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Activity</div>
+          <div className="text-[9px] text-zinc-600">
+            {visible.length} {view === 'operator' ? 'operator events' : 'detailed decisions'}
+          </div>
+        </div>
+        <div className="flex rounded-md border border-[#232733] p-0.5" role="group" aria-label="Activity detail">
+          <button
+            type="button"
+            onClick={() => setView('operator')}
+            aria-pressed={view === 'operator'}
+            className={`rounded px-2 py-1 text-[9px] font-medium ${
+              view === 'operator' ? 'bg-cyan-600/80 text-white' : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Operator
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('all')}
+            aria-pressed={view === 'all'}
+            className={`rounded px-2 py-1 text-[9px] font-medium ${
+              view === 'all' ? 'bg-cyan-600/80 text-white' : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            All decisions
+          </button>
+        </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
-        {log.length === 0 && <div className="text-[11px] text-zinc-600">Awaiting decisions…</div>}
-        {log.map((e) => (
+        {visible.length === 0 && <div className="text-[11px] text-zinc-600">No operator events yet. Open All decisions for detailed automation.</div>}
+        {visible.map((e) => (
           <div key={e.id} className="flex gap-2 text-[10px] leading-tight">
             <span className="tnum shrink-0 text-zinc-700">{time(e.t)}</span>
             <span className={`shrink-0 uppercase ${KIND_COLOR[e.kind]}`}>{e.kind}</span>

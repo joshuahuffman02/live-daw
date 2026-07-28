@@ -96,5 +96,5 @@ export default function LoudnessMeter({ target }: { target: number }) {
     return () => cancelAnimationFrame(raf)
   }, [engine, target])
 
-  return <canvas ref={ref} style={{ width: W, height: H }} className="rounded" />
+  return <canvas ref={ref} style={{ width: W, height: H }} className="rounded" aria-hidden="true" />
 }

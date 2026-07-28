@@ -1,116 +1,1214 @@
 import SwiftUI
 
+private enum AutoMixPalette {
+    static let canvas = Color(red: 0.035, green: 0.039, blue: 0.055)
+    static let header = Color(red: 0.047, green: 0.051, blue: 0.067)
+    static let panel = Color(red: 0.063, green: 0.071, blue: 0.094)
+    static let panelRaised = Color(red: 0.082, green: 0.090, blue: 0.118)
+    static let control = Color(red: 0.102, green: 0.114, blue: 0.145)
+    static let border = Color.white.opacity(0.09)
+    static let subtleBorder = Color.white.opacity(0.055)
+    static let cyan = Color(red: 0.13, green: 0.76, blue: 0.91)
+    static let cyanStrong = Color(red: 0.05, green: 0.55, blue: 0.72)
+    static let green = Color(red: 0.20, green: 0.83, blue: 0.60)
+    static let amber = Color(red: 0.96, green: 0.67, blue: 0.16)
+    static let red = Color(red: 0.90, green: 0.15, blue: 0.18)
+    static let purple = Color(red: 0.63, green: 0.52, blue: 0.94)
+    static let primaryText = Color.white.opacity(0.94)
+    static let secondaryText = Color.white.opacity(0.62)
+    static let tertiaryText = Color.white.opacity(0.42)
+}
+
+private enum ControlWorkspace: String, CaseIterable, Identifiable {
+    case live = "Live"
+    case setup = "Setup"
+    case validate = "Validate"
+
+    var id: String { rawValue }
+}
+
 struct ContentView: View {
     @StateObject private var model = AppModel()
+    @State private var workspace: ControlWorkspace = .live
 
     var body: some View {
+        GeometryReader { geometry in
+            let scale = operatorScale(for: geometry.size)
+
+            operatorShell
+                .frame(
+                    width: geometry.size.width / scale,
+                    height: geometry.size.height / scale,
+                    alignment: .topLeading
+                )
+                .scaleEffect(scale, anchor: .topLeading)
+        }
+        .frame(minWidth: 1180, minHeight: 720)
+        .background(AutoMixPalette.canvas)
+        .tint(AutoMixPalette.cyan)
+        .preferredColorScheme(.dark)
+    }
+
+    private var operatorShell: some View {
         VStack(spacing: 0) {
-            StatusStrip(model: model)
-            Divider()
-            HSplitView {
-                DeviceControlPanel(model: model)
-                    .frame(minWidth: 330, idealWidth: 390, maxWidth: 460)
-                ChannelMappingPanel(model: model)
-                    .frame(minWidth: 660)
+            StatusStrip(model: model, workspace: $workspace)
+            if workspace == .live {
+                ServiceSceneStrip(model: model)
+                LiveOperatorConsole(model: model)
+            } else {
+                HSplitView {
+                    DeviceControlPanel(model: model, workspace: $workspace)
+                        .frame(minWidth: 340, idealWidth: 410, maxWidth: 480)
+                    ChannelMappingPanel(model: model)
+                        .frame(minWidth: 700)
+                }
             }
         }
-        .frame(minWidth: 1080, minHeight: 700)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AutoMixPalette.canvas)
+    }
+
+    private func operatorScale(for size: CGSize) -> CGFloat {
+        let widthScale = size.width / 1920
+        let heightScale = size.height / 720
+        return min(2, max(1, min(widthScale, heightScale)))
     }
 }
 
 private struct StatusStrip: View {
     @ObservedObject var model: AppModel
+    @Binding var workspace: ControlWorkspace
+    @State private var showSafeReleaseConfirmation = false
+    @State private var showStopConfirmation = false
 
     var body: some View {
-        HStack(spacing: 14) {
-            Circle()
-                .fill(model.isRunning ? Color.green : Color.secondary)
-                .frame(width: 10, height: 10)
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(model.isRunning ? AutoMixPalette.green : AutoMixPalette.tertiaryText)
+                    .frame(width: 9, height: 9)
+                    .shadow(color: model.isRunning ? AutoMixPalette.green.opacity(0.5) : .clear, radius: 4)
+                Text("AutoMix")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(AutoMixPalette.primaryText)
+                Text("BROADCAST")
+                    .font(.system(size: 8, weight: .semibold))
+                    .tracking(1.6)
+                    .foregroundStyle(AutoMixPalette.tertiaryText)
+            }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.statusText)
-                    .font(.headline)
+            HStack(spacing: 6) {
+                Image(systemName: model.isRunning ? "waveform" : "waveform.slash")
+                    .foregroundStyle(model.isRunning ? AutoMixPalette.green : AutoMixPalette.secondaryText)
+                Text("\(model.selectedScene.label) · \(model.isRunning ? "Engine live" : "Engine idle")")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(AutoMixPalette.secondaryText)
                     .lineLimit(1)
-                if model.runningInRehearsal {
-                    Text("REHEARSAL — not broadcast-safe · \(summaryText)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
-                        .lineLimit(1)
-                } else {
-                    Text(summaryText)
-                        .font(.caption)
-                        .foregroundStyle(model.sampleRateState.isWarning || model.channelCountState.isWarning ? .orange : .secondary)
-                        .lineLimit(1)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .background(AutoMixPalette.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(AutoMixPalette.subtleBorder))
+
+            Spacer(minLength: 8)
+
+            HeaderReadout(label: "SHORT", value: lufs(model.shortTermLufs), unit: "LUFS")
+            HeaderReadout(label: "INTEG", value: lufs(model.integratedLufs), unit: "LUFS")
+            HeaderReadout(label: "PEAK", value: peak, unit: "dBFS", warning: peakWarning)
+
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(healthColor)
+                    .frame(width: 6, height: 6)
+                Text(healthLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(healthColor)
+            }
+            .padding(.trailing, 4)
+
+            HStack(spacing: 3) {
+                ForEach(ControlWorkspace.allCases) { item in
+                    Button(item.rawValue.uppercased()) {
+                        workspace = item
+                    }
+                    .buttonStyle(
+                        OperatorTabButtonStyle(
+                            selected: workspace == item,
+                            emphasis: item == .live
+                        )
+                    )
+                    .accessibilityAddTraits(workspace == item ? .isSelected : [])
                 }
             }
 
-            Spacer(minLength: 12)
-
-            Toggle(isOn: $model.safeBypass) {
-                Label("SAFE", systemImage: "shield.lefthalf.filled")
+            Button {
+                if model.safeBypass {
+                    showSafeReleaseConfirmation = true
+                } else {
+                    model.safeBypass = true
+                }
+            } label: {
+                Label(model.safeBypass ? "SAFE ACTIVE" : "SAFE", systemImage: "shield.fill")
             }
-            .toggleStyle(.switch)
-
-            Toggle(isOn: $model.frozen) {
-                Label("FREEZE", systemImage: "snowflake")
-            }
-            .toggleStyle(.switch)
-
-            Toggle(isOn: $model.shadowMode) {
-                Label("SHADOW", systemImage: "eye")
-            }
-            .toggleStyle(.switch)
-            .help("Compute automation candidates without applying measurement-driven gain, gate, level, or master-loudness moves.")
-
-            Toggle(isOn: $model.rehearsalMode) {
-                Label("Rehearsal", systemImage: "figure.run")
-            }
-            .toggleStyle(.switch)
-            .disabled(model.isRunning)
-            .help("Relax the rate / isolated-output / channel-count gates so you can verify signal flow during a rehearsal. Not broadcast-safe.")
+            .buttonStyle(
+                OperatorActionButtonStyle(
+                    foreground: model.safeBypass ? .white : AutoMixPalette.red,
+                    background: model.safeBypass ? AutoMixPalette.red : AutoMixPalette.control
+                )
+            )
+            .help("Engage immediately. Releasing SAFE requires confirmation.")
 
             Button {
-                model.refreshDevices()
+                model.frozen.toggle()
             } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Label(model.frozen ? "FROZEN" : "FREEZE", systemImage: "snowflake")
             }
+            .buttonStyle(
+                OperatorActionButtonStyle(
+                    foreground: model.frozen ? .black : AutoMixPalette.amber,
+                    background: model.frozen ? AutoMixPalette.amber : AutoMixPalette.control
+                )
+            )
 
             if model.isRunning {
-                Button(role: .destructive) {
-                    model.stopEngine()
+                Button {
+                    showStopConfirmation = true
                 } label: {
                     Label("Stop", systemImage: "stop.fill")
                 }
+                .buttonStyle(
+                    OperatorActionButtonStyle(
+                        foreground: AutoMixPalette.secondaryText,
+                        background: AutoMixPalette.control
+                    )
+                )
             } else {
                 Button {
                     model.startEngine()
                 } label: {
-                    Label(model.rehearsalMode ? "Start (Rehearsal)" : "Start", systemImage: "play.fill")
+                    Label(model.rehearsalMode ? "Rehearse" : "Start", systemImage: "play.fill")
                 }
+                .buttonStyle(
+                    OperatorActionButtonStyle(
+                        foreground: model.canStartEngine ? AutoMixPalette.green : AutoMixPalette.tertiaryText,
+                        background: AutoMixPalette.control
+                    )
+                )
                 .disabled(!model.canStartEngine)
                 .help(model.canStartEngine ? "Start Core Audio" : model.engineStartGate.failureMessage)
                 .keyboardShortcut(.return, modifiers: [.command])
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .frame(height: 52)
+        .background(AutoMixPalette.header)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(AutoMixPalette.border).frame(height: 1)
+        }
+        .confirmationDialog(
+            "Release SAFE?",
+            isPresented: $showSafeReleaseConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Release SAFE", role: .destructive) {
+                model.safeBypass = false
+            }
+            Button("Keep SAFE Engaged", role: .cancel) {}
+        } message: {
+            Text("Autonomous changes will resume. Confirm only after the live mix is stable.")
+        }
+        .confirmationDialog(
+            "Stop the audio engine?",
+            isPresented: $showStopConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop Audio Engine", role: .destructive) {
+                model.stopEngine()
+            }
+            Button("Keep Running", role: .cancel) {}
+        } message: {
+            Text("Program audio and automation will stop immediately.")
+        }
     }
 
-    private var summaryText: String {
-        let rate = model.sampleRateState.label
-        let ch = model.channelCountState.label
-        let buffer = model.detectedBufferFrames > 0 ? "\(model.detectedBufferFrames) frames" : "buffer pending"
-        return "\(rate) · \(ch) · \(buffer)"
+    private var peakValue: Double {
+        model.streamOutputLevelsDb.max() ?? -100
+    }
+
+    private var peak: String {
+        peakValue <= -99 ? "—" : String(format: "%.1f", peakValue)
+    }
+
+    private var peakWarning: Bool { peakValue > -1 }
+
+    private var healthColor: Color {
+        if model.lastError != nil || model.watchdogSafeActive { return AutoMixPalette.red }
+        if model.sampleRateState.isWarning || model.channelCountState.isWarning { return AutoMixPalette.amber }
+        return model.isRunning ? AutoMixPalette.green : AutoMixPalette.secondaryText
+    }
+
+    private var healthLabel: String {
+        if model.lastError != nil { return "Attention" }
+        if model.watchdogSafeActive { return "Watchdog SAFE" }
+        if model.sampleRateState.isWarning || model.channelCountState.isWarning { return "Route check" }
+        return model.isRunning ? "Engine OK" : "Ready"
+    }
+
+    private func lufs(_ value: Double) -> String {
+        value <= -99 ? "—" : String(format: "%.1f", value)
+    }
+}
+
+private struct HeaderReadout: View {
+    let label: String
+    let value: String
+    let unit: String
+    var warning = false
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(label)
+                .font(.system(size: 8, weight: .semibold))
+                .tracking(1)
+                .foregroundStyle(AutoMixPalette.tertiaryText)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value)
+                    .foregroundStyle(warning ? AutoMixPalette.red : AutoMixPalette.primaryText)
+                Text(unit)
+                    .font(.system(size: 8))
+                    .foregroundStyle(AutoMixPalette.tertiaryText)
+            }
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+        }
+        .frame(minWidth: 46, alignment: .trailing)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct OperatorTabButtonStyle: ButtonStyle {
+    let selected: Bool
+    let emphasis: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(
+                selected
+                    ? (emphasis ? Color.white : AutoMixPalette.primaryText)
+                    : AutoMixPalette.secondaryText
+            )
+            .padding(.horizontal, 9)
+            .frame(height: 32)
+            .background(
+                selected
+                    ? (emphasis ? AutoMixPalette.cyanStrong : AutoMixPalette.panelRaised)
+                    : AutoMixPalette.panel
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(selected ? AutoMixPalette.cyan.opacity(0.45) : AutoMixPalette.subtleBorder)
+            )
+            .opacity(configuration.isPressed ? 0.78 : 1)
+    }
+}
+
+private struct OperatorActionButtonStyle: ButtonStyle {
+    let foreground: Color
+    let background: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(AutoMixPalette.subtleBorder))
+            .opacity(configuration.isPressed ? 0.78 : 1)
+    }
+}
+
+private struct ServiceSceneStrip: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                if model.planningCenterCredentialStored {
+                    model.refreshPlanningCenterPlan()
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(model.planningCenterPlan == nil ? AutoMixPalette.secondaryText : AutoMixPalette.cyan)
+                        .frame(width: 7, height: 7)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Planning Center")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(model.planningCenterStatus)
+                            .font(.system(size: 8))
+                            .foregroundStyle(AutoMixPalette.secondaryText)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .frame(width: 182, height: 38, alignment: .leading)
+            .background(AutoMixPalette.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(AutoMixPalette.subtleBorder))
+            .help(
+                model.planningCenterCredentialStored
+                    ? "Refresh the current Planning Center service plan"
+                    : "Configure Planning Center in Setup"
+            )
+
+            if let plan = model.planningCenterPlan, !plan.cues.isEmpty {
+                Button {
+                    model.previousPlanningCenterCue()
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(SceneNavigationButtonStyle())
+                .help("Previous Planning Center cue")
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(MixScene.allCases) { scene in
+                        Button {
+                            model.selectedScene = scene
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 5) {
+                                    Circle()
+                                        .fill(model.selectedScene == scene ? AutoMixPalette.cyan : AutoMixPalette.tertiaryText)
+                                        .frame(width: 6, height: 6)
+                                    Text(scene.label)
+                                        .font(.system(size: 10, weight: .semibold))
+                                }
+                                Text(sceneDescription(scene))
+                                    .font(.system(size: 8, weight: .medium))
+                                    .tracking(0.7)
+                                    .foregroundStyle(AutoMixPalette.secondaryText)
+                            }
+                            .frame(width: 132, alignment: .leading)
+                        }
+                        .buttonStyle(ScenePillButtonStyle(selected: model.selectedScene == scene))
+                        .accessibilityAddTraits(model.selectedScene == scene ? .isSelected : [])
+                    }
+                }
+            }
+
+            if let plan = model.planningCenterPlan, !plan.cues.isEmpty {
+                Button {
+                    model.advancePlanningCenterCue()
+                } label: {
+                    Label("Next", systemImage: "chevron.right")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(
+                    OperatorActionButtonStyle(
+                        foreground: .white,
+                        background: AutoMixPalette.cyanStrong
+                    )
+                )
+                .help("Next Planning Center cue")
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 52)
+        .background(AutoMixPalette.header)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(AutoMixPalette.border).frame(height: 1)
+        }
+    }
+
+    private func sceneDescription(_ scene: MixScene) -> String {
+        switch scene {
+        case .preService: return "AMBIENT · WALK-IN"
+        case .worship: return "MUSIC · VOCALS"
+        case .sermon: return "SPEECH · PRIORITY"
+        case .prayer: return "SPEECH · RESPONSE"
+        case .postService: return "AMBIENT · WALK-OUT"
+        }
+    }
+}
+
+private struct SceneNavigationButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(AutoMixPalette.secondaryText)
+            .frame(width: 30, height: 38)
+            .background(AutoMixPalette.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(AutoMixPalette.subtleBorder))
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+private struct ScenePillButtonStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(AutoMixPalette.primaryText)
+            .padding(.horizontal, 10)
+            .frame(height: 38)
+            .background(selected ? AutoMixPalette.cyan.opacity(0.08) : AutoMixPalette.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(selected ? AutoMixPalette.cyan.opacity(0.75) : AutoMixPalette.subtleBorder)
+            )
+            .opacity(configuration.isPressed ? 0.76 : 1)
+    }
+}
+
+private struct LiveOperatorConsole: View {
+    @ObservedObject var model: AppModel
+    @State private var selectedChannelIndex: Int?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 8) {
+                        ForEach($model.channelMappings) { $channel in
+                            NativeChannelStrip(
+                                channel: $channel,
+                                levelDb: value(model.levelsDb, at: channel.index, fallback: -100),
+                                autoTrimDb: value(model.autoTrimDb, at: channel.index, fallback: 0),
+                                autoFaderDb: value(model.autoFaderDb, at: channel.index, fallback: -6),
+                                noiseFloorDb: value(model.learnedNoiseFloorDb, at: channel.index, fallback: -60),
+                                autoActive: value(model.autoChannelActive, at: channel.index, fallback: false),
+                                shadowMode: model.shadowMode,
+                                selected: selectedChannelIndex == channel.index,
+                                onSelect: { selectedChannelIndex = channel.index }
+                            )
+                            .onChange(of: channel) { _, updated in
+                                model.channelDidChange(updated)
+                            }
+                        }
+                    }
+                    .padding(10)
+                }
+                .scrollIndicators(.visible)
+                .background(AutoMixPalette.canvas)
+
+                Rectangle()
+                    .fill(AutoMixPalette.border)
+                    .frame(width: 1)
+
+                NativeMasterRail(
+                    model: model,
+                    selectedChannelIndex: $selectedChannelIndex
+                )
+                .frame(width: 324)
+            }
+
+            NativeConsoleBar(model: model)
+        }
+        .background(AutoMixPalette.canvas)
+    }
+
+    private func value<T>(_ values: [T], at index: Int, fallback: T) -> T {
+        values.indices.contains(index) ? values[index] : fallback
+    }
+}
+
+private struct NativeChannelStrip: View {
+    @Binding var channel: ChannelMapping
+    let levelDb: Double
+    let autoTrimDb: Double
+    let autoFaderDb: Double
+    let noiseFloorDb: Double
+    let autoActive: Bool
+    let shadowMode: Bool
+    let selected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Button(action: onSelect) {
+                HStack(alignment: .top, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 5) {
+                            Text(channel.role.label)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(AutoMixPalette.primaryText)
+                            if autoActive {
+                                Circle()
+                                    .fill(AutoMixPalette.green)
+                                    .frame(width: 6, height: 6)
+                            }
+                        }
+                        Text("CH \(channel.index + 1) · IN \(channel.inputChannelIndex + 1)")
+                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            .tracking(0.6)
+                            .foregroundStyle(AutoMixPalette.tertiaryText)
+                        Text(channel.name)
+                            .font(.system(size: 9))
+                            .foregroundStyle(AutoMixPalette.secondaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if channel.hasAnyManualOverride {
+                        Text("MANUAL")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(AutoMixPalette.amber)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            Picker("Role", selection: $channel.role) {
+                ForEach(ChannelRole.allCases) { role in
+                    Text(role.label).tag(role)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity)
+            .background(AutoMixPalette.control)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .accessibilityLabel("Role for channel \(channel.index + 1)")
+
+            HStack(spacing: 6) {
+                Button {
+                    channel.setMuted(!channel.muted)
+                } label: {
+                    Label(
+                        channel.muted ? "MUTED" : "MUTE",
+                        systemImage: channel.muted ? "speaker.slash.fill" : "speaker.wave.2"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(
+                    OperatorActionButtonStyle(
+                        foreground: channel.muted ? .white : AutoMixPalette.secondaryText,
+                        background: channel.muted ? AutoMixPalette.red : AutoMixPalette.control
+                    )
+                )
+
+                Text(channel.stereoLinkedToNext ? "ST" : "MONO")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(channel.stereoLinkedToNext ? AutoMixPalette.purple : AutoMixPalette.tertiaryText)
+                    .frame(width: 32, height: 34)
+                    .background(AutoMixPalette.control)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                NativeVerticalMeter(db: levelDb)
+                    .frame(width: 13, height: 145)
+
+                VStack(spacing: 7) {
+                    ChannelStat(label: "INPUT", value: db(levelDb))
+                    ChannelStat(label: "TRIM", value: signed(autoTrimDb))
+                    ChannelStat(label: "FADER", value: signed(currentFaderDb))
+                    ChannelStat(label: "FLOOR", value: db(noiseFloorDb))
+                    ChannelStat(
+                        label: "STATE",
+                        value: autoActive ? "ACTIVE" : "IDLE",
+                        color: autoActive ? AutoMixPalette.green : AutoMixPalette.secondaryText
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text("LEVEL")
+                        .font(.system(size: 8, weight: .semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(AutoMixPalette.tertiaryText)
+                    Spacer()
+                    Text(signed(currentFaderDb))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(AutoMixPalette.primaryText)
+                }
+                Slider(value: manualFader, in: ChannelMapping.faderDbOverrideRange, step: 0.5)
+                    .controlSize(.mini)
+            }
+
+            HStack(spacing: 5) {
+                Button {
+                    if channel.faderOverrideEnabled {
+                        channel.faderOverrideEnabled = false
+                    } else {
+                        channel.faderDb = autoFaderDb
+                        channel.faderOverrideEnabled = true
+                    }
+                } label: {
+                    Text(channel.faderOverrideEnabled ? "MANUAL" : "AUTO")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(
+                    MiniChipButtonStyle(
+                        active: channel.faderOverrideEnabled,
+                        activeColor: AutoMixPalette.amber
+                    )
+                )
+
+                Button {
+                    channel.processingOverride.eqOverrideEnabled.toggle()
+                } label: {
+                    Text("EQ")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(
+                    MiniChipButtonStyle(
+                        active: channel.processingOverride.eqOverrideEnabled,
+                        activeColor: AutoMixPalette.amber
+                    )
+                )
+
+                Button {
+                    channel.processingOverride.compressorOverrideEnabled.toggle()
+                } label: {
+                    Text("DYN")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(
+                    MiniChipButtonStyle(
+                        active: channel.processingOverride.compressorOverrideEnabled,
+                        activeColor: AutoMixPalette.amber
+                    )
+                )
+            }
+
+            Text(operatorReason)
+                .font(.system(size: 8))
+                .foregroundStyle(AutoMixPalette.cyan.opacity(0.76))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .topLeading)
+
+            Spacer(minLength: 0)
+        }
+        .padding(11)
+        .frame(width: 174)
+        .frame(minHeight: 430, maxHeight: .infinity, alignment: .top)
+        .background(selected ? AutoMixPalette.panelRaised : AutoMixPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(selected ? AutoMixPalette.cyan.opacity(0.9) : AutoMixPalette.border, lineWidth: selected ? 1.5 : 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture(perform: onSelect)
+    }
+
+    private var currentFaderDb: Double {
+        channel.faderOverrideEnabled ? channel.faderDb : autoFaderDb
+    }
+
+    private var manualFader: Binding<Double> {
+        Binding(
+            get: { currentFaderDb },
+            set: { value in
+                channel.faderOverrideEnabled = true
+                channel.faderDb = value
+            }
+        )
+    }
+
+    private var operatorReason: String {
+        if channel.muted { return "Operator mute is active." }
+        if channel.hasAnyManualOverride { return "Manual controls override autonomous moves." }
+        if shadowMode { return "Shadow candidate · automation is observing only." }
+        if autoActive { return "Automation active · level and dynamics tracking." }
+        return "Awaiting signal above the learned noise floor."
+    }
+
+    private func signed(_ value: Double) -> String {
+        value <= -99 ? "−∞" : String(format: "%+.1f", value)
+    }
+
+    private func db(_ value: Double) -> String {
+        value <= -99 ? "−∞" : String(format: "%.1f", value)
+    }
+}
+
+private struct MiniChipButtonStyle: ButtonStyle {
+    let active: Bool
+    let activeColor: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(active ? Color.black : AutoMixPalette.secondaryText)
+            .padding(.horizontal, 6)
+            .frame(height: 27)
+            .background(active ? activeColor : AutoMixPalette.control)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+private struct ChannelStat: View {
+    let label: String
+    let value: String
+    var color = AutoMixPalette.secondaryText
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(AutoMixPalette.tertiaryText)
+            Spacer()
+            Text(value)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(color)
+        }
+    }
+}
+
+private struct NativeVerticalMeter: View {
+    let db: Double
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(AutoMixPalette.control)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(meterColor)
+                    .frame(height: max(2, geometry.size.height * normalized))
+            }
+        }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(AutoMixPalette.red.opacity(0.8))
+                .frame(height: 1)
+                .padding(.top, 4)
+        }
+        .accessibilityLabel("Input level")
+        .accessibilityValue(db <= -99 ? "silence" : String(format: "%.1f decibels", db))
+    }
+
+    private var normalized: Double {
+        min(max((db + 80) / 80, 0), 1)
+    }
+
+    private var meterColor: Color {
+        if db > -6 { return AutoMixPalette.red }
+        if db > -18 { return AutoMixPalette.amber }
+        return AutoMixPalette.green
+    }
+}
+
+private struct NativeMasterRail: View {
+    @ObservedObject var model: AppModel
+    @Binding var selectedChannelIndex: Int?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                NativePanelCard(title: "STREAM MIX", trailing: model.isRunning ? "LIVE" : "IDLE") {
+                    VStack(spacing: 8) {
+                        MasterMeterRow(label: "L", db: value(model.streamOutputLevelsDb, at: 0))
+                        MasterMeterRow(label: "R", db: value(model.streamOutputLevelsDb, at: 1))
+
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(lufs(model.integratedLufs))
+                                .font(.system(size: 25, weight: .bold, design: .rounded))
+                                .foregroundStyle(AutoMixPalette.primaryText)
+                            Text("LUFS")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(AutoMixPalette.tertiaryText)
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 1) {
+                                Text("TARGET")
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(AutoMixPalette.tertiaryText)
+                                Text("\(sceneTarget) LUFS")
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(AutoMixPalette.amber)
+                            }
+                        }
+
+                        Divider().overlay(AutoMixPalette.border)
+                        NativeMetricRow(label: "Short-term", value: "\(lufs(model.shortTermLufs)) LUFS")
+                        NativeMetricRow(label: "Momentary", value: "\(lufs(model.momentaryLufs)) LUFS")
+                        NativeMetricRow(label: "Limiter GR", value: "\(String(format: "%.1f", model.limiterGainReductionDb)) dB")
+                        NativeMetricRow(label: "Tempo", value: tempo)
+                    }
+                }
+
+                selectedChannelCard
+
+                NativePanelCard(title: "SYSTEM HEALTH", trailing: healthTrailing) {
+                    VStack(spacing: 7) {
+                        NativeMetricRow(
+                            label: "Route",
+                            value: "\(model.sampleRateState.label) · \(model.channelCountState.label)",
+                            warning: model.sampleRateState.isWarning || model.channelCountState.isWarning
+                        )
+                        NativeMetricRow(
+                            label: "Buffer",
+                            value: model.detectedBufferFrames > 0 ? "\(model.detectedBufferFrames) frames" : "pending"
+                        )
+                        NativeMetricRow(
+                            label: "Dropouts",
+                            value: "\(model.dropoutCount)",
+                            warning: model.dropoutCount > 0
+                        )
+                        NativeMetricRow(
+                            label: "Recovery",
+                            value: model.automaticRecoveryStatus,
+                            warning: model.automaticRecoveryWarning
+                        )
+                        NativeMetricRow(
+                            label: "Encoder",
+                            value: model.encoderHealth.summary,
+                            warning: model.encoderHealth.isFailure
+                        )
+                        NativeMetricRow(
+                            label: "Egress",
+                            value: model.egressHealth.summary,
+                            warning: model.egressHealth.isFailure
+                        )
+                    }
+                }
+
+                NativePanelCard(title: "ACTIVITY", trailing: model.shadowMode ? "SHADOW" : "AUTO") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let error = model.lastError {
+                            Label(error, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(AutoMixPalette.amber)
+                        } else if let incident = model.lastRuntimeIncident {
+                            Label(incident, systemImage: "waveform.path.ecg")
+                                .foregroundStyle(AutoMixPalette.secondaryText)
+                        } else {
+                            Label(
+                                model.isRunning
+                                    ? "Automation is supervising the live route."
+                                    : "Start the engine after Setup passes.",
+                                systemImage: model.isRunning ? "checkmark.circle.fill" : "info.circle"
+                            )
+                            .foregroundStyle(model.isRunning ? AutoMixPalette.green : AutoMixPalette.secondaryText)
+                        }
+                    }
+                    .font(.system(size: 9))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(10)
+        }
+        .background(AutoMixPalette.header)
+    }
+
+    @ViewBuilder
+    private var selectedChannelCard: some View {
+        if let index = selectedChannelIndex, model.channelMappings.indices.contains(index) {
+            NativePanelCard(title: "SELECTED CHANNEL", trailing: "CH \(index + 1)") {
+                SelectedChannelControls(
+                    channel: Binding(
+                        get: { model.channelMappings[index] },
+                        set: { updated in
+                            model.channelMappings[index] = updated
+                            model.channelDidChange(updated)
+                        }
+                    )
+                )
+            }
+        } else {
+            NativePanelCard(title: "SELECTED CHANNEL", trailing: "—") {
+                Text("Select a channel strip to edit its manual level, pan, and override state.")
+                    .font(.system(size: 9))
+                    .foregroundStyle(AutoMixPalette.secondaryText)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+            }
+        }
+    }
+
+    private var sceneTarget: Int {
+        switch model.selectedScene {
+        case .preService, .postService: return -18
+        case .worship: return -14
+        case .sermon, .prayer: return -16
+        }
+    }
+
+    private var tempo: String {
+        model.bpm >= 60 ? "\(Int(model.bpm.rounded())) BPM" : "— BPM"
+    }
+
+    private var healthTrailing: String {
+        if model.watchdogSafeActive { return "SAFE" }
+        if model.lastError != nil { return "ATTENTION" }
+        return model.isRunning ? "OK" : "IDLE"
+    }
+
+    private func value(_ values: [Double], at index: Int) -> Double {
+        values.indices.contains(index) ? values[index] : -100
+    }
+
+    private func lufs(_ value: Double) -> String {
+        value <= -99 ? "—" : String(format: "%.1f", value)
+    }
+}
+
+private struct NativePanelCard<Content: View>: View {
+    let title: String
+    let trailing: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(1)
+                    .foregroundStyle(AutoMixPalette.secondaryText)
+                Spacer()
+                Text(trailing)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(AutoMixPalette.cyan)
+            }
+            content()
+        }
+        .padding(11)
+        .background(AutoMixPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AutoMixPalette.border))
+    }
+}
+
+private struct MasterMeterRow: View {
+    let label: String
+    let db: Double
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Text(label)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(AutoMixPalette.secondaryText)
+                .frame(width: 10)
+            ProgressView(value: normalized)
+                .progressViewStyle(.linear)
+                .tint(meterColor)
+            Text(db <= -99 ? "−∞" : String(format: "%.1f", db))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(AutoMixPalette.secondaryText)
+                .frame(width: 38, alignment: .trailing)
+        }
+    }
+
+    private var normalized: Double {
+        min(max((db + 80) / 80, 0), 1)
+    }
+
+    private var meterColor: Color {
+        if db > -6 { return AutoMixPalette.red }
+        if db > -18 { return AutoMixPalette.amber }
+        return AutoMixPalette.cyan
+    }
+}
+
+private struct NativeMetricRow: View {
+    let label: String
+    let value: String
+    var warning = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .foregroundStyle(AutoMixPalette.secondaryText)
+            Spacer()
+            Text(value)
+                .foregroundStyle(warning ? AutoMixPalette.amber : AutoMixPalette.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .font(.system(size: 9))
+    }
+}
+
+private struct SelectedChannelControls: View {
+    @Binding var channel: ChannelMapping
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(channel.role.label)
+                        .font(.system(size: 12, weight: .bold))
+                    Text(channel.name)
+                        .font(.system(size: 9))
+                        .foregroundStyle(AutoMixPalette.secondaryText)
+                }
+                Spacer()
+                Button(channel.muted ? "Unmute" : "Mute") {
+                    channel.setMuted(!channel.muted)
+                }
+                .buttonStyle(
+                    MiniChipButtonStyle(
+                        active: channel.muted,
+                        activeColor: AutoMixPalette.red
+                    )
+                )
+            }
+
+            OverrideSliderRow(
+                label: "Fader",
+                enabled: $channel.faderOverrideEnabled,
+                value: $channel.faderDb,
+                range: ChannelMapping.faderDbOverrideRange,
+                step: 0.5,
+                format: "%.1f dB"
+            )
+            OverrideSliderRow(
+                label: "Pan",
+                enabled: $channel.panOverrideEnabled,
+                value: $channel.pan,
+                range: ChannelMapping.panOverrideRange,
+                step: 0.05,
+                format: "%.2f"
+            )
+
+            Button("Clear manual overrides") {
+                channel.clearOverrides()
+            }
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(AutoMixPalette.cyan)
+            .buttonStyle(.plain)
+            .disabled(!channel.hasAnyManualOverride && !channel.muted)
+        }
+    }
+}
+
+private struct NativeConsoleBar: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 18) {
+                ConsoleBarGroup(title: "AUTOMATION") {
+                    Toggle("Shadow", isOn: $model.shadowMode)
+                        .toggleStyle(.switch)
+                    Toggle("Recovery", isOn: $model.automaticRecoveryEnabled)
+                        .toggleStyle(.switch)
+                }
+
+                ConsoleBarGroup(title: "REHEARSAL") {
+                    Toggle("Relax go-live gates", isOn: $model.rehearsalMode)
+                        .toggleStyle(.switch)
+                        .disabled(model.isRunning)
+                }
+
+                ConsoleBarGroup(title: "CONTINUOUS CAPTURE") {
+                    Button {
+                        if model.continuousRecordingActive || model.continuousRecordingRequested {
+                            model.stopContinuousRecording()
+                        } else {
+                            model.startContinuousRecording()
+                        }
+                    } label: {
+                        Label(
+                            model.continuousRecordingActive ? "Recording" : "Record program",
+                            systemImage: model.continuousRecordingActive ? "record.circle.fill" : "record.circle"
+                        )
+                    }
+                    .buttonStyle(
+                        OperatorActionButtonStyle(
+                            foreground: model.continuousRecordingActive ? .white : AutoMixPalette.red,
+                            background: model.continuousRecordingActive ? AutoMixPalette.red : AutoMixPalette.control
+                        )
+                    )
+                    .disabled(!model.isRunning && !model.continuousRecordingActive)
+                }
+
+                ConsoleBarGroup(title: "REMOTE") {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(model.remoteMonitoringEnabled ? AutoMixPalette.green : AutoMixPalette.tertiaryText)
+                            .frame(width: 7, height: 7)
+                        Text(model.monitorBridge?.listeningStatus ?? "stopped")
+                        if let bridge = model.monitorBridge {
+                            Text("· \(bridge.connectedClientCount) linked")
+                                .foregroundStyle(AutoMixPalette.secondaryText)
+                        }
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                }
+
+                ConsoleBarGroup(title: "RUNTIME") {
+                    HStack(spacing: 14) {
+                        ConsoleCounter(label: "DROPS", value: "\(model.dropoutCount)", warning: model.dropoutCount > 0)
+                        ConsoleCounter(label: "XRUN", value: "\(model.callbackOverrunCount + model.outputUnderrunCount)", warning: model.callbackOverrunCount + model.outputUnderrunCount > 0)
+                        ConsoleCounter(label: "LATENCY", value: String(format: "%.1f ms", model.estimatedOneWayAudioLatencyMs))
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+        .frame(height: 66)
+        .background(AutoMixPalette.header)
+        .overlay(alignment: .top) {
+            Rectangle().fill(AutoMixPalette.border).frame(height: 1)
+        }
+    }
+}
+
+private struct ConsoleBarGroup<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 8, weight: .bold))
+                .tracking(1)
+                .foregroundStyle(AutoMixPalette.tertiaryText)
+            HStack(spacing: 12) {
+                content()
+            }
+            .font(.system(size: 9))
+        }
+        .padding(.trailing, 18)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(AutoMixPalette.border)
+                .frame(width: 1)
+        }
+    }
+}
+
+private struct ConsoleCounter: View {
+    let label: String
+    let value: String
+    var warning = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(AutoMixPalette.tertiaryText)
+            Text(value)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(warning ? AutoMixPalette.amber : AutoMixPalette.primaryText)
+        }
     }
 }
 
 private struct DeviceControlPanel: View {
     @ObservedObject var model: AppModel
+    @Binding var workspace: ControlWorkspace
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                Text(workspaceDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 GroupBox("Core Audio") {
                     VStack(alignment: .leading, spacing: 12) {
                         Picker("Input", selection: $model.selectedInputUID) {
@@ -160,7 +1258,8 @@ private struct DeviceControlPanel: View {
                     .padding(.vertical, 4)
                 }
 
-                GroupBox("Planning Center Scenes") {
+                if workspace == .live {
+                    GroupBox("Planning Center Scenes") {
                     VStack(alignment: .leading, spacing: 10) {
                         TextField(
                             "Personal Access Token application ID",
@@ -277,11 +1376,13 @@ private struct DeviceControlPanel: View {
                     .padding(.vertical, 4)
                 }
 
-                if let bridge = model.monitorBridge {
-                    RemoteMonitoringPanel(model: model, bridge: bridge)
+                    if let bridge = model.monitorBridge {
+                        RemoteMonitoringPanel(model: model, bridge: bridge)
+                    }
                 }
 
-                GroupBox("HD96 Preflight") {
+                if workspace == .setup {
+                    GroupBox("HD96 Preflight") {
                     VStack(alignment: .leading, spacing: 10) {
                         StatusRow(
                             label: "Route",
@@ -304,7 +1405,7 @@ private struct DeviceControlPanel: View {
                     .padding(.vertical, 4)
                 }
 
-                GroupBox("Dante Check") {
+                    GroupBox("Dante Check") {
                     VStack(alignment: .leading, spacing: 10) {
                         Picker("Scene", selection: $model.selectedScene) {
                             ForEach(MixScene.allCases) { scene in
@@ -375,7 +1476,10 @@ private struct DeviceControlPanel: View {
                     .padding(.vertical, 4)
                 }
 
-                GroupBox("Stream Mix") {
+                }
+
+                if workspace == .live {
+                    GroupBox("Stream Mix") {
                     VStack(alignment: .leading, spacing: 10) {
                         StatusRow(label: "Output Level", value: streamLevelSummary, warning: streamLevelWarning)
                         StatusRow(label: "Momentary", value: lufsLabel(model.momentaryLufs), warning: masterLoudnessWarning)
@@ -587,7 +1691,10 @@ private struct DeviceControlPanel: View {
                     .padding(.vertical, 4)
                 }
 
-                GroupBox("Stability Monitor") {
+                }
+
+                if workspace == .validate {
+                    GroupBox("Stability Monitor") {
                     VStack(alignment: .leading, spacing: 12) {
                         Stepper(value: $model.stabilityMonitorDurationSeconds, in: 30...14_400, step: 300) {
                             Text("Duration \(formatDuration(model.stabilityMonitorDurationSeconds))")
@@ -803,8 +1910,20 @@ private struct DeviceControlPanel: View {
                     }
                     .padding(.vertical, 4)
                 }
+                }
             }
             .padding(18)
+        }
+    }
+
+    private var workspaceDescription: String {
+        switch workspace {
+        case .live:
+            "Service operation, stream health, remote control, and continuous capture."
+        case .setup:
+            "Audio routing, HD96 readiness, and Dante expectations."
+        case .validate:
+            "Soundcheck, stability monitoring, and hardware-proof artifacts."
         }
     }
 

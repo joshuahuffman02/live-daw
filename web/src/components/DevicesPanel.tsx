@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useStore } from '../store'
 import { useEngine } from '../state/engine-context'
+import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap'
 
 // Pick the exact physical audio devices: which microphone feeds the live channel, and
 // which speaker/headset the program plays out of. (In the appliance this is the Dante
@@ -17,6 +18,8 @@ export default function DevicesPanel() {
   const setOutputDeviceId = useStore((s) => s.setOutputDeviceId)
   const toggleDevices = useStore((s) => s.toggleDevices)
   const pushLog = useStore((s) => s.pushLog)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const close = useCallback(() => toggleDevices(false), [toggleDevices])
 
   async function refresh() {
     const d = await engine.listDevices()
@@ -28,6 +31,8 @@ export default function DevicesPanel() {
     if (show) refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show])
+
+  useDialogFocusTrap(show, dialogRef, close)
 
   if (!show) return null
 
@@ -53,16 +58,25 @@ export default function DevicesPanel() {
   const labelsHidden = devices.inputs.some((d) => /^Microphone \d/.test(d.label)) || devices.outputs.some((d) => /^Output \d/.test(d.label))
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 p-6" onClick={() => toggleDevices(false)}>
-      <div className="w-[460px] overflow-hidden rounded-xl border border-[#232733] bg-[#0e1015] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 p-3 sm:p-6">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="devices-dialog-title"
+        aria-describedby="devices-dialog-description"
+        tabIndex={-1}
+        className="w-full max-w-[460px] overflow-hidden rounded-xl border border-[#232733] bg-[#0e1015] shadow-2xl outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-[#1c1f27] px-4 py-3">
           <div>
-            <div className="text-sm font-semibold text-white">Audio Devices</div>
-            <div className="text-[11px] text-zinc-500">Choose the exact mic and output</div>
+            <h2 id="devices-dialog-title" className="text-sm font-semibold text-white">Audio Devices</h2>
+            <div id="devices-dialog-description" className="text-[11px] text-zinc-500">Choose the exact mic and output</div>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={refresh} className="rounded bg-[#15181f] px-2.5 py-1.5 text-[11px] text-zinc-300 hover:bg-[#1b1f28]">Refresh</button>
-            <button onClick={() => toggleDevices(false)} className="rounded bg-[#15181f] px-2.5 py-1.5 text-[11px] text-zinc-400 hover:bg-[#1b1f28]">Done</button>
+            <button onClick={close} className="rounded bg-[#15181f] px-2.5 py-1.5 text-[11px] text-zinc-400 hover:bg-[#1b1f28]">Done</button>
           </div>
         </div>
 
@@ -72,6 +86,7 @@ export default function DevicesPanel() {
             <div className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">Microphone input</div>
             {mode === 'mic' ? (
               <select value={inputDeviceId ?? ''} onChange={(e) => chooseInput(e.target.value)}
+                aria-label="Microphone input"
                 className="w-full rounded border border-[#232733] bg-[#0c0d11] px-2 py-1.5 text-[12px] text-zinc-200">
                 {devices.inputs.length === 0 && <option value="">No inputs found</option>}
                 {devices.inputs.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label}</option>)}
@@ -88,6 +103,7 @@ export default function DevicesPanel() {
             <div className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">Program output</div>
             {devices.canSetSink ? (
               <select value={outputDeviceId ?? ''} onChange={(e) => chooseOutput(e.target.value)}
+                aria-label="Program output"
                 className="w-full rounded border border-[#232733] bg-[#0c0d11] px-2 py-1.5 text-[12px] text-zinc-200">
                 <option value="">System default</option>
                 {devices.outputs.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label}</option>)}

@@ -70,5 +70,5 @@ export default function Meter({
     return () => cancelAnimationFrame(raf)
   }, [analyser, width, height, accent])
 
-  return <canvas ref={ref} style={{ width, height }} className="rounded-sm" />
+  return <canvas ref={ref} style={{ width, height }} className="rounded-sm" aria-hidden="true" />
 }

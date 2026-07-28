@@ -102,5 +102,5 @@ export default function SpectrumEq({
     return () => cancelAnimationFrame(raf)
   }, [analyser, width, height])
 
-  return <canvas ref={ref} style={{ width, height }} className="rounded" />
+  return <canvas ref={ref} style={{ width, height }} className="rounded" aria-hidden="true" />
 }

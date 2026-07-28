@@ -64,7 +64,7 @@ export default function SceneTimeline() {
   const connected = !!livePlan
 
   return (
-    <div className="flex items-center gap-2 border-b border-[#1c1f27] bg-[#0a0b0e] px-3 py-2">
+    <nav aria-label="Service plan" className="flex min-w-0 shrink-0 items-center gap-2 overflow-hidden border-b border-[#1c1f27] bg-[#0a0b0e] px-2 py-2 sm:px-3">
       {/* Planning Center control */}
       <div className="flex shrink-0 items-center gap-1.5 pr-2">
         <PcoGlyph connected={connected} />
@@ -77,9 +77,9 @@ export default function SceneTimeline() {
           <>
             <button onClick={connect} disabled={pcoStatus === 'connecting'}
               className="rounded bg-[#15181f] px-2 py-1 text-[10px] font-medium text-cyan-300 hover:bg-[#1b1f28] disabled:opacity-50">
-              {pcoStatus === 'connecting' ? 'Connecting…' : 'Connect Planning Center'}
+              {pcoStatus === 'connecting' ? 'Connecting…' : <><span className="hidden sm:inline">Connect Planning Center</span><span className="sm:hidden">Plan</span></>}
             </button>
-            <button onClick={loadSample} className="rounded bg-[#15181f] px-2 py-1 text-[10px] text-zinc-400 hover:bg-[#1b1f28]" title="Run the parser on a sample PCO plan (no credentials)">sample</button>
+            <button onClick={loadSample} className="hidden rounded bg-[#15181f] px-2 py-1 text-[10px] text-zinc-400 hover:bg-[#1b1f28] sm:block" title="Run the parser on a sample PCO plan (no credentials)">sample</button>
           </>
         )}
         {pcoStatus === 'error' && <span title={pcoError ?? ''} className="text-[10px] text-red-400">PCO error</span>}
@@ -88,6 +88,7 @@ export default function SceneTimeline() {
       <div className="h-5 w-px bg-[#1c1f27]" />
 
       <button onClick={() => go(planIndex - 1)} disabled={planIndex <= 0}
+        aria-label="Previous service cue"
         className="rounded bg-[#15181f] px-2 py-1 text-xs text-zinc-400 hover:bg-[#1b1f28] disabled:opacity-30">‹</button>
 
       <div className="flex flex-1 items-center gap-1.5 overflow-x-auto">
@@ -97,6 +98,7 @@ export default function SceneTimeline() {
           const sc = SCENES[item.scene]
           return (
             <button key={item.id} onClick={() => go(i)}
+              aria-current={active ? 'step' : undefined}
               className={`flex shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition ${
                 active ? 'border-cyan-500/60 bg-cyan-500/10'
                   : done ? 'border-[#1c1f27] bg-[#0c0d11] opacity-60'
@@ -112,8 +114,9 @@ export default function SceneTimeline() {
       </div>
 
       <button onClick={() => go(planIndex + 1)} disabled={planIndex >= plan.length - 1}
+        aria-label="Next service cue"
         className="rounded bg-cyan-600/80 px-3 py-1 text-xs font-medium text-white hover:bg-cyan-600 disabled:opacity-30">Next ›</button>
-    </div>
+    </nav>
   )
 }
 

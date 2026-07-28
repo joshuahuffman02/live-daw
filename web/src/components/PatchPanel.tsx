@@ -1,6 +1,8 @@
+import { useCallback, useRef } from 'react'
 import { useStore } from '../store'
 import { useEngine } from '../state/engine-context'
 import { PROFILES } from '../brain/targets'
+import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap'
 
 // The input patch: assign which physical input (Dante flow) feeds each channel.
 // Default is 1:1. In the appliance the input list comes from the Dante subscription
@@ -17,6 +19,10 @@ export default function PatchPanel() {
   const togglePatch = useStore((s) => s.togglePatch)
   const commit = useStore((s) => s.commit)
   const pushLog = useStore((s) => s.pushLog)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const close = useCallback(() => togglePatch(false), [togglePatch])
+
+  useDialogFocusTrap(show, dialogRef, close)
 
   if (!show) return null
 
@@ -54,17 +60,26 @@ export default function PatchPanel() {
   const used = new Set(Object.values(patch).filter((v) => v !== null))
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 p-6" onClick={() => togglePatch(false)}>
-      <div className="max-h-full w-[640px] overflow-hidden rounded-xl border border-[#232733] bg-[#0e1015] shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-[#1c1f27] px-4 py-3">
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 p-3 sm:p-6">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="patch-dialog-title"
+        aria-describedby="patch-dialog-description"
+        tabIndex={-1}
+        className="max-h-full w-full max-w-[640px] overflow-hidden rounded-xl border border-[#232733] bg-[#0e1015] shadow-2xl outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1c1f27] px-4 py-3">
           <div>
-            <div className="text-sm font-semibold text-white">Input Patch</div>
-            <div className="text-[11px] text-zinc-500">Assign a physical input (Dante flow) to each channel</div>
+            <h2 id="patch-dialog-title" className="text-sm font-semibold text-white">Input Patch</h2>
+            <div id="patch-dialog-description" className="text-[11px] text-zinc-500">Assign a physical input (Dante flow) to each channel</div>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={importDante} className="rounded bg-[#15181f] px-2.5 py-1.5 text-[11px] text-cyan-300 hover:bg-[#1b1f28]">Import Dante names</button>
             <button onClick={reset} className="rounded bg-[#15181f] px-2.5 py-1.5 text-[11px] text-zinc-300 hover:bg-[#1b1f28]">Reset 1:1</button>
-            <button onClick={() => togglePatch(false)} className="rounded bg-[#15181f] px-2.5 py-1.5 text-[11px] text-zinc-400 hover:bg-[#1b1f28]">Done</button>
+            <button onClick={close} className="rounded bg-[#15181f] px-2.5 py-1.5 text-[11px] text-zinc-400 hover:bg-[#1b1f28]">Done</button>
           </div>
         </div>
 
@@ -110,6 +125,7 @@ function Row({ ch, inId, inputs, onPatch }: {
       <select
         value={inId ?? 0}
         onChange={(e) => { const v = +e.target.value; onPatch(ch.id, v === 0 ? null : v) }}
+        aria-label={`Input source for channel ${ch.id}`}
         className={`rounded border bg-[#0c0d11] px-2 py-1 text-[11px] ${inId === null ? 'border-red-500/40 text-red-300' : 'border-[#232733] text-zinc-200'}`}
       >
         <option value={0}>— no input —</option>

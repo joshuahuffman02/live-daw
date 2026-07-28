@@ -63,20 +63,20 @@ export default function App() {
 
   return (
     <EngineProvider value={engine}>
-      <div className="relative flex h-screen flex-col bg-[#0a0b0e] text-zinc-200">
+      <div className="relative flex h-screen max-w-full flex-col overflow-hidden bg-[#0a0b0e] text-zinc-200">
         <TopBar onStop={stop} />
         <SceneTimeline />
-        <div className="flex min-h-0 flex-1">
-          <div className="rack flex flex-1 gap-2 overflow-x-auto p-3">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row">
+          <main aria-label="Channel mixer" className="rack order-2 flex min-h-0 min-w-0 flex-1 gap-2 overflow-x-auto p-3 lg:order-1">
             {channels.map((c) => (
               <ChannelStrip key={c.id} id={c.id} />
             ))}
-          </div>
-          <div className="flex w-[340px] shrink-0 flex-col gap-3 overflow-y-auto border-l border-[#1c1f27] bg-[#0c0d11] p-3">
+          </main>
+          <aside aria-label="Broadcast master and automation details" className="order-1 flex max-h-[44vh] w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-[#1c1f27] bg-[#0c0d11] p-3 lg:order-2 lg:max-h-none lg:w-[340px] lg:border-b-0 lg:border-l">
             <MasterPanel />
             <ChannelDetail />
             <BrainLog />
-          </div>
+          </aside>
         </div>
         <ConsoleBar />
         <PatchPanel />
