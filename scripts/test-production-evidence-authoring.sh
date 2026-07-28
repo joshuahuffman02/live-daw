@@ -2,9 +2,9 @@
 set -euo pipefail
 
 TRAPZERR() {
-  local status="$?"
-  print -u2 "production-evidence-authoring self-test failed: status=${status} at ${funcfiletrace[1]:-unknown}"
-  return "${status}"
+  local failure_code="$?"
+  print -u2 "production-evidence-authoring self-test failed: status=${failure_code} at ${funcfiletrace[1]:-unknown}"
+  return "${failure_code}"
 }
 
 script_directory="${0:A:h}"
