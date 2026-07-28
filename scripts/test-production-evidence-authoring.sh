@@ -1,6 +1,12 @@
 #!/bin/zsh
 set -euo pipefail
 
+TRAPZERR() {
+  local status="$?"
+  print -u2 "production-evidence-authoring self-test failed: status=${status} at ${funcfiletrace[1]:-unknown}"
+  return "${status}"
+}
+
 script_directory="${0:A:h}"
 fixture_root="$(/usr/bin/mktemp -d /tmp/live-daw-production-authoring-test.XXXXXX)"
 cleanup() {
