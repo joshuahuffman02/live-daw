@@ -42,7 +42,12 @@ STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
 4. Review the manifest, soundcheck WAV/report, stability report,
    `runtime-incident-evidence.json`, `stream-health-observations.tsv`, the
    continuous-recording proof report and its raw/program segments, and the
-   external-failover recording. The incident report validates and binds the source
+   external-failover recording. Complete the `rollout-observation` report from the
+   full SHADOW rehearsal, supervised service observation log, and real Planning
+   Center cue trace. Use a snapshot of `runtime-incidents.jsonl` covering the
+   supervised service; its plan-loaded and scene-applied events are parsed against
+   the reported plan ID, item count, applied cue count, and rollout timestamps. The
+   incident report validates and binds the source
    journal and requires zero warning/critical events across the manifest-duration
    window. The runner probes both configured health endpoints throughout the full
    check and blocks after two
@@ -64,7 +69,7 @@ operator@example.org ssh-ed25519 AAAA... venue-acceptance
 ```
 
 Use the fail-closed draft/finalize workflow in
-`PRODUCTION_EVIDENCE_FORMAT.md` to produce the four external JSON reports. It
+`PRODUCTION_EVIDENCE_FORMAT.md` to produce the five external JSON reports. It
 calculates attachment hashes and manifest/commit bindings; untouched or incomplete
 templates cannot pass.
 
@@ -88,6 +93,7 @@ For an approved sermon, bind the exact proof and supporting evidence:
   --latency-lipsync "/Volumes/Proof/AutoMix/sermon-.../latency-lipsync-evidence.json" \
   --runtime-resilience "/Volumes/Proof/AutoMix/sermon-.../runtime-resilience-evidence.json" \
   --replay-comparison "/Volumes/Proof/AutoMix/sermon-.../replay-comparison.json" \
+  --rollout-observation "/Volumes/Proof/AutoMix/sermon-.../rollout-observation.json" \
   --output-root "/Volumes/Proof/AutoMix/acceptance" \
   --notes "Reviewed complete sermon evidence; no blocking exceptions."
 ```
@@ -97,7 +103,8 @@ two-hour recording, continuous encoder/egress coverage in
 `STREAM_HEALTH_EVIDENCE.md`, the clean proof-window incident contract in
 `RUNTIME_INCIDENT_EVIDENCE.md`, and the semantic production-evidence contract in
 `PRODUCTION_EVIDENCE_FORMAT.md`. It checks that failover, A/V sync/drift, recovery
-drills, and replay results pass their numeric and behavioral gates; hashes every
+drills, replay results, the full SHADOW rehearsal, the supervised service, and the
+real Planning Center cue trace pass their numeric and behavioral gates; hashes every
 referenced attachment; binds all reports to the selected manifest; and binds the
 replay candidate to the release source commit. It then hashes the complete evidence
 index into `acceptance.json`, signs that exact JSON with the operator key, and

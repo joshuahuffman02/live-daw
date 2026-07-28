@@ -85,9 +85,9 @@ export default function PatchPanel() {
 
         <div className="max-h-[60vh] overflow-y-auto p-3">
           <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1.5">
-            <div className="text-[9px] uppercase tracking-wider text-zinc-600">Channel</div>
-            <div className="text-[9px] uppercase tracking-wider text-zinc-600">Input (Dante flow)</div>
-            <div className="text-[9px] uppercase tracking-wider text-zinc-600">Detected</div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Channel</div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Input (Dante flow)</div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Detected</div>
             {channels.map((ch) => {
               const inId = patch[ch.id] ?? null
               return (
@@ -101,7 +101,7 @@ export default function PatchPanel() {
               Unpatched inputs: {inputs.filter((i) => !used.has(i.id)).map((i) => i.name).join(', ') || 'none'}
             </div>
           )}
-          <div className="mt-3 text-[10px] leading-relaxed text-zinc-600">
+          <div className="mt-3 text-[10px] leading-relaxed text-zinc-500">
             In the appliance the input list is the Dante subscription (set in Dante Controller / via the
             Dante API). Channel <span className="text-zinc-400">roles</span> (class, bus, automix) come from the
             classifier — confirm/lock them on the strip. <span className="text-cyan-400">Import Dante names</span>{' '}
@@ -132,7 +132,7 @@ function Row({ ch, inId, inputs, onPatch }: {
         {inputs.map((i) => <option key={i.id} value={i.id}>{i.name}{i.stereo ? ' (stereo)' : ''}</option>)}
       </select>
       <div className="text-right text-[11px] text-zinc-400">
-        {PROFILES[ch.cls as keyof typeof PROFILES]?.label ?? '—'} <span className="text-zinc-600">{Math.round(ch.confidence * 100)}%</span>
+        {PROFILES[ch.cls as keyof typeof PROFILES]?.label ?? '—'} <span className="text-zinc-500">{Math.round(ch.confidence * 100)}%</span>
       </div>
     </>
   )

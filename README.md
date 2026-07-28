@@ -253,12 +253,16 @@ contract in [`docs/EXTERNAL_FAILOVER.md`](docs/EXTERNAL_FAILOVER.md); the in-app
 button cannot cover loss of its own host.
 End-to-end A/V calibration and clock-drift proof follow
 [`docs/LATENCY_AND_LIPSYNC.md`](docs/LATENCY_AND_LIPSYNC.md).
-The four external review artifacts use the hash-closed, manifest/commit-bound JSON
+The five external review artifacts use the hash-closed, manifest/commit-bound JSON
 contract in
 [`docs/PRODUCTION_EVIDENCE_FORMAT.md`](docs/PRODUCTION_EVIDENCE_FORMAT.md); both
 acceptance recording and later verification re-run its semantic gates. The same
 document includes fail-closed draft generation and automatic finalization so venue
-operators do not hand-calculate attachment hashes.
+operators do not hand-calculate attachment hashes. The fifth report makes a full
+SHADOW rehearsal, supervised live service, and reviewed real Planning Center cue
+trace explicit prerequisites for signed promotion. The verifier parses the native
+plan-loaded and scene-applied JSONL events, so an unrelated or non-empty placeholder
+trace cannot satisfy the gate.
 
 ### Native/DSP verification
 
@@ -487,6 +491,8 @@ The plan refreshes every five minutes. A failed refresh records a warning and re
 without changing the current scene or interrupting audio. Manual scene selection,
 SAFE, FREEZE, SHADOW, and channel overrides remain available. See
 [`docs/PLANNING_CENTER.md`](docs/PLANNING_CENTER.md) for mapping and rehearsal steps.
+Successful refreshes and cue applications record non-secret plan/cue metadata in the
+runtime incident journal for the supervised rollout evidence gate.
 
 The browser prototype still supports its same-origin `/pco` development proxy through
 `web/.env`; it is not the credential path used by AutoMix Native.

@@ -37,7 +37,8 @@ if "${script_directory}/finalize-production-evidence.sh" \
     --manifest "${manifest}" \
     --candidate-commit "${candidate_commit}" \
     --output-dir "${rejected_output}" \
-    --require-approved-replay >/dev/null 2>&1; then
+    --require-approved-replay \
+    --require-approved-rollout >/dev/null 2>&1; then
   print -u2 "Finalizer accepted untouched fail-closed draft templates."
   exit 1
 fi
@@ -48,9 +49,13 @@ worship_drafts="${fixture_root}/worship-drafts"
   --output-dir "${worship_drafts}" >/dev/null
 worship_phase="$(/usr/bin/plutil -extract phase raw -o - \
   "${worship_drafts}/replay-comparison.json")"
+worship_rollout_phase="$(/usr/bin/plutil -extract phase raw -o - \
+  "${worship_drafts}/rollout-observation.json")"
 worship_coverage_count="$(/usr/bin/plutil -extract comparisons.0.coverageTags raw -o - \
   "${worship_drafts}/replay-comparison.json")"
-if [[ "${worship_phase}" != "worship" || "${worship_coverage_count}" != "11" ]]; then
+if [[ "${worship_phase}" != "worship" ||
+      "${worship_rollout_phase}" != "worship" ||
+      "${worship_coverage_count}" != "11" ]]; then
   print -u2 "Worship drafts did not include the phase-specific dense-worship coverage gate."
   exit 1
 fi
@@ -58,7 +63,7 @@ fi
 valid_drafts="${fixture_root}/valid-drafts"
 final_output="${fixture_root}/final"
 /bin/mkdir "${valid_drafts}"
-for name in external-failover latency-lipsync runtime-resilience replay-comparison; do
+for name in external-failover latency-lipsync runtime-resilience replay-comparison rollout-observation; do
   /bin/cp "${production_evidence_paths[${name}]}" "${valid_drafts}/${name}.json"
   /usr/bin/plutil -insert draft -bool true "${valid_drafts}/${name}.json"
   /usr/bin/plutil -insert draftInstructions -string "test-only draft marker" \
@@ -97,23 +102,33 @@ for prefix in \
   comparisons.0.referenceMix; do
   scrub_reference "${replay}" "${prefix}"
 done
+rollout="${valid_drafts}/rollout-observation.json"
+for prefix in \
+  shadowRehearsal.candidateDecisionLog \
+  supervisedService.observationLog \
+  planningCenter.cueTrace; do
+  scrub_reference "${rollout}" "${prefix}"
+done
 
 "${script_directory}/finalize-production-evidence.sh" \
   --draft-dir "${valid_drafts}" \
   --manifest "${manifest}" \
   --candidate-commit "${candidate_commit}" \
   --output-dir "${final_output}" \
-  --require-approved-replay >/dev/null
+  --require-approved-replay \
+  --require-approved-rollout >/dev/null
 
 "${script_directory}/verify-production-evidence.sh" \
   --external-failover "${final_output}/external-failover.json" \
   --latency-lipsync "${final_output}/latency-lipsync.json" \
   --runtime-resilience "${final_output}/runtime-resilience.json" \
   --replay-comparison "${final_output}/replay-comparison.json" \
+  --rollout-observation "${final_output}/rollout-observation.json" \
   --expected-manifest "${manifest}" \
   --expected-candidate-commit "${candidate_commit}" \
   --expected-phase sermon \
-  --require-approved-replay >/dev/null
+  --require-approved-replay \
+  --require-approved-rollout >/dev/null
 
 if /usr/bin/plutil -extract draft raw -o - "${final_output}/external-failover.json" \
     >/dev/null 2>&1; then
@@ -122,7 +137,10 @@ if /usr/bin/plutil -extract draft raw -o - "${final_output}/external-failover.js
 fi
 observed_commit="$(/usr/bin/plutil -extract candidateCommit raw -o - \
   "${final_output}/replay-comparison.json")"
-if [[ "${observed_commit}" != "${candidate_commit}" ]]; then
+observed_rollout_commit="$(/usr/bin/plutil -extract candidateCommit raw -o - \
+  "${final_output}/rollout-observation.json")"
+if [[ "${observed_commit}" != "${candidate_commit}" ||
+      "${observed_rollout_commit}" != "${candidate_commit}" ]]; then
   print -u2 "Finalizer did not bind the selected candidate commit."
   exit 1
 fi
@@ -149,7 +167,8 @@ if "${script_directory}/verify-production-evidence.sh" \
     --external-failover "${final_output}/external-failover.json" \
     --latency-lipsync "${final_output}/latency-lipsync.json" \
     --runtime-resilience "${final_output}/runtime-resilience.json" \
-    --replay-comparison "${final_output}/replay-comparison.json" >/dev/null 2>&1; then
+    --replay-comparison "${final_output}/replay-comparison.json" \
+    --rollout-observation "${final_output}/rollout-observation.json" >/dev/null 2>&1; then
   print -u2 "Final evidence accepted an attachment modified after finalization."
   exit 1
 fi

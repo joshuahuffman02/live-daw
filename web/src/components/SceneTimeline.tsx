@@ -82,7 +82,12 @@ export default function SceneTimeline() {
             <button onClick={loadSample} className="hidden rounded bg-[#15181f] px-2 py-1 text-[10px] text-zinc-400 hover:bg-[#1b1f28] sm:block" title="Run the parser on a sample PCO plan (no credentials)">sample</button>
           </>
         )}
-        {pcoStatus === 'error' && <span title={pcoError ?? ''} className="text-[10px] text-red-400">PCO error</span>}
+        {pcoStatus === 'error' && (
+          <span role="alert" title={pcoError ?? ''} className="max-w-[190px] truncate text-[10px] text-red-300">
+            <span className="sm:hidden">PCO unavailable</span>
+            <span className="hidden sm:inline">PCO unavailable · {friendlyPcoError(pcoError)}</span>
+          </span>
+        )}
       </div>
 
       <div className="h-5 w-px bg-[#1c1f27]" />
@@ -122,4 +127,12 @@ export default function SceneTimeline() {
 
 function PcoGlyph({ connected }: { connected: boolean }) {
   return <span className={`inline-block h-2.5 w-2.5 rounded-sm ${connected ? 'bg-gradient-to-br from-emerald-400 to-cyan-600' : 'bg-gradient-to-br from-cyan-400 to-blue-600'}`} />
+}
+
+function friendlyPcoError(message: string | null) {
+  const normalized = message?.toLowerCase() ?? ''
+  if (normalized.includes('pco_app_id') || normalized.includes('pco_secret')) return 'credentials not configured'
+  if (normalized.includes('401') || normalized.includes('unauthorized')) return 'authentication failed'
+  if (normalized.includes('network') || normalized.includes('fetch')) return 'network request failed'
+  return 'see operator log'
 }

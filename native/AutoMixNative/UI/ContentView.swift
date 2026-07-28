@@ -1326,6 +1326,10 @@ private struct DeviceControlPanel: View {
                         if let plan = model.planningCenterPlan {
                             Text("\(plan.serviceTypeName) · \(plan.title)")
                                 .font(.caption.weight(.semibold))
+                            Text("\(plan.itemCount) plan items · \(plan.cues.count) recognized scene cues · Plan \(plan.id)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
                             HStack {
                                 Button {
                                     model.previousPlanningCenterCue()

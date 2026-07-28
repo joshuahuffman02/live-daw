@@ -1,10 +1,10 @@
 # Production Evidence Format
 
-The signed go-live decision accepts four machine-readable JSON reports. A report is
+The signed go-live decision accepts five machine-readable JSON reports. A report is
 not valid merely because it exists: `verify-production-evidence.sh` validates every
-required result, recomputes every attachment hash and byte count, binds all four
-reports to the selected full-check manifest, and binds the replay candidate to the
-accepted source commit.
+required result, recomputes every attachment hash and byte count, binds all five
+reports to the selected full-check manifest, and binds both the replay and rollout
+observations to the accepted source commit.
 
 Run the same check before review:
 
@@ -14,10 +14,12 @@ Run the same check before review:
   --latency-lipsync "/proof/latency-lipsync.json" \
   --runtime-resilience "/proof/runtime-resilience.json" \
   --replay-comparison "/proof/replay-comparison.json" \
+  --rollout-observation "/proof/rollout-observation.json" \
   --expected-manifest "/proof/automix-core-audio-full-check.json" \
   --expected-candidate-commit "40_CHARACTER_GIT_SHA" \
   --expected-phase sermon \
-  --require-approved-replay
+  --require-approved-replay \
+  --require-approved-rollout
 ```
 
 `record-proof-acceptance.sh` and `verify-proof-acceptance.sh` run this verifier
@@ -25,9 +27,14 @@ again. Consequently, a report or attachment that changes after review, belongs t
 different manifest, names a different candidate commit, or fails a semantic gate
 cannot produce or verify an approved acceptance bundle.
 
+Acceptance envelopes use `formatVersion: 2`. Version 2 is intentionally incompatible
+with the earlier ten-item envelope because it makes `rollout-observation` the
+eleventh required signed evidence item. A version 1 decision cannot unlock worship
+or production go-live.
+
 ## Fail-closed authoring workflow
 
-Create all four drafts without hand-building schemas:
+Create all five drafts without hand-building schemas:
 
 ```sh
 ./scripts/new-production-evidence-drafts.sh \
@@ -50,7 +57,8 @@ Finalize only after the drafts are complete:
   --manifest "/proof/automix-core-audio-full-check.json" \
   --candidate-commit "40_CHARACTER_GIT_SHA" \
   --output-dir "/proof/evidence-final" \
-  --require-approved-replay
+  --require-approved-replay \
+  --require-approved-rollout
 ```
 
 The finalizer refuses a failed/simulated manifest, fills the exact manifest and
@@ -181,11 +189,51 @@ Worship evidence must also cover `dense-worship`. A recording may carry multiple
 coverage tags, but every comparison still needs its own CRC, outputs, metrics,
 decision logs, reference mix, and complete-service review.
 
+## Rollout observation report
+
+Use `proofType: "rollout-observation"`. This report closes the gap between laboratory
+behavior and staged authority. It carries non-empty `reviewer` and `findings`,
+`decision` equal to `approved` or `rejected`, and `candidateCommit` equal to the
+source commit under acceptance.
+
+An approved report requires all of the following:
+
+- `shadowRehearsal` records a complete service, confirms automation was not applied
+  to program, confirms the operator compared the candidate behavior, reports zero
+  blocking issues, and attaches the live candidate decision log;
+- `supervisedService` records a complete service with automation enabled and a human
+  operator present; SAFE, FREEZE, and manual override must have been available;
+  missing-speech, clipping, and unexplained-critical-incident counts must all be
+  zero; every operator intervention must be reviewed; and the observation log is
+  attached;
+- `planningCenter` identifies a real service plan, records at least one plan item and
+  applied cue, proves the mappings were reviewed, reports zero unexpected scene
+  changes, confirms the offline/manual fallback was tested, and attaches the cue
+  trace. Applied cues cannot exceed plan items.
+
+The cue trace is a JSONL snapshot from the native runtime incident journal covering
+the supervised service. Approval parses every line and requires:
+
+- at least one `planning-center-plan-loaded` event whose `planID`, `itemCount`, and
+  recognized cue count are consistent with the report;
+- exactly `appliedCueCount` matching `planning-center-scene-applied` events, each
+  carrying that plan ID, a cue ID/index, a valid scene, and `operator` or
+  `timed plan` as its source;
+- all matching events after the SHADOW rehearsal and no later than supervised-service
+  completion, with the plan load preceding the first applied cue.
+
+The three attachments are independently hashed. A non-empty placeholder or a trace
+from another plan is therefore insufficient. A rejected report may preserve failed
+observations for diagnosis, but `--require-approved-rollout` and every approved signed
+acceptance reject it.
+
 The deterministic fixture and rejection coverage live in
 `scripts/test-production-evidence.sh` and
 `scripts/test-production-evidence-authoring.sh`. They prove fail-closed drafts,
 generated bindings/hashes, overwrite protection, and rejection of slow failover,
 modified attachments, excessive residual sync, inconsistent drift math, restart
 after operator Stop, unsafe evaluator metrics, incomplete decision logs, unsafe
-approved replay, rejected promotion, wrong candidate commit, and evidence bound to
+approved replay, SHADOW automation reaching program, unsupervised service evidence,
+unexpected Planning Center scene changes, a cue trace from another plan, a trace with
+missing cue events, rejected promotion, wrong candidate commit, and evidence bound to
 another manifest.

@@ -21,7 +21,7 @@ export default function StartScreen({
           reduces masking, rides levels, and targets stream loudness. Every automatic move
           remains observable, can be frozen, and can be replaced by a conservative SAFE mix.
         </p>
-        <p className="mt-2 max-w-xl text-xs leading-relaxed text-zinc-600">
+        <p className="mt-2 max-w-xl text-xs leading-relaxed text-zinc-500">
           Deterministic per-sample DSP stays on the audio thread; supervisory decisions run
           at control rate with no ML in the audio path.
         </p>
@@ -63,7 +63,7 @@ export default function StartScreen({
           </div>
         )}
 
-        <p className="mt-8 text-xs leading-relaxed text-zinc-600">
+        <p className="mt-8 text-xs leading-relaxed text-zinc-500">
           This is the product/UX proof — not the shippable Dante appliance (that's the
           C++/JUCE target in <span className="font-mono">SPEC.md</span>). The architecture,
           DSP behavior and supervisory UI here map 1:1 to that build.

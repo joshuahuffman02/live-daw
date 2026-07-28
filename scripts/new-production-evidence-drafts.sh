@@ -35,6 +35,7 @@ templates=(
   latency-lipsync
   runtime-resilience
   replay-comparison
+  rollout-observation
 )
 for name in "${templates[@]}"; do
   if [[ ! -s "${template_directory}/${name}.json" ]]; then

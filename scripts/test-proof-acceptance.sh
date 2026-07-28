@@ -58,6 +58,7 @@ labels=(
   latency-lipsync
   runtime-resilience
   replay-comparison
+  rollout-observation
 )
 typeset -A evidence_paths
 for label in "${labels[@]}"; do
@@ -83,7 +84,7 @@ done
 plist="${bundle}/acceptance.plist"
 json="${bundle}/acceptance.json"
 /usr/bin/plutil -create xml1 "${plist}"
-/usr/bin/plutil -insert formatVersion -integer 1 "${plist}"
+/usr/bin/plutil -insert formatVersion -integer 2 "${plist}"
 /usr/bin/plutil -insert bundleID -string "$(/usr/bin/uuidgen)" "${plist}"
 /usr/bin/plutil -insert phase -string sermon "${plist}"
 /usr/bin/plutil -insert decision -string approved "${plist}"

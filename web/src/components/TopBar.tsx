@@ -176,9 +176,9 @@ function ModeToggle({ mixMode, setMixMode }: { mixMode: 'soundcheck' | 'live'; s
 function Readout({ label, value, unit, warn }: { label: string; value: string; unit: string; warn?: boolean }) {
   return (
     <div className="flex flex-col items-end leading-none" aria-label={`${label} ${value} ${unit}`}>
-      <span className="text-[9px] uppercase tracking-wider text-zinc-600">{label}</span>
+      <span className="text-[9px] uppercase tracking-wider text-zinc-500">{label}</span>
       <span className={warn ? 'text-red-400' : 'text-zinc-200'}>
-        {value} <span className="text-[9px] text-zinc-600">{unit}</span>
+        {value} <span className="text-[9px] text-zinc-500">{unit}</span>
       </span>
     </div>
   )

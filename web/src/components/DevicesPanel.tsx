@@ -83,7 +83,7 @@ export default function DevicesPanel() {
         <div className="flex flex-col gap-3 p-4">
           {/* input */}
           <div>
-            <div className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">Microphone input</div>
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">Microphone input</div>
             {mode === 'mic' ? (
               <select value={inputDeviceId ?? ''} onChange={(e) => chooseInput(e.target.value)}
                 aria-label="Microphone input"
@@ -100,7 +100,7 @@ export default function DevicesPanel() {
 
           {/* output */}
           <div>
-            <div className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">Program output</div>
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">Program output</div>
             {devices.canSetSink ? (
               <select value={outputDeviceId ?? ''} onChange={(e) => chooseOutput(e.target.value)}
                 aria-label="Program output"
@@ -120,7 +120,7 @@ export default function DevicesPanel() {
               Device names are hidden until mic access is granted — start in <span className="text-zinc-300">Live Microphone</span> mode to see real names (e.g. “AirPods Pro”).
             </div>
           )}
-          <div className="text-[10px] leading-relaxed text-zinc-600">
+          <div className="text-[10px] leading-relaxed text-zinc-500">
             macOS tip: if it grabbed your iPhone, that's Continuity — pick your AirPods (or interface) above. The
             appliance instead opens the <span className="text-zinc-400">Dante</span> device and follows the network leader clock.
           </div>

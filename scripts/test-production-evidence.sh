@@ -19,10 +19,12 @@ verify() {
     --latency-lipsync "${production_evidence_paths[latency-lipsync]}" \
     --runtime-resilience "${production_evidence_paths[runtime-resilience]}" \
     --replay-comparison "${production_evidence_paths[replay-comparison]}" \
+    --rollout-observation "${production_evidence_paths[rollout-observation]}" \
     --expected-manifest "${production_evidence_attachments[full-check-manifest]}" \
     --expected-candidate-commit 0123456789abcdef0123456789abcdef01234567 \
     --expected-phase sermon \
-    --require-approved-replay
+    --require-approved-replay \
+    --require-approved-rollout
 }
 
 expect_rejection() {
@@ -132,6 +134,75 @@ expect_rejection "a replay candidate that differs from the accepted source commi
 /usr/bin/plutil -replace candidateCommit -string 0123456789abcdef0123456789abcdef01234567 \
   "${production_evidence_paths[replay-comparison]}"
 
+/usr/bin/plutil -replace shadowRehearsal.automationAppliedToProgram -bool true \
+  "${production_evidence_paths[rollout-observation]}"
+expect_rejection "an approved rollout that applied automation during SHADOW"
+/usr/bin/plutil -replace shadowRehearsal.automationAppliedToProgram -bool false \
+  "${production_evidence_paths[rollout-observation]}"
+
+/usr/bin/plutil -replace supervisedService.humanOperatorPresent -bool false \
+  "${production_evidence_paths[rollout-observation]}"
+expect_rejection "an approved supervised service without a human operator"
+/usr/bin/plutil -replace supervisedService.humanOperatorPresent -bool true \
+  "${production_evidence_paths[rollout-observation]}"
+
+/usr/bin/plutil -replace planningCenter.unexpectedSceneChangeCount -integer 1 \
+  "${production_evidence_paths[rollout-observation]}"
+expect_rejection "an approved rollout with an unexpected Planning Center scene change"
+/usr/bin/plutil -replace planningCenter.unexpectedSceneChangeCount -integer 0 \
+  "${production_evidence_paths[rollout-observation]}"
+
+/usr/bin/plutil -replace decision -string rejected \
+  "${production_evidence_paths[rollout-observation]}"
+expect_rejection "a rejected rollout observation for an approved promotion"
+/usr/bin/plutil -replace decision -string approved \
+  "${production_evidence_paths[rollout-observation]}"
+
+/usr/bin/plutil -replace candidateCommit -string fedcba9876543210fedcba9876543210fedcba98 \
+  "${production_evidence_paths[rollout-observation]}"
+expect_rejection "a rollout observation for a different source commit"
+/usr/bin/plutil -replace candidateCommit -string 0123456789abcdef0123456789abcdef01234567 \
+  "${production_evidence_paths[rollout-observation]}"
+
+/usr/bin/plutil -replace supervisedService.completedAtUTC -string 2026-07-25T16:00:00Z \
+  "${production_evidence_paths[rollout-observation]}"
+expect_rejection "a supervised service timestamp before its SHADOW rehearsal"
+/usr/bin/plutil -replace supervisedService.completedAtUTC -string 2026-07-27T16:00:00Z \
+  "${production_evidence_paths[rollout-observation]}"
+
+print -r -- "tampered cue trace" >> \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+expect_rejection "a Planning Center cue trace changed after finalization"
+production_fixture_planning_center_cue_trace \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+
+/usr/bin/sed -i '' 's/"planID":"fixture-plan-001"/"planID":"different-plan"/g' \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  planningCenter.cueTrace \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+expect_rejection "a cue trace that belongs to a different Planning Center plan"
+production_fixture_planning_center_cue_trace \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  planningCenter.cueTrace \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+
+/usr/bin/sed -i '' '$d' "${production_evidence_attachments[planning-center-cue-trace]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  planningCenter.cueTrace \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+expect_rejection "a cue trace with fewer applied scenes than the rollout report"
+production_fixture_planning_center_cue_trace \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  planningCenter.cueTrace \
+  "${production_evidence_attachments[planning-center-cue-trace]}"
+
 /usr/bin/plutil -replace phase -string worship \
   "${production_evidence_paths[runtime-resilience]}"
 expect_rejection "runtime evidence from a different rollout phase"
@@ -144,6 +215,7 @@ if "${script_directory}/verify-production-evidence.sh" \
     --latency-lipsync "${production_evidence_paths[latency-lipsync]}" \
     --runtime-resilience "${production_evidence_paths[runtime-resilience]}" \
     --replay-comparison "${production_evidence_paths[replay-comparison]}" \
+    --rollout-observation "${production_evidence_paths[rollout-observation]}" \
     --expected-manifest "${fixture_root}/different-manifest.json" >/dev/null 2>&1; then
   print -u2 "Production evidence verifier accepted reports bound to a different full-check manifest."
   exit 1

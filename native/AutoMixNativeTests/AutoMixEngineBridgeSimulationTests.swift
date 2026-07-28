@@ -2609,7 +2609,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
     }
 
     @MainActor
-    func testPlanningCenterTimedCueDrivesNativeSceneOnlyAfterStartTime() throws {
+    func testPlanningCenterTimedCueDrivesNativeSceneOnlyAfterStartTime() async throws {
         let profileDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let model = AppModel(profileDirectory: profileDirectory, autoStartRemoteMonitoring: false)
@@ -2623,6 +2623,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             title: "Sunday",
             serviceTypeID: "service-1",
             serviceTypeName: "Sunday Services",
+            itemCount: 2,
             cues: [
                 PlanningCenterSceneCue(
                     id: "song",
@@ -2660,6 +2661,23 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         model.debugUpdatePlanningCenterSceneForTesting(now: now.addingTimeInterval(120))
         XCTAssertEqual(model.selectedScene, .sermon)
         XCTAssertEqual(model.planningCenterCurrentCueIndex, 1)
+
+        await model.debugWaitForIncidentWritesForTesting()
+        let incidentURL = try XCTUnwrap(model.incidentLogURL)
+        let incidents = try String(contentsOf: incidentURL, encoding: .utf8)
+            .split(separator: "\n")
+            .map { try JSONDecoder().decode(RuntimeIncident.self, from: Data($0.utf8)) }
+        let loaded = try XCTUnwrap(
+            incidents.first { $0.kind == "planning-center-plan-loaded" }
+        )
+        XCTAssertEqual(loaded.details["planID"], "plan-1")
+        XCTAssertEqual(loaded.details["serviceTypeID"], "service-1")
+        XCTAssertEqual(loaded.details["itemCount"], "2")
+        XCTAssertEqual(loaded.details["cueCount"], "2")
+        let applied = incidents.filter { $0.kind == "planning-center-scene-applied" }
+        XCTAssertFalse(applied.isEmpty)
+        XCTAssertTrue(applied.allSatisfy { $0.details["planID"] == "plan-1" })
+        XCTAssertTrue(applied.allSatisfy { Int($0.details["cueIndex"] ?? "") != nil })
     }
 
     @MainActor

@@ -54,3 +54,12 @@ The native app refreshes the plan every five minutes. On network, authentication
 parse failure it holds the current scene, logs a warning incident, and retries after
 one minute. It never stops or restarts the audio engine because Planning Center is
 unavailable.
+
+Each successful refresh records an informational `planning-center-plan-loaded`
+runtime incident containing the plan ID, service-type ID, total item count, and
+recognized cue count. Each operator or timed application records
+`planning-center-scene-applied` with the same plan ID plus cue ID/index, scene, and
+source. Preserve the supervised-service section of `runtime-incidents.jsonl` as the
+rollout-observation cue trace; production acceptance parses these events instead of
+trusting the report summary alone. The token and secret are never written to either
+event.

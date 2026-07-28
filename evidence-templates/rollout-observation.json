@@ -1,0 +1,59 @@
+{
+  "formatVersion": 1,
+  "proofType": "rollout-observation",
+  "completedAtUTC": "1970-01-01T00:00:00Z",
+  "venueRig": true,
+  "phase": "sermon",
+  "fullCheckManifestSHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "draft": true,
+  "draftInstructions": "Replace every observation and attachment honestly. Approval requires a full SHADOW rehearsal, a supervised service, and a reviewed real Planning Center cue trace.",
+  "reviewer": "REPLACE",
+  "findings": "REPLACE",
+  "decision": "rejected",
+  "candidateCommit": "0000000000000000000000000000000000000000",
+  "shadowRehearsal": {
+    "completedAtUTC": "1970-01-01T00:00:00Z",
+    "fullServiceObserved": false,
+    "automationAppliedToProgram": true,
+    "operatorComparisonCompleted": false,
+    "blockingIssueCount": 999,
+    "candidateDecisionLog": {
+      "path": "/REPLACE/shadow-candidate-decisions.jsonl",
+      "sha256": "",
+      "bytes": 0
+    }
+  },
+  "supervisedService": {
+    "completedAtUTC": "1970-01-01T00:00:00Z",
+    "fullServiceObserved": false,
+    "automationEnabled": false,
+    "humanOperatorPresent": false,
+    "safeControlAvailable": false,
+    "freezeControlAvailable": false,
+    "manualOverrideAvailable": false,
+    "missingSpeechEvents": 999,
+    "clippingEvents": 999,
+    "unexplainedCriticalIncidentCount": 999,
+    "operatorInterventionCount": 0,
+    "allInterventionsReviewed": false,
+    "observationLog": {
+      "path": "/REPLACE/supervised-service-observations.txt",
+      "sha256": "",
+      "bytes": 0
+    }
+  },
+  "planningCenter": {
+    "realServicePlanUsed": false,
+    "planID": "REPLACE",
+    "itemCount": 0,
+    "appliedCueCount": 0,
+    "operatorMappingsReviewed": false,
+    "unexpectedSceneChangeCount": 999,
+    "offlineFallbackVerified": false,
+    "cueTrace": {
+      "path": "/REPLACE/planning-center-cue-trace.jsonl",
+      "sha256": "",
+      "bytes": 0
+    }
+  }
+}

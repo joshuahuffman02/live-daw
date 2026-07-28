@@ -5,20 +5,23 @@ usage() {
   print -u2 "Usage:"
   print -u2 "  $0 --external-failover PATH --latency-lipsync PATH"
   print -u2 "     --runtime-resilience PATH --replay-comparison PATH"
+  print -u2 "     --rollout-observation PATH"
   print -u2 "     [--expected-manifest PATH] [--expected-candidate-commit SHA]"
   print -u2 "     [--expected-phase sermon|worship]"
-  print -u2 "     [--require-approved-replay]"
+  print -u2 "     [--require-approved-replay] [--require-approved-rollout]"
 }
 
 external_failover_path=""
 latency_lipsync_path=""
 runtime_resilience_path=""
 replay_comparison_path=""
+rollout_observation_path=""
 expected_manifest_path=""
 expected_manifest_sha=""
 expected_candidate_commit=""
 expected_phase=""
 require_approved_replay=0
+require_approved_rollout=0
 
 while (( $# > 0 )); do
   case "$1" in
@@ -26,10 +29,12 @@ while (( $# > 0 )); do
     --latency-lipsync) latency_lipsync_path="${2:-}"; shift 2 ;;
     --runtime-resilience) runtime_resilience_path="${2:-}"; shift 2 ;;
     --replay-comparison) replay_comparison_path="${2:-}"; shift 2 ;;
+    --rollout-observation) rollout_observation_path="${2:-}"; shift 2 ;;
     --expected-manifest) expected_manifest_path="${2:-}"; shift 2 ;;
     --expected-candidate-commit) expected_candidate_commit="${2:-}"; shift 2 ;;
     --expected-phase) expected_phase="${2:-}"; shift 2 ;;
     --require-approved-replay) require_approved_replay=1; shift ;;
+    --require-approved-rollout) require_approved_rollout=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
       print -u2 "Unknown argument: $1"
@@ -42,7 +47,8 @@ done
 if [[ -z "${external_failover_path}" ||
       -z "${latency_lipsync_path}" ||
       -z "${runtime_resilience_path}" ||
-      -z "${replay_comparison_path}" ]]; then
+      -z "${replay_comparison_path}" ||
+      -z "${rollout_observation_path}" ]]; then
   usage
   exit 2
 fi
@@ -91,7 +97,10 @@ require_string() {
   local label="$3"
   local value
   value="$(extract "${file}" "${key}" || true)"
-  if [[ -z "${value}" || "${value}" == *[[:cntrl:]]* || ${#value} -gt 1000 ]]; then
+  if [[ -z "${value}" ||
+        "${value}" == "REPLACE" ||
+        "${value}" == *[[:cntrl:]]* ||
+        ${#value} -gt 1000 ]]; then
     fail "${label} must be a non-empty, single-line string."
   fi
   REPLY="${value}"
@@ -710,9 +719,269 @@ validate_replay_comparison() {
   done
 }
 
+extract_json_line() {
+  print -rn -- "$1" | /usr/bin/plutil -extract "$2" raw -o - - 2>/dev/null
+}
+
+validate_planning_center_cue_trace() {
+  local path="$1"
+  local expected_plan_id="$2"
+  local expected_item_count="$3"
+  local expected_applied_cues="$4"
+  local shadow_completed="$5"
+  local supervised_completed="$6"
+  local shadow_seconds supervised_seconds shadow_ms supervised_ms
+  local line kind severity timestamp plan_id item_count cue_count
+  local cue_id cue_index scene source
+  local earliest_loaded_ms=0 earliest_applied_ms=0
+  integer line_number=0
+  integer matching_loads=0
+  integer matching_applied=0
+
+  shadow_seconds="$(/bin/date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
+    "${shadow_completed}" '+%s' 2>/dev/null || true)"
+  supervised_seconds="$(/bin/date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
+    "${supervised_completed}" '+%s' 2>/dev/null || true)"
+  if [[ ! "${shadow_seconds}" =~ '^[0-9]+$' ||
+        ! "${supervised_seconds}" =~ '^[0-9]+$' ]]; then
+    fail "Planning Center cue trace could not bind to the rollout timestamps."
+  fi
+  shadow_ms="$(( shadow_seconds * 1000 ))"
+  supervised_ms="$(( supervised_seconds * 1000 ))"
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line_number="$(( line_number + 1 ))"
+    if [[ -z "${line}" ]]; then
+      fail "Planning Center cue trace contains an empty line at ${line_number}."
+    fi
+    kind="$(extract_json_line "${line}" kind || true)"
+    severity="$(extract_json_line "${line}" severity || true)"
+    timestamp="$(extract_json_line "${line}" timestampMs || true)"
+    if [[ ! "${kind}" =~ '^[A-Za-z0-9._-]{1,128}$' ||
+          ( "${severity}" != "info" &&
+            "${severity}" != "warning" &&
+            "${severity}" != "critical" ) ||
+          ! "${timestamp}" =~ '^[0-9]+$' ]]; then
+      fail "Planning Center cue trace line ${line_number} is not a valid runtime incident."
+    fi
+
+    if [[ "${kind}" == "planning-center-plan-loaded" ]]; then
+      plan_id="$(extract_json_line "${line}" details.planID || true)"
+      [[ "${plan_id}" == "${expected_plan_id}" ]] || continue
+      item_count="$(extract_json_line "${line}" details.itemCount || true)"
+      cue_count="$(extract_json_line "${line}" details.cueCount || true)"
+      if [[ "${severity}" != "info" ||
+            ! "${item_count}" =~ '^[0-9]+$' ||
+            ! "${cue_count}" =~ '^[0-9]+$' ]] ||
+          (( item_count != expected_item_count ||
+             cue_count < 1 ||
+             cue_count > item_count ||
+             timestamp <= shadow_ms ||
+             timestamp > supervised_ms )); then
+        fail "Planning Center plan-loaded trace does not match the supervised service report."
+      fi
+      matching_loads="$(( matching_loads + 1 ))"
+      if (( earliest_loaded_ms == 0 || timestamp < earliest_loaded_ms )); then
+        earliest_loaded_ms="${timestamp}"
+      fi
+    elif [[ "${kind}" == "planning-center-scene-applied" ]]; then
+      plan_id="$(extract_json_line "${line}" details.planID || true)"
+      [[ "${plan_id}" == "${expected_plan_id}" ]] || continue
+      cue_id="$(extract_json_line "${line}" details.cueID || true)"
+      cue_index="$(extract_json_line "${line}" details.cueIndex || true)"
+      scene="$(extract_json_line "${line}" details.scene || true)"
+      source="$(extract_json_line "${line}" details.source || true)"
+      if [[ "${severity}" != "info" ||
+            -z "${cue_id}" ||
+            "${cue_id}" == *[[:cntrl:]]* ||
+            ! "${cue_index}" =~ '^[0-9]+$' ||
+            ( "${scene}" != "preService" &&
+              "${scene}" != "worship" &&
+              "${scene}" != "sermon" &&
+              "${scene}" != "prayer" &&
+              "${scene}" != "postService" ) ||
+            ( "${source}" != "operator" && "${source}" != "timed plan" ) ]] ||
+          (( cue_index >= expected_item_count ||
+             timestamp <= shadow_ms ||
+             timestamp > supervised_ms )); then
+        fail "Planning Center scene-applied trace contains invalid or out-of-window cue evidence."
+      fi
+      matching_applied="$(( matching_applied + 1 ))"
+      if (( earliest_applied_ms == 0 || timestamp < earliest_applied_ms )); then
+        earliest_applied_ms="${timestamp}"
+      fi
+    fi
+  done < "${path}"
+
+  if (( line_number == 0 ||
+        matching_loads < 1 ||
+        matching_applied != expected_applied_cues ||
+        earliest_applied_ms < earliest_loaded_ms )); then
+    fail "Planning Center cue trace does not prove the reported plan load and applied cue count."
+  fi
+}
+
+validate_rollout_observation() {
+  local report="$1"
+  local decision candidate_commit approval_required
+  local report_completed shadow_completed supervised_completed
+  local shadow_full shadow_applied shadow_compared shadow_blockers
+  local supervised_full automation_enabled operator_present safe_available
+  local freeze_available manual_available missing_speech clipping_events
+  local critical_incidents intervention_count interventions_reviewed
+  local real_plan mappings_reviewed unexpected_changes fallback_verified
+  local item_count applied_cues plan_id cue_trace
+
+  validate_common "${report}" rollout-observation "rollout observation"
+  report_completed="$(extract "${report}" completedAtUTC || true)"
+  require_string "${report}" reviewer "rollout observation reviewer"
+  require_string "${report}" findings "rollout observation findings"
+  require_string "${report}" decision "rollout observation decision"
+  decision="${REPLY}"
+  if [[ "${decision}" != "approved" && "${decision}" != "rejected" ]]; then
+    fail "rollout observation decision must be approved or rejected."
+  fi
+  if (( require_approved_rollout )) && [[ "${decision}" != "approved" ]]; then
+    fail "an approved production acceptance requires an approved rollout observation."
+  fi
+  approval_required=false
+  [[ "${decision}" == "approved" ]] && approval_required=true
+
+  require_regex "${report}" candidateCommit '^[0-9a-f]{40}$' \
+    "rollout observation candidateCommit"
+  candidate_commit="${REPLY}"
+  if [[ -n "${expected_candidate_commit}" &&
+        "${candidate_commit}" != "${expected_candidate_commit}" ]]; then
+    fail "rollout observation candidate commit does not match the accepted source commit."
+  fi
+
+  require_regex "${report}" shadowRehearsal.completedAtUTC \
+    '^20[2-9][0-9]-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+    "shadow rehearsal completedAtUTC"
+  shadow_completed="${REPLY}"
+  require_boolean_value "${report}" shadowRehearsal.fullServiceObserved \
+    "shadow rehearsal fullServiceObserved"
+  shadow_full="${REPLY}"
+  require_boolean_value "${report}" shadowRehearsal.automationAppliedToProgram \
+    "shadow rehearsal automationAppliedToProgram"
+  shadow_applied="${REPLY}"
+  require_boolean_value "${report}" shadowRehearsal.operatorComparisonCompleted \
+    "shadow rehearsal operatorComparisonCompleted"
+  shadow_compared="${REPLY}"
+  require_integer_between "${report}" shadowRehearsal.blockingIssueCount 0 10000 \
+    "shadow rehearsal blockingIssueCount"
+  shadow_blockers="${REPLY}"
+  verify_reference "${report}" shadowRehearsal.candidateDecisionLog \
+    "shadow rehearsal candidateDecisionLog"
+
+  require_regex "${report}" supervisedService.completedAtUTC \
+    '^20[2-9][0-9]-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+    "supervised service completedAtUTC"
+  supervised_completed="${REPLY}"
+  require_boolean_value "${report}" supervisedService.fullServiceObserved \
+    "supervised service fullServiceObserved"
+  supervised_full="${REPLY}"
+  require_boolean_value "${report}" supervisedService.automationEnabled \
+    "supervised service automationEnabled"
+  automation_enabled="${REPLY}"
+  require_boolean_value "${report}" supervisedService.humanOperatorPresent \
+    "supervised service humanOperatorPresent"
+  operator_present="${REPLY}"
+  require_boolean_value "${report}" supervisedService.safeControlAvailable \
+    "supervised service safeControlAvailable"
+  safe_available="${REPLY}"
+  require_boolean_value "${report}" supervisedService.freezeControlAvailable \
+    "supervised service freezeControlAvailable"
+  freeze_available="${REPLY}"
+  require_boolean_value "${report}" supervisedService.manualOverrideAvailable \
+    "supervised service manualOverrideAvailable"
+  manual_available="${REPLY}"
+  require_integer_between "${report}" supervisedService.missingSpeechEvents 0 10000 \
+    "supervised service missingSpeechEvents"
+  missing_speech="${REPLY}"
+  require_integer_between "${report}" supervisedService.clippingEvents 0 10000 \
+    "supervised service clippingEvents"
+  clipping_events="${REPLY}"
+  require_integer_between "${report}" supervisedService.unexplainedCriticalIncidentCount 0 10000 \
+    "supervised service unexplainedCriticalIncidentCount"
+  critical_incidents="${REPLY}"
+  require_integer_between "${report}" supervisedService.operatorInterventionCount 0 10000 \
+    "supervised service operatorInterventionCount"
+  intervention_count="${REPLY}"
+  require_boolean_value "${report}" supervisedService.allInterventionsReviewed \
+    "supervised service allInterventionsReviewed"
+  interventions_reviewed="${REPLY}"
+  verify_reference "${report}" supervisedService.observationLog \
+    "supervised service observationLog"
+
+  require_boolean_value "${report}" planningCenter.realServicePlanUsed \
+    "Planning Center realServicePlanUsed"
+  real_plan="${REPLY}"
+  require_string "${report}" planningCenter.planID "Planning Center planID"
+  plan_id="${REPLY}"
+  require_integer_between "${report}" planningCenter.itemCount 0 10000 \
+    "Planning Center itemCount"
+  item_count="${REPLY}"
+  require_integer_between "${report}" planningCenter.appliedCueCount 0 10000 \
+    "Planning Center appliedCueCount"
+  applied_cues="${REPLY}"
+  require_boolean_value "${report}" planningCenter.operatorMappingsReviewed \
+    "Planning Center operatorMappingsReviewed"
+  mappings_reviewed="${REPLY}"
+  require_integer_between "${report}" planningCenter.unexpectedSceneChangeCount 0 10000 \
+    "Planning Center unexpectedSceneChangeCount"
+  unexpected_changes="${REPLY}"
+  require_boolean_value "${report}" planningCenter.offlineFallbackVerified \
+    "Planning Center offlineFallbackVerified"
+  fallback_verified="${REPLY}"
+  verify_reference "${report}" planningCenter.cueTrace "Planning Center cueTrace"
+  cue_trace="${REPLY}"
+
+  if [[ "${approval_required}" == "true" ]]; then
+    if [[ "${shadow_completed}" == "${supervised_completed}" ||
+          "${shadow_completed}" > "${supervised_completed}" ||
+          "${supervised_completed}" > "${report_completed}" ]]; then
+      fail "approved rollout requires SHADOW before the supervised service and both before report completion."
+    fi
+    if [[ "${shadow_full}" != "true" ||
+          "${shadow_applied}" != "false" ||
+          "${shadow_compared}" != "true" ||
+          "${shadow_blockers}" != "0" ]]; then
+      fail "approved rollout requires a full SHADOW rehearsal with no program automation or blocking issues and a completed operator comparison."
+    fi
+    if [[ "${supervised_full}" != "true" ||
+          "${automation_enabled}" != "true" ||
+          "${operator_present}" != "true" ||
+          "${safe_available}" != "true" ||
+          "${freeze_available}" != "true" ||
+          "${manual_available}" != "true" ||
+          "${missing_speech}" != "0" ||
+          "${clipping_events}" != "0" ||
+          "${critical_incidents}" != "0" ||
+          "${interventions_reviewed}" != "true" ]]; then
+      fail "approved rollout requires a complete supervised service with human authority, no blocking audio events, and every intervention reviewed."
+    fi
+    if [[ "${real_plan}" != "true" ||
+          "${mappings_reviewed}" != "true" ||
+          "${unexpected_changes}" != "0" ||
+          "${fallback_verified}" != "true" ]] ||
+        (( item_count < 1 || applied_cues < 1 || applied_cues > item_count )); then
+      fail "approved rollout requires a reviewed real Planning Center plan, applied cues without unexpected changes, and verified offline fallback."
+    fi
+    validate_planning_center_cue_trace \
+      "${cue_trace}" \
+      "${plan_id}" \
+      "${item_count}" \
+      "${applied_cues}" \
+      "${shadow_completed}" \
+      "${supervised_completed}"
+  fi
+}
+
 validate_external_failover "${external_failover_path}"
 validate_latency_lipsync "${latency_lipsync_path}"
 validate_runtime_resilience "${runtime_resilience_path}"
 validate_replay_comparison "${replay_comparison_path}"
+validate_rollout_observation "${rollout_observation_path}"
 
-print "Production evidence verified: external failover, latency/lip-sync, runtime resilience, and replay comparison."
+print "Production evidence verified: external failover, latency/lip-sync, runtime resilience, replay comparison, and rollout observation."

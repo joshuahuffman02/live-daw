@@ -158,6 +158,7 @@ struct PlanningCenterPlan: Codable, Equatable, Sendable {
     var title: String
     var serviceTypeID: String
     var serviceTypeName: String
+    var itemCount: Int
     var cues: [PlanningCenterSceneCue]
 }
 
@@ -368,6 +369,7 @@ actor PlanningCenterAPIClient {
             title: planTitle,
             serviceTypeID: serviceTypeID,
             serviceTypeName: serviceTypeName,
+            itemCount: items.data.count,
             cues: cues
         )
     }
@@ -1042,9 +1044,24 @@ final class AppModel: ObservableObject {
         planningCenterPlan = plan
         nextPlanningCenterRefreshMs = Int64(Date().timeIntervalSince1970 * 1_000) + 300_000
         planningCenterStatus = plan.cues.isEmpty
-            ? "\(plan.title) loaded · no recognized scene cues"
-            : "\(plan.title) · \(plan.cues.count) scene cues"
+            ? "\(plan.title) · \(plan.itemCount) items · no recognized scene cues"
+            : "\(plan.title) · \(plan.itemCount) items · \(plan.cues.count) scene cues"
+        recordPlanningCenterPlanLoaded(plan)
         updatePlanningCenterScene(now: Date())
+    }
+
+    private func recordPlanningCenterPlanLoaded(_ plan: PlanningCenterPlan) {
+        recordRuntimeIncident(
+            kind: "planning-center-plan-loaded",
+            severity: .info,
+            message: "\(plan.title) loaded from Planning Center",
+            details: [
+                "planID": plan.id,
+                "serviceTypeID": plan.serviceTypeID,
+                "itemCount": "\(plan.itemCount)",
+                "cueCount": "\(plan.cues.count)"
+            ]
+        )
     }
 
     private func finishPlanningCenterRefresh(error: Error) {
@@ -1088,7 +1105,9 @@ final class AppModel: ObservableObject {
             severity: .info,
             message: "\(cue.title) mapped to \(cue.scene.label)",
             details: [
+                "planID": planningCenterPlan?.id ?? "",
                 "cueID": cue.id,
+                "cueIndex": "\(index)",
                 "scene": cue.scene.rawValue,
                 "source": source
             ]
@@ -3227,6 +3246,7 @@ final class AppModel: ObservableObject {
         planningCenterPlan = plan
         planningCenterCurrentCueIndex = nil
         planningCenterLastAppliedCueID = nil
+        recordPlanningCenterPlanLoaded(plan)
     }
 
     func debugSetPlanningCenterFollowForTesting(_ enabled: Bool) {

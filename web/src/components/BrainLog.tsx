@@ -29,7 +29,7 @@ export default function BrainLog() {
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Activity</div>
-          <div className="text-[9px] text-zinc-600">
+          <div className="text-[9px] text-zinc-500">
             {visible.length} {view === 'operator' ? 'operator events' : 'detailed decisions'}
           </div>
         </div>
@@ -57,7 +57,7 @@ export default function BrainLog() {
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-1">
-        {visible.length === 0 && <div className="text-[11px] text-zinc-600">No operator events yet. Open All decisions for detailed automation.</div>}
+        {visible.length === 0 && <div className="text-[11px] text-zinc-500">No operator events yet. Open All decisions for detailed automation.</div>}
         {visible.map((e) => (
           <div key={e.id} className="flex gap-2 text-[10px] leading-tight">
             <span className="tnum shrink-0 text-zinc-700">{time(e.t)}</span>

@@ -73,7 +73,7 @@ signer_identity="$(/usr/bin/plutil -extract signerIdentity raw -o - "${acceptanc
 source_commit="$(/usr/bin/plutil -extract sourceCommit raw -o - "${acceptance_json}" 2>/dev/null || true)"
 evidence_count="$(/usr/bin/plutil -extract evidence raw -o - "${acceptance_json}" 2>/dev/null || true)"
 
-if [[ "${format_version}" != "1" ||
+if [[ "${format_version}" != "2" ||
       ( "${phase}" != "sermon" && "${phase}" != "worship" ) ||
       ( "${decision}" != "approved" && "${decision}" != "rejected" ) ||
       -z "${reviewer}" ||
@@ -81,7 +81,7 @@ if [[ "${format_version}" != "1" ||
       ! "${signer_identity}" =~ '^[A-Za-z0-9._@+-]{1,128}$' ||
       ! "${source_commit}" =~ '^[0-9a-f]{40}$' ||
       ! "${evidence_count}" =~ '^[0-9]+$' ||
-      ${evidence_count} -lt 10 ]]; then
+      ${evidence_count} -lt 11 ]]; then
   print -u2 "Acceptance metadata is incomplete or invalid."
   exit 3
 fi
@@ -169,6 +169,7 @@ required_labels=(
   latency-lipsync
   runtime-resilience
   replay-comparison
+  rollout-observation
 )
 for label in "${required_labels[@]}"; do
   if [[ -z "${seen_labels[${label}]:-}" ]]; then
@@ -206,12 +207,13 @@ production_evidence_arguments=(
   --latency-lipsync "${verified_evidence_paths[latency-lipsync]}"
   --runtime-resilience "${verified_evidence_paths[runtime-resilience]}"
   --replay-comparison "${verified_evidence_paths[replay-comparison]}"
+  --rollout-observation "${verified_evidence_paths[rollout-observation]}"
   --expected-manifest "${verified_evidence_paths[full-check-manifest]}"
   --expected-candidate-commit "${source_commit}"
   --expected-phase "${phase}"
 )
 if [[ "${decision}" == "approved" ]]; then
-  production_evidence_arguments+=(--require-approved-replay)
+  production_evidence_arguments+=(--require-approved-replay --require-approved-rollout)
 fi
 "${script_directory}/verify-production-evidence.sh" \
   "${production_evidence_arguments[@]}" >/dev/null

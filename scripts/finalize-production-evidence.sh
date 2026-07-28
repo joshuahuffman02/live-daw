@@ -10,7 +10,7 @@ TRAPZERR() {
 usage() {
   print -u2 "Usage:"
   print -u2 "  $0 --draft-dir DIR --manifest PATH --candidate-commit SHA --output-dir DIR"
-  print -u2 "     [--require-approved-replay] [--replace]"
+  print -u2 "     [--require-approved-replay] [--require-approved-rollout] [--replace]"
 }
 
 draft_directory=""
@@ -18,6 +18,7 @@ manifest_path=""
 candidate_commit=""
 output_directory=""
 require_approved_replay=0
+require_approved_rollout=0
 replace_existing=0
 while (( $# > 0 )); do
   case "$1" in
@@ -26,6 +27,7 @@ while (( $# > 0 )); do
     --candidate-commit) candidate_commit="${2:-}"; shift 2 ;;
     --output-dir) output_directory="${2:-}"; shift 2 ;;
     --require-approved-replay) require_approved_replay=1; shift ;;
+    --require-approved-rollout) require_approved_rollout=1; shift ;;
     --replace) replace_existing=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
@@ -58,6 +60,7 @@ names=(
   latency-lipsync
   runtime-resilience
   replay-comparison
+  rollout-observation
 )
 for name in "${names[@]}"; do
   if [[ ! -s "${draft_directory}/${name}.json" ]]; then
@@ -100,6 +103,8 @@ for name in "${names[@]}"; do
 done
 /usr/bin/plutil -replace candidateCommit -string "${candidate_commit}" \
   "${temporary_directory}/replay-comparison.json"
+/usr/bin/plutil -replace candidateCommit -string "${candidate_commit}" \
+  "${temporary_directory}/rollout-observation.json"
 
 finalize_reference() {
   local report="$1"
@@ -167,17 +172,29 @@ while (( index < comparison_count )); do
   index="$(( index + 1 ))"
 done
 
+rollout="${temporary_directory}/rollout-observation.json"
+finalize_reference "${rollout}" shadowRehearsal.candidateDecisionLog \
+  "shadow rehearsal candidate decision log"
+finalize_reference "${rollout}" supervisedService.observationLog \
+  "supervised service observation log"
+finalize_reference "${rollout}" planningCenter.cueTrace \
+  "Planning Center cue trace"
+
 verify_arguments=(
   --external-failover "${external}"
   --latency-lipsync "${latency}"
   --runtime-resilience "${runtime}"
   --replay-comparison "${replay}"
+  --rollout-observation "${rollout}"
   --expected-manifest "${manifest_path}"
   --expected-candidate-commit "${candidate_commit}"
   --expected-phase "${phase}"
 )
 if (( require_approved_replay )); then
   verify_arguments+=(--require-approved-replay)
+fi
+if (( require_approved_rollout )); then
+  verify_arguments+=(--require-approved-rollout)
 fi
 "${0:A:h}/verify-production-evidence.sh" "${verify_arguments[@]}" >/dev/null
 

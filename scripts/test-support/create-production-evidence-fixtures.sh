@@ -34,6 +34,19 @@ production_fixture_attachment() {
   REPLY="${path}"
 }
 
+production_fixture_planning_center_cue_trace() {
+  local path="$1"
+  {
+    print -r -- '{"details":{"cueCount":"6","itemCount":"8","planID":"fixture-plan-001","serviceTypeID":"fixture-service-type"},"kind":"planning-center-plan-loaded","message":"Fixture service loaded from Planning Center","severity":"info","timestampMs":1785160800000}'
+    print -r -- '{"details":{"cueID":"cue-1","cueIndex":"0","planID":"fixture-plan-001","scene":"preService","source":"timed plan"},"kind":"planning-center-scene-applied","message":"Doors mapped to Pre-Service","severity":"info","timestampMs":1785161400000}'
+    print -r -- '{"details":{"cueID":"cue-2","cueIndex":"1","planID":"fixture-plan-001","scene":"worship","source":"timed plan"},"kind":"planning-center-scene-applied","message":"Opening Song mapped to Worship","severity":"info","timestampMs":1785162000000}'
+    print -r -- '{"details":{"cueID":"cue-3","cueIndex":"2","planID":"fixture-plan-001","scene":"sermon","source":"operator"},"kind":"planning-center-scene-applied","message":"Welcome mapped to Sermon","severity":"info","timestampMs":1785162600000}'
+    print -r -- '{"details":{"cueID":"cue-4","cueIndex":"3","planID":"fixture-plan-001","scene":"worship","source":"timed plan"},"kind":"planning-center-scene-applied","message":"Song mapped to Worship","severity":"info","timestampMs":1785163200000}'
+    print -r -- '{"details":{"cueID":"cue-5","cueIndex":"4","planID":"fixture-plan-001","scene":"sermon","source":"timed plan"},"kind":"planning-center-scene-applied","message":"Message mapped to Sermon","severity":"info","timestampMs":1785163800000}'
+    print -r -- '{"details":{"cueID":"cue-6","cueIndex":"5","planID":"fixture-plan-001","scene":"postService","source":"timed plan"},"kind":"planning-center-scene-applied","message":"Dismissal mapped to Post-Service","severity":"info","timestampMs":1785164400000}'
+  } > "${path}"
+}
+
 production_fixture_replay_metrics() {
   local path="$1"
   local crc="$2"
@@ -296,4 +309,59 @@ create_production_evidence_fixtures() {
   /usr/bin/plutil -convert json -o "${json}" "${plist}"
   /bin/rm "${plist}"
   production_evidence_paths[replay-comparison]="${json}"
+
+  plist="${root}/rollout-observation.plist"
+  json="${root}/rollout-observation.json"
+  production_fixture_base_report "${plist}" rollout-observation "${manifest_sha}"
+  /usr/bin/plutil -insert reviewer -string "Fixture Rollout Reviewer" "${plist}"
+  /usr/bin/plutil -insert findings -string \
+    "Full SHADOW rehearsal, supervised service, and Planning Center cue review completed without blocking issues." \
+    "${plist}"
+  /usr/bin/plutil -insert decision -string approved "${plist}"
+  /usr/bin/plutil -insert candidateCommit -string 0123456789abcdef0123456789abcdef01234567 \
+    "${plist}"
+
+  /usr/bin/plutil -insert shadowRehearsal -json '{}' "${plist}"
+  /usr/bin/plutil -insert shadowRehearsal.completedAtUTC -string 2026-07-26T16:00:00Z "${plist}"
+  /usr/bin/plutil -insert shadowRehearsal.fullServiceObserved -bool true "${plist}"
+  /usr/bin/plutil -insert shadowRehearsal.automationAppliedToProgram -bool false "${plist}"
+  /usr/bin/plutil -insert shadowRehearsal.operatorComparisonCompleted -bool true "${plist}"
+  /usr/bin/plutil -insert shadowRehearsal.blockingIssueCount -integer 0 "${plist}"
+  production_fixture_attachment "${root}" shadow-candidate-decisions.jsonl
+  production_evidence_attachments[shadow-candidate-decisions]="${REPLY}"
+  production_fixture_add_reference "${plist}" shadowRehearsal.candidateDecisionLog "${REPLY}"
+
+  /usr/bin/plutil -insert supervisedService -json '{}' "${plist}"
+  /usr/bin/plutil -insert supervisedService.completedAtUTC -string 2026-07-27T16:00:00Z "${plist}"
+  /usr/bin/plutil -insert supervisedService.fullServiceObserved -bool true "${plist}"
+  /usr/bin/plutil -insert supervisedService.automationEnabled -bool true "${plist}"
+  /usr/bin/plutil -insert supervisedService.humanOperatorPresent -bool true "${plist}"
+  /usr/bin/plutil -insert supervisedService.safeControlAvailable -bool true "${plist}"
+  /usr/bin/plutil -insert supervisedService.freezeControlAvailable -bool true "${plist}"
+  /usr/bin/plutil -insert supervisedService.manualOverrideAvailable -bool true "${plist}"
+  /usr/bin/plutil -insert supervisedService.missingSpeechEvents -integer 0 "${plist}"
+  /usr/bin/plutil -insert supervisedService.clippingEvents -integer 0 "${plist}"
+  /usr/bin/plutil -insert supervisedService.unexplainedCriticalIncidentCount -integer 0 "${plist}"
+  /usr/bin/plutil -insert supervisedService.operatorInterventionCount -integer 2 "${plist}"
+  /usr/bin/plutil -insert supervisedService.allInterventionsReviewed -bool true "${plist}"
+  production_fixture_attachment "${root}" supervised-service-observations.txt
+  production_evidence_attachments[supervised-service-observations]="${REPLY}"
+  production_fixture_add_reference "${plist}" supervisedService.observationLog "${REPLY}"
+
+  /usr/bin/plutil -insert planningCenter -json '{}' "${plist}"
+  /usr/bin/plutil -insert planningCenter.realServicePlanUsed -bool true "${plist}"
+  /usr/bin/plutil -insert planningCenter.planID -string fixture-plan-001 "${plist}"
+  /usr/bin/plutil -insert planningCenter.itemCount -integer 8 "${plist}"
+  /usr/bin/plutil -insert planningCenter.appliedCueCount -integer 6 "${plist}"
+  /usr/bin/plutil -insert planningCenter.operatorMappingsReviewed -bool true "${plist}"
+  /usr/bin/plutil -insert planningCenter.unexpectedSceneChangeCount -integer 0 "${plist}"
+  /usr/bin/plutil -insert planningCenter.offlineFallbackVerified -bool true "${plist}"
+  attachment="${root}/planning-center-cue-trace.jsonl"
+  production_fixture_planning_center_cue_trace "${attachment}"
+  production_evidence_attachments[planning-center-cue-trace]="${attachment}"
+  production_fixture_add_reference "${plist}" planningCenter.cueTrace "${attachment}"
+
+  /usr/bin/plutil -convert json -o "${json}" "${plist}"
+  /bin/rm "${plist}"
+  production_evidence_paths[rollout-observation]="${json}"
 }

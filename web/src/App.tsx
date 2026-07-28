@@ -72,7 +72,7 @@ export default function App() {
               <ChannelStrip key={c.id} id={c.id} />
             ))}
           </main>
-          <aside aria-label="Broadcast master and automation details" className="order-1 flex max-h-[44vh] w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-[#1c1f27] bg-[#0c0d11] p-3 lg:order-2 lg:max-h-none lg:w-[340px] lg:border-b-0 lg:border-l">
+          <aside aria-label="Broadcast master and automation details" className="order-1 flex max-h-[30vh] w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-[#1c1f27] bg-[#0c0d11] p-3 lg:order-2 lg:max-h-none lg:w-[340px] lg:border-b-0 lg:border-l">
             <MasterPanel />
             <ChannelDetail />
             <BrainLog />

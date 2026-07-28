@@ -17,7 +17,7 @@ export default function ChannelDetail() {
 
   if (!ch) {
     return (
-      <div className="rounded-lg border border-[#1c1f27] bg-[#101218] p-3 text-[11px] text-zinc-600">
+      <div className="rounded-lg border border-[#1c1f27] bg-[#101218] p-3 text-[11px] text-zinc-500">
         Select a channel to edit its input section, sends, and routing.
       </div>
     )
@@ -34,7 +34,7 @@ export default function ChannelDetail() {
         <span className="text-xs font-semibold uppercase tracking-wider text-zinc-200">
           {PROFILES[ch.cls].label} <span className="text-zinc-600">· {ch.name}</span>
         </span>
-        <button onClick={() => select(null)} aria-label={`Close details for ${ch.name}`} className="text-zinc-600 hover:text-zinc-300">×</button>
+        <button onClick={() => select(null)} aria-label={`Close details for ${ch.name}`} className="text-zinc-500 hover:text-zinc-300">×</button>
       </div>
 
       {/* input section */}
@@ -91,7 +91,7 @@ export default function ChannelDetail() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-2">
-      <div className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">{title}</div>
+      <div className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">{title}</div>
       <div className="flex flex-col gap-1.5">{children}</div>
     </div>
   )

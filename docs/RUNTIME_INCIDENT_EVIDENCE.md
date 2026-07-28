@@ -41,6 +41,12 @@ and storage failures rerun conditions. Run disruptive recovery drills outside th
 clean acceptance window and preserve them in the separate
 `runtime-resilience` evidence report.
 
+Planning Center plan loads and applied scenes are informational events. A supervised
+service's journal snapshot can also serve as the rollout-observation cue trace:
+`verify-production-evidence.sh` binds those events to the reported plan ID, plan item
+count, applied cue count, and rollout timestamps. Planning Center credentials are not
+logged.
+
 The staged runner uses the standard journal path automatically. A controlled
 commissioning environment may set `AUTOMIX_INCIDENT_JOURNAL_PATH` to the exact
 journal being observed.

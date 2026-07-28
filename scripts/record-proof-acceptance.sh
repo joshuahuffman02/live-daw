@@ -10,6 +10,7 @@ usage() {
   print -u2 "     --runtime-incidents PATH"
   print -u2 "     --external-failover PATH --latency-lipsync PATH"
   print -u2 "     --runtime-resilience PATH --replay-comparison PATH"
+  print -u2 "     --rollout-observation PATH"
   print -u2 "     --output-root DIR --notes TEXT"
   print -u2 "     [--sermon-acceptance-dir DIR]"
 }
@@ -32,6 +33,7 @@ external_failover_path=""
 latency_lipsync_path=""
 runtime_resilience_path=""
 replay_comparison_path=""
+rollout_observation_path=""
 output_root=""
 notes=""
 sermon_acceptance_directory=""
@@ -56,6 +58,7 @@ while (( $# > 0 )); do
     --latency-lipsync) latency_lipsync_path="${2:-}"; shift 2 ;;
     --runtime-resilience) runtime_resilience_path="${2:-}"; shift 2 ;;
     --replay-comparison) replay_comparison_path="${2:-}"; shift 2 ;;
+    --rollout-observation) rollout_observation_path="${2:-}"; shift 2 ;;
     --output-root) output_root="${2:-}"; shift 2 ;;
     --notes) notes="${2:-}"; shift 2 ;;
     --sermon-acceptance-dir) sermon_acceptance_directory="${2:-}"; shift 2 ;;
@@ -108,6 +111,7 @@ evidence_paths=(
   latency-lipsync "${latency_lipsync_path}"
   runtime-resilience "${runtime_resilience_path}"
   replay-comparison "${replay_comparison_path}"
+  rollout-observation "${rollout_observation_path}"
 )
 for label path in "${(@kv)evidence_paths}"; do
   if [[ ! -s "${path}" ]]; then
@@ -177,12 +181,13 @@ production_evidence_arguments=(
   --latency-lipsync "${latency_lipsync_path}"
   --runtime-resilience "${runtime_resilience_path}"
   --replay-comparison "${replay_comparison_path}"
+  --rollout-observation "${rollout_observation_path}"
   --expected-manifest "${manifest_path}"
   --expected-candidate-commit "${source_commit}"
   --expected-phase "${phase}"
 )
 if [[ "${decision}" == "approved" ]]; then
-  production_evidence_arguments+=(--require-approved-replay)
+  production_evidence_arguments+=(--require-approved-replay --require-approved-rollout)
 fi
 "${script_directory}/verify-production-evidence.sh" \
   "${production_evidence_arguments[@]}"
@@ -222,7 +227,7 @@ trap cleanup EXIT INT TERM
 acceptance_plist="${bundle_temp}/acceptance.plist"
 acceptance_json="${bundle_temp}/acceptance.json"
 /usr/bin/plutil -create xml1 "${acceptance_plist}"
-/usr/bin/plutil -insert formatVersion -integer 1 "${acceptance_plist}"
+/usr/bin/plutil -insert formatVersion -integer 2 "${acceptance_plist}"
 /usr/bin/plutil -insert bundleID -string "$(/usr/bin/uuidgen)" "${acceptance_plist}"
 /usr/bin/plutil -insert phase -string "${phase}" "${acceptance_plist}"
 /usr/bin/plutil -insert decision -string "${decision}" "${acceptance_plist}"

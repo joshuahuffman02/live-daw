@@ -51,7 +51,7 @@ export default function ConsoleBar() {
       onClick={() => setMonitor(src)}
       aria-pressed={monitorSource === src}
       className={`rounded px-2 py-0.5 text-[10px] font-medium transition ${
-        monitorSource === src ? 'bg-cyan-500 text-black' : on === false ? 'bg-[#15181f] text-zinc-600' : 'bg-[#1a1d25] text-zinc-300 hover:bg-[#222631]'
+        monitorSource === src ? 'bg-cyan-500 text-black' : on === false ? 'bg-[#15181f] text-zinc-500' : 'bg-[#1a1d25] text-zinc-300 hover:bg-[#222631]'
       }`}
     >{label}</button>
   )
@@ -107,12 +107,12 @@ export default function ConsoleBar() {
               aria-pressed={monitorSource === m.id}
               className={`flex w-20 flex-col rounded border px-1.5 py-1 text-left ${monitorSource === m.id ? 'border-cyan-500/60 bg-cyan-500/10' : 'border-[#1c1f27] bg-[#0e1015] hover:border-[#2a2e37]'}`}>
               <span className="text-[10px] font-medium text-zinc-200">{m.name}</span>
-              <span className="tnum text-[9px] text-zinc-400">{m.momentaryLufs <= -90 ? '—' : m.momentaryLufs.toFixed(1)} <span className="text-zinc-600">/ {m.targetLufs}</span></span>
+              <span className="tnum text-[9px] text-zinc-400">{m.momentaryLufs <= -90 ? '—' : m.momentaryLufs.toFixed(1)} <span className="text-zinc-500">/ {m.targetLufs}</span></span>
             </button>
           ))}
         </div>
         <div className="mt-1 flex items-center gap-1">
-          <span className="text-[9px] text-zinc-600">N-1 guest:</span>
+          <span className="text-[10px] text-zinc-500">N-1 guest:</span>
           <select value={mixMinusId ?? 0} onChange={(e) => { const v = +e.target.value; setMixMinus(v === 0 ? null : v) }}
             aria-label="Mix-minus guest channel"
             className="rounded border border-[#232733] bg-[#0c0d11] px-1 py-0.5 text-[10px] text-zinc-300">
@@ -178,7 +178,7 @@ export default function ConsoleBar() {
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex shrink-0 flex-col gap-1 border-r border-[#1c1f27] pr-3 last:border-r-0">
-      <span className="text-[9px] uppercase tracking-wider text-zinc-600">{title}</span>
+      <span className="text-[10px] uppercase tracking-wider text-zinc-500">{title}</span>
       {children}
     </div>
   )

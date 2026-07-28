@@ -21,39 +21,45 @@ export default function MasterPanel() {
         </div>
       </div>
 
-      {/* chain */}
-      <div className="mb-3 flex items-center gap-1 text-[9px] text-zinc-500">
-        <Chip>Glue {m.glueGrDb.toFixed(1)}</Chip>
-        <Arrow />
-        <Chip>Master EQ</Chip>
-        <Arrow />
-        <Chip warn={m.limiterGrDb < -0.3}>Limiter {m.limiterGrDb.toFixed(1)}</Chip>
-      </div>
+      <div className="md:grid md:grid-cols-[minmax(280px,0.9fr)_minmax(280px,1.1fr)] md:gap-5 lg:block">
+        <div>
+          {/* chain */}
+          <div className="mb-3 flex items-center gap-1 text-[9px] text-zinc-500">
+            <Chip>Glue {m.glueGrDb.toFixed(1)}</Chip>
+            <Arrow />
+            <Chip>Master EQ</Chip>
+            <Arrow />
+            <Chip warn={m.limiterGrDb < -0.3}>Limiter {m.limiterGrDb.toFixed(1)}</Chip>
+          </div>
 
-      <LoudnessMeter target={scene.masterTargetLufs} />
-
-      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 tnum text-[11px]">
-        <Row label="Integrated" value={fmt(m.integratedLufs)} unit="LUFS" big />
-        <Row label="Target" value={scene.masterTargetLufs.toFixed(0)} unit="LUFS" accent="text-amber-400" />
-        <Row label="Short-term" value={fmt(m.shortLufs)} unit="LUFS" />
-        <Row label="Momentary" value={fmt(m.momentaryLufs)} unit="LUFS" />
-        <Row label="True Peak" value={fmt(m.truePeakDb)} unit="dBTP" accent={m.truePeakDb > -1 ? 'text-red-400' : 'text-emerald-400'} />
-        <Row label="Limiter GR" value={m.limiterGrDb.toFixed(1)} unit="dB" accent={m.limiterGrDb < -0.3 ? 'text-cyan-400' : 'text-zinc-400'} />
-      </div>
-
-      {/* phase correlation — mono compatibility for phone listeners */}
-      <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between text-[9px] uppercase tracking-wider text-zinc-600">
-          <span>Phase correlation</span>
-          <span className={`tnum ${m.correlation < 0 ? 'text-red-400' : m.correlation < 0.4 ? 'text-amber-400' : 'text-emerald-400'}`}>{m.correlation.toFixed(2)}</span>
+          <LoudnessMeter target={scene.masterTargetLufs} />
         </div>
-        <Correlation value={m.correlation} />
-      </div>
 
-      {/* master RTA */}
-      <div className="mt-3">
-        <div className="mb-1 text-[9px] uppercase tracking-wider text-zinc-600">Master RTA</div>
-        <SpectrumEq analyser={engine.recAnalyser} bands={[]} width={300} height={48} />
+        <div className="min-w-0">
+          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 tnum text-[11px] md:mt-0 lg:mt-3">
+            <Row label="Integrated" value={fmt(m.integratedLufs)} unit="LUFS" big />
+            <Row label="Target" value={scene.masterTargetLufs.toFixed(0)} unit="LUFS" accent="text-amber-400" />
+            <Row label="Short-term" value={fmt(m.shortLufs)} unit="LUFS" />
+            <Row label="Momentary" value={fmt(m.momentaryLufs)} unit="LUFS" />
+            <Row label="True Peak" value={fmt(m.truePeakDb)} unit="dBTP" accent={m.truePeakDb > -1 ? 'text-red-400' : 'text-emerald-400'} />
+            <Row label="Limiter GR" value={m.limiterGrDb.toFixed(1)} unit="dB" accent={m.limiterGrDb < -0.3 ? 'text-cyan-400' : 'text-zinc-400'} />
+          </div>
+
+          {/* phase correlation — mono compatibility for phone listeners */}
+          <div className="mt-3">
+            <div className="mb-1 flex items-center justify-between text-[9px] uppercase tracking-wider text-zinc-500">
+              <span>Phase correlation</span>
+              <span className={`tnum ${m.correlation < 0 ? 'text-red-400' : m.correlation < 0.4 ? 'text-amber-400' : 'text-emerald-400'}`}>{m.correlation.toFixed(2)}</span>
+            </div>
+            <Correlation value={m.correlation} />
+          </div>
+
+          {/* master RTA */}
+          <div className="mt-3">
+            <div className="mb-1 text-[9px] uppercase tracking-wider text-zinc-500">Master RTA</div>
+            <SpectrumEq analyser={engine.recAnalyser} bands={[]} width={300} height={48} />
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -75,7 +81,7 @@ function Row({ label, value, unit, accent = 'text-zinc-200', big }: { label: str
     <div className="flex items-baseline justify-between">
       <span className="text-zinc-500">{label}</span>
       <span className={`${accent} ${big ? 'text-sm font-semibold' : ''}`}>
-        {value}<span className="ml-0.5 text-[9px] text-zinc-600">{unit}</span>
+        {value}<span className="ml-0.5 text-[9px] text-zinc-500">{unit}</span>
       </span>
     </div>
   )
