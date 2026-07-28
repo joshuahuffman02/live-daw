@@ -25,12 +25,14 @@ jobs:
 
       - name: Lint deployment contracts
         run: |
-          zsh -n scripts/*.sh
+          zsh -n scripts/*.sh scripts/test-support/*.sh
           plutil -lint native/AutoMixNative/AutoMixNative.entitlements
           plutil -lint native/launchd/com.livedaw.automixnative.plist.template
 
-      - name: Verify signed acceptance contract
-        run: scripts/test-proof-acceptance.sh
+      - name: Verify production and signed acceptance contracts
+        run: |
+          scripts/test-production-evidence.sh
+          scripts/test-proof-acceptance.sh
 
       - name: Verify generated Xcode project
         env:
