@@ -1,6 +1,12 @@
 #!/bin/zsh
 set -euo pipefail
 
+TRAPZERR() {
+  local failure_code="$?"
+  print -u2 "production evidence finalization failed: status=${failure_code} at ${funcfiletrace[1]:-unknown}"
+  return "${failure_code}"
+}
+
 usage() {
   print -u2 "Usage:"
   print -u2 "  $0 --draft-dir DIR --manifest PATH --candidate-commit SHA --output-dir DIR"
