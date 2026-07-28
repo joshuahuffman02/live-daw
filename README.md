@@ -1,6 +1,6 @@
 # Live DAW — Autonomous Church Broadcast Mixer
 
-Four layers live in this repo:
+Five layers live in this repo:
 
 1. **[`SPEC.md`](SPEC.md)** — the acceptance contract for the shippable product: a
    plugin-free C++/JUCE appliance that takes a Dante split and autonomously builds a
@@ -30,6 +30,12 @@ Four layers live in this repo:
      dual pre/post metering, a live readout of *what the AI is doing and why*, manual
      override on every parameter, a global **FREEZE**, a **hard bypass to a safe mix**,
      and a Planning-Center-style **scene engine** that drives the mix from a service plan.
+
+5. **[`failover/`](failover/)** — the independent, fail-closed external
+   primary/backup supervisor. It validates the native app's heartbeat, grants only a
+   short renewable primary lease, starts and stops on backup, and requires an
+   explicit operator return after renewed health proof. It still requires the real
+   normally-backup relay, isolated encoder inputs, and venue kill tests.
 
 The requirement-by-requirement distinction between locally verified software and
 venue-only production evidence is maintained in

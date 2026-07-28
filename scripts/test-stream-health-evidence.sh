@@ -73,4 +73,8 @@ expect_rejection "health evidence paired with the wrong rollout phase"
 /usr/bin/plutil -replace scene -string sermon "${manifest}"
 
 verify >/dev/null
+
+/usr/bin/env python3 \
+  "${script_directory}/../failover/test_automix_failover_supervisor.py"
+
 print "stream-health-evidence self-test PASS"

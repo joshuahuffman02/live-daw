@@ -93,6 +93,41 @@ booleans to be true, and reject a timestamp that stops advancing. Keep this
 unauthenticated read-only URL on the isolated management network; never expose the
 monitor server to the public internet.
 
+### Independent reference supervisor
+
+The repo includes a deployable, standard-library-only reference controller at
+[`failover/automix_failover_supervisor.py`](../failover/automix_failover_supervisor.py).
+It runs outside AutoMix, defaults to backup on every start and shutdown, validates the
+entire heartbeat contract, rejects redirects and non-advancing timestamps, and
+requires three fresh advancing samples before an explicit operator return can
+succeed. Healthy audio never clears the backup latch automatically.
+
+The supervisor drives the relay through a renewable primary lease rather than a
+one-time “select A” command. The default lease is 1.5 seconds. Every poll while
+primary is selected must produce both a valid heartbeat and an acknowledgement
+bound to the exact relay request. A failed health check or lease acknowledgement
+immediately commands latched backup and stops renewing primary. If the supervisor,
+its host, or its network disappears, the relay's local monotonic lease expires and
+the de-energized hardware state selects backup without waiting for a failure command.
+A monotonic controller watchdog also refuses to renew a lease when too little time
+remains for the relay request, so a suspended or blocked controller cannot resume and
+silently reassert primary after the hardware may already have selected backup.
+Operator return requests are bound to their issue time and rejected when they predate
+the current backup latch, preventing a command queued before a stall from clearing
+the new fault state after the controller resumes.
+
+The versioned relay request/acknowledgement contract, secure deployment rules,
+status/journal paths, and operator commands are specified in
+[`failover/README.md`](../failover/README.md). The deliberate return command is:
+
+```bash
+python3 automix_failover_supervisor.py return-primary
+```
+
+It is carried over an owner-only local Unix socket and is rejected unless renewed
+health proof is current and the relay confirms the physical selection. Editing the
+status JSON cannot change the selected path.
+
 The endpoint makes the application-side heartbeat concrete. It does not replace the
 normally de-energized relay/encoder failover, primary carrier sensing, backup mix,
 or real kill tests.
