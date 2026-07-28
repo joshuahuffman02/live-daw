@@ -294,15 +294,19 @@ struct WavMetadata: Codable, Equatable, Sendable {
     }
 
     private static func uint16LE(_ data: Data, at offset: Int) -> UInt16 {
-        UInt16(data[data.index(data.startIndex, offsetBy: offset)]) |
-            (UInt16(data[data.index(data.startIndex, offsetBy: offset + 1)]) << 8)
+        let start = data.startIndex
+        let byte0 = UInt16(data[data.index(start, offsetBy: offset)])
+        let byte1 = UInt16(data[data.index(start, offsetBy: offset + 1)])
+        return byte0 | (byte1 << 8)
     }
 
     private static func uint32LE(_ data: Data, at offset: Int) -> UInt32 {
-        UInt32(data[data.index(data.startIndex, offsetBy: offset)]) |
-            (UInt32(data[data.index(data.startIndex, offsetBy: offset + 1)]) << 8) |
-            (UInt32(data[data.index(data.startIndex, offsetBy: offset + 2)]) << 16) |
-            (UInt32(data[data.index(data.startIndex, offsetBy: offset + 3)]) << 24)
+        let start = data.startIndex
+        let byte0 = UInt32(data[data.index(start, offsetBy: offset)])
+        let byte1 = UInt32(data[data.index(start, offsetBy: offset + 1)])
+        let byte2 = UInt32(data[data.index(start, offsetBy: offset + 2)])
+        let byte3 = UInt32(data[data.index(start, offsetBy: offset + 3)])
+        return byte0 | (byte1 << 8) | (byte2 << 16) | (byte3 << 24)
     }
 }
 
