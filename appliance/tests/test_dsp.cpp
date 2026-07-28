@@ -637,9 +637,12 @@ static void testBrainMeasurementDrivenGainStaging() {
     // An idle instrument channel teaches the floor without becoming active.
     brain.pushChannelMeasurement(2, -72.0f, -65.0f, -100.0f);
 
-    brain.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-    brain.stop();
+    // Exercise exactly 1.1 seconds at the 20 Hz control rate. Wall-clock thread
+    // scheduling is covered separately by the live brain/watchdog test and must not
+    // make these deterministic rate assertions depend on runner load.
+    for (int tick = 0; tick < 22; ++tick) {
+        brain.runOneOfflineControlTick();
+    }
 
     CHECK(brain.channelActive(0), "weak but useful assigned speech is detected as active");
     CHECK(brain.currentAutoTrimDb(0) >= 4.0f && brain.currentAutoTrimDb(0) <= 6.5f,
@@ -665,14 +668,17 @@ static void testBrainMasterLoudnessControl() {
     CHECK(g_allocationsWhileGuarded.load(std::memory_order_relaxed) == 0,
           "audio-to-brain master measurement publish performs no heap allocations");
 
-    brain.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    for (int tick = 0; tick < 22; ++tick) {
+        brain.runOneOfflineControlTick();
+    }
     const float raised = brain.currentAutoLoudnessTrimDb();
     CHECK(raised >= 0.8f && raised <= 1.3f,
           "low program loudness raises master trim at no more than 1 dB/s");
 
     brain.pushMasterMeasurement(-8.0f, -8.0f, 0.0f, true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    for (int tick = 0; tick < 22; ++tick) {
+        brain.runOneOfflineControlTick();
+    }
     const float lowered = brain.currentAutoLoudnessTrimDb();
     CHECK(lowered < raised - 0.8f,
           "high program loudness slowly unwinds the master trim");
@@ -680,18 +686,19 @@ static void testBrainMasterLoudnessControl() {
     brain.setFrozen(true);
     const float frozen = brain.currentAutoLoudnessTrimDb();
     brain.pushMasterMeasurement(-30.0f, -30.0f, 0.0f, true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    for (int tick = 0; tick < 5; ++tick) {
+        brain.runOneOfflineControlTick();
+    }
     CHECK(std::fabs(brain.currentAutoLoudnessTrimDb() - frozen) < 0.01f,
           "FREEZE holds the current loudness correction");
-    brain.stop();
 
     app::BrainThread limited;
     limited.configure(0, 96000.0, {});
     limited.setScene(app::Scene::Sermon);
     limited.pushMasterMeasurement(-24.0f, -24.0f, 4.0f, true);
-    limited.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(550));
-    limited.stop();
+    for (int tick = 0; tick < 11; ++tick) {
+        limited.runOneOfflineControlTick();
+    }
     CHECK(limited.currentAutoLoudnessTrimDb() <= -0.4f,
           "heavy limiter activity makes the loudness controller back away");
 }
