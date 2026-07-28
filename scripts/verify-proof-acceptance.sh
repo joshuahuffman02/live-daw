@@ -1,6 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
+script_directory="${0:A:h}"
+
 usage() {
   print -u2 "Usage:"
   print -u2 "  $0 --acceptance-dir DIR --trusted-signers FILE"
@@ -113,6 +115,7 @@ fi
 
 manifest_hash_matched=0
 typeset -A seen_labels
+typeset -A verified_evidence_paths
 integer index=0
 while (( index < evidence_count )); do
   prefix="evidence.${index}"
@@ -130,6 +133,7 @@ while (( index < evidence_count )); do
     exit 6
   fi
   seen_labels[${label}]=1
+  verified_evidence_paths[${label}]="${path}"
 
   observed_sha="$(/usr/bin/shasum -a 256 "${path}" | /usr/bin/awk '{print $1}')"
   observed_bytes="$(/usr/bin/stat -f '%z' "${path}")"
@@ -183,5 +187,20 @@ if [[ -n "${expected_manifest_sha}" && "${manifest_hash_matched}" != "1" ]]; the
   print -u2 "Acceptance does not bind the supplied full-check manifest."
   exit 6
 fi
+
+production_evidence_arguments=(
+  --external-failover "${verified_evidence_paths[external-failover]}"
+  --latency-lipsync "${verified_evidence_paths[latency-lipsync]}"
+  --runtime-resilience "${verified_evidence_paths[runtime-resilience]}"
+  --replay-comparison "${verified_evidence_paths[replay-comparison]}"
+  --expected-manifest "${verified_evidence_paths[full-check-manifest]}"
+  --expected-candidate-commit "${source_commit}"
+  --expected-phase "${phase}"
+)
+if [[ "${decision}" == "approved" ]]; then
+  production_evidence_arguments+=(--require-approved-replay)
+fi
+"${script_directory}/verify-production-evidence.sh" \
+  "${production_evidence_arguments[@]}" >/dev/null
 
 print "Verified ${phase} acceptance: decision=${decision} reviewer=${reviewer} signer=${signer_identity} commit=${source_commit}"

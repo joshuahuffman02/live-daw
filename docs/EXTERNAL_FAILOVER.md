@@ -66,4 +66,6 @@ Acceptance criteria:
 Record the switch model, wiring diagram, encoder inputs, heartbeat mechanism, measured
 switch time, peak/loudness results, and test recording in the venue profile's
 validation bundle. Hardware proof is not complete until these tests pass on the real
-rig.
+rig. Encode the results and attachment hashes in the `external-failover` JSON
+contract in `PRODUCTION_EVIDENCE_FORMAT.md`; signed acceptance rejects a free-form
+or semantically failing substitute.

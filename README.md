@@ -249,6 +249,10 @@ contract in [`docs/EXTERNAL_FAILOVER.md`](docs/EXTERNAL_FAILOVER.md); the in-app
 button cannot cover loss of its own host.
 End-to-end A/V calibration and clock-drift proof follow
 [`docs/LATENCY_AND_LIPSYNC.md`](docs/LATENCY_AND_LIPSYNC.md).
+The four external review artifacts use the hash-closed, manifest/commit-bound JSON
+contract in
+[`docs/PRODUCTION_EVIDENCE_FORMAT.md`](docs/PRODUCTION_EVIDENCE_FORMAT.md); both
+acceptance recording and later verification re-run its semantic gates.
 
 ### Native/DSP verification
 

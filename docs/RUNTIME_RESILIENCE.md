@@ -83,3 +83,8 @@ Before go-live, record evidence for each:
 5. Kill the app abnormally; verify LaunchAgent relaunch and session/capture resume.
 6. Click operator Stop; verify no automatic engine restart.
 7. Run every external-failover kill test and remain on backup until manual return.
+
+Record all seven results and their attachments in the `runtime-resilience` JSON
+contract in `PRODUCTION_EVIDENCE_FORMAT.md`. The signed acceptance path requires each
+named drill, rejects duplicates or substitutions, and checks the critical
+test-specific observations rather than accepting an opaque attachment.

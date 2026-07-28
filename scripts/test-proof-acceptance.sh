@@ -17,6 +17,9 @@ bundle="${fixture_root}/sermon-acceptance"
 print -r -- "operator@example.test $(<"${key_path}.pub")" > "${trusted_signers}"
 /bin/mkdir "${bundle}"
 
+source "${script_directory}/test-support/create-production-evidence-fixtures.sh"
+create_production_evidence_fixtures "${fixture_root}/production-evidence"
+
 labels=(
   build-metadata
   full-check-manifest
@@ -35,6 +38,10 @@ for label in "${labels[@]}"; do
     /usr/bin/plutil -create xml1 "${path}"
     /usr/bin/plutil -insert commit -string 0123456789abcdef0123456789abcdef01234567 "${path}"
     /usr/bin/plutil -convert json "${path}"
+  elif [[ -n "${production_evidence_paths[${label}]:-}" ]]; then
+    path="${production_evidence_paths[${label}]}"
+  elif [[ "${label}" == "full-check-manifest" ]]; then
+    path="${production_evidence_attachments[full-check-manifest]}"
   else
     print -r -- "fixture ${label}" > "${path}"
   fi

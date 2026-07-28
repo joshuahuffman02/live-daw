@@ -81,11 +81,14 @@ For an approved sermon, bind the exact proof and supporting evidence:
 ```
 
 The command independently re-verifies the notarized app, full-check manifest,
-two-hour recording, encoder/egress observations, and all required evidence files. It
-also requires the release build metadata to bind the accepted source commit, hashes
-the complete evidence index into `acceptance.json`, signs that exact JSON with the
-operator key, and verifies the result against the venue trust file. A signed
-`rejected` decision is retained just as durably but cannot unlock worship.
+two-hour recording, encoder/egress observations, and the semantic production-evidence
+contract in `PRODUCTION_EVIDENCE_FORMAT.md`. It checks that failover, A/V sync/drift,
+recovery drills, and replay results pass their numeric and behavioral gates; hashes
+every referenced attachment; binds all four reports to the selected manifest; and
+binds the replay candidate to the release source commit. It then hashes the complete
+evidence index into `acceptance.json`, signs that exact JSON with the operator key,
+and verifies the result against the venue trust file. A signed `rejected` decision is
+retained just as durably but cannot unlock worship.
 
 ## Phase 2 — worship
 

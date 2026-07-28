@@ -80,6 +80,14 @@ For every algorithm change:
    Compare a complete service before disabling SHADOW and enabling one automation
    family at a time under supervision.
 
+Record the comparison, exact commits/CRC32 values, outputs, metrics, decision logs,
+reference mix, checks, findings, and disposition in the `replay-comparison` JSON
+contract in `PRODUCTION_EVIDENCE_FORMAT.md`. Production approval verifies that the
+candidate commit is the exact signed source commit; each corpus entry has matching
+source CRC and render configuration; the attached evaluator metrics and decision-log
+lengths are internally consistent; representative scenario coverage is present; and
+every safety and blind listening check is true.
+
 The replay corpus should include sermons, prayers, walk-in/out playback, quiet
 speakers, loud speakers, panel/two-mic handoffs, worship with dense instrumentation,
 intentional silence, feedback/noise incidents, missing channels, and repatched roles.

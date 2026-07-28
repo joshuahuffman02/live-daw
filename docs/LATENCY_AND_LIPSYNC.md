@@ -42,4 +42,7 @@ multi-hour recording with sync events near the beginning and end:
 
 Hardware proof should preserve the two raw measurements, the final compensation,
 residual offsets, duration, clock topology, Core Audio buffer sizes, device latency
-frames, separate-output prebuffer frames, and the test recording.
+frames, separate-output prebuffer frames, and the test recording. Encode those values
+and attachment hashes in the `latency-lipsync` JSON contract in
+`PRODUCTION_EVIDENCE_FORMAT.md`; acceptance independently checks the compensation,
+residual limit, two-hour duration, and drift math.

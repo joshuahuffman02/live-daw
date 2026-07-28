@@ -165,6 +165,21 @@ if ! /usr/bin/awk -F '\t' '
 fi
 
 script_directory="${0:A:h}"
+production_evidence_arguments=(
+  --external-failover "${external_failover_path}"
+  --latency-lipsync "${latency_lipsync_path}"
+  --runtime-resilience "${runtime_resilience_path}"
+  --replay-comparison "${replay_comparison_path}"
+  --expected-manifest "${manifest_path}"
+  --expected-candidate-commit "${source_commit}"
+  --expected-phase "${phase}"
+)
+if [[ "${decision}" == "approved" ]]; then
+  production_evidence_arguments+=(--require-approved-replay)
+fi
+"${script_directory}/verify-production-evidence.sh" \
+  "${production_evidence_arguments[@]}"
+
 if [[ "${phase}" == "worship" ]]; then
   if [[ -z "${sermon_acceptance_directory}" ]]; then
     print -u2 "Worship acceptance requires --sermon-acceptance-dir."
