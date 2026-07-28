@@ -170,6 +170,113 @@ expect_rejection "a supervised service timestamp before its SHADOW rehearsal"
 /usr/bin/plutil -replace supervisedService.completedAtUTC -string 2026-07-27T16:00:00Z \
   "${production_evidence_paths[rollout-observation]}"
 
+/usr/bin/plutil -replace supervisedService.startedAtUTC -string 2026-07-26T15:59:00Z \
+  "${production_evidence_paths[rollout-observation]}"
+expect_rejection "a supervised service window that overlaps its SHADOW rehearsal"
+/usr/bin/plutil -replace supervisedService.startedAtUTC -string 2026-07-27T13:45:00Z \
+  "${production_evidence_paths[rollout-observation]}"
+
+/usr/bin/sed -i '' '1s/"programAutomationApplied":false/"programAutomationApplied":true/' \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+expect_rejection "a native SHADOW log that says candidate automation reached program"
+production_fixture_shadow_decision_log \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+
+/usr/bin/sed -i '' 's/"fixture-hd96-dante"/"simulated-hd96-dante"/g' \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+expect_rejection "a native SHADOW log from a simulated input route"
+production_fixture_shadow_decision_log \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+
+/usr/bin/sed -i '' \
+  's/"inputName":"HD96 Dante Split","inputUID":"fixture-hd96-dante"/"inputName":"Generic 64 Channel Interface","inputUID":"fixture-generic-64"/g' \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+expect_rejection "a native SHADOW log from a non-HD96/Dante production input"
+production_fixture_shadow_decision_log \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+
+/usr/bin/sed -i '' \
+  's/"outputName":"Encoder Output","outputUID":"fixture-encoder-output"/"outputName":"HD96 Dante Return","outputUID":"fixture-hd96-return"/g' \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+expect_rejection "a native SHADOW log routed back toward the console"
+production_fixture_shadow_decision_log \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+
+/usr/bin/sed -i '' 's/"programOutputLevelsDb":\[-16,-15\]/"programOutputLevelsDb":[-160,-160]/g' \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+expect_rejection "a native SHADOW log with no observable program output"
+production_fixture_shadow_decision_log \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+
+production_fixture_shadow_decision_log \
+  "${production_evidence_attachments[shadow-candidate-decisions]}" \
+  static
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+expect_rejection "a native SHADOW log with no candidate-state change"
+production_fixture_shadow_decision_log \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+
+/usr/bin/sed -i '' '50,60d' \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+expect_rejection "a native SHADOW log with a long observation gap"
+production_fixture_shadow_decision_log \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+refresh_reference \
+  "${production_evidence_paths[rollout-observation]}" \
+  shadowRehearsal.candidateDecisionLog \
+  "${production_evidence_attachments[shadow-candidate-decisions]}"
+
 print -r -- "tampered cue trace" >> \
   "${production_evidence_attachments[planning-center-cue-trace]}"
 expect_rejection "a Planning Center cue trace changed after finalization"

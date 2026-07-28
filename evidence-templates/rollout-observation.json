@@ -12,6 +12,7 @@
   "decision": "rejected",
   "candidateCommit": "0000000000000000000000000000000000000000",
   "shadowRehearsal": {
+    "startedAtUTC": "1970-01-01T00:00:00Z",
     "completedAtUTC": "1970-01-01T00:00:00Z",
     "fullServiceObserved": false,
     "automationAppliedToProgram": true,
@@ -24,6 +25,7 @@
     }
   },
   "supervisedService": {
+    "startedAtUTC": "1970-01-01T00:00:00Z",
     "completedAtUTC": "1970-01-01T00:00:00Z",
     "fullServiceObserved": false,
     "automationEnabled": false,

@@ -25,8 +25,11 @@ first because speech automation has fewer interacting sources than a worship mix
 
 ## Phase 1 — sermon
 
-1. Run one full rehearsal in SHADOW. Compare replay metrics and candidate moves with
-   the operator-approved mix; correct roles/map/settings, not the recording.
+1. Run one full rehearsal in SHADOW. Native candidate snapshots start automatically;
+   note the exact UTC window and use **Reveal** in the Automation section to preserve
+   the completed JSONL file. Compare replay metrics and candidate moves with the
+   operator-approved mix; correct roles/map/settings, not the recording. Follow
+   `SHADOW_DECISION_EVIDENCE.md`.
 2. Run a supervised sermon with automation enabled and a hand on SAFE/FREEZE.
 3. Execute the real hardware proof for at least two hours:
 
@@ -43,7 +46,8 @@ STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
    `runtime-incident-evidence.json`, `stream-health-observations.tsv`, the
    continuous-recording proof report and its raw/program segments, and the
    external-failover recording. Complete the `rollout-observation` report from the
-   full SHADOW rehearsal, supervised service observation log, and real Planning
+   full native SHADOW decision log and its exact start/completion times, supervised
+   service observation log and exact window, and real Planning
    Center cue trace. Use a snapshot of `runtime-incidents.jsonl` covering the
    supervised service; its plan-loaded and scene-applied events are parsed against
    the reported plan ID, item count, applied cue count, and rollout timestamps. The
@@ -56,7 +60,10 @@ STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
    seven-second observation gap, and at least 95% coverage of the requested window,
    as specified in `STREAM_HEALTH_EVIDENCE.md`. The recording verifier requires zero
    dropped frames, exact segment/header/frame accounting, 66-channel 96 kHz float
-   WAVs, the free-space reserve, and at least two persisted hours.
+   WAVs, the free-space reserve, and at least two persisted hours. The rollout
+   verifier parses every native SHADOW snapshot, requiring one 64-channel/96 kHz
+   non-simulated session, continuous time coverage, actual candidate movement, and no
+   application of candidate automation to program.
 5. A named operator accepts or rejects advancement. Any unexplained critical incident,
    missing speech, clipping, failover, restart, clock correction at the limit, or
    recorder loss blocks worship.

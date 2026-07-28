@@ -2715,6 +2715,100 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(model.stabilityMonitorDurationSeconds, 30)
     }
 
+    func testShadowDecisionJournalWritesNativeCandidateSnapshot() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = try ShadowDecisionJournal(
+            directory: directory,
+            fileName: "shadow-decisions.jsonl"
+        )
+        let record = ShadowDecisionRecord(
+            timestampMs: 1_785_160_800_000,
+            sessionID: "fixture-session",
+            scene: .sermon,
+            shadowMode: true,
+            programAutomationApplied: false,
+            safeBypass: false,
+            frozen: false,
+            inputName: "HD96 Dante Split",
+            inputUID: "hd96-dante",
+            outputName: "Encoder Output",
+            outputUID: "encoder-output",
+            sampleRate: 96_000,
+            channelCount: 2,
+            inputLevelsDb: [-24, -18],
+            candidateAutoTrimDb: [2, -1],
+            candidateAutoFaderDb: [-3, -5],
+            learnedNoiseFloorDb: [-62, -58],
+            channelActive: [true, true],
+            candidateMasterTrimDb: -0.5,
+            programOutputLevelsDb: [-16, -15]
+        )
+
+        try await journal.append(record)
+
+        let lines = try String(contentsOf: journal.fileURL, encoding: .utf8)
+            .split(separator: "\n")
+        XCTAssertEqual(lines.count, 1)
+        let decoded = try JSONDecoder().decode(
+            ShadowDecisionRecord.self,
+            from: Data(lines[0].utf8)
+        )
+        XCTAssertEqual(decoded, record)
+        XCTAssertEqual(decoded.formatVersion, 1)
+        XCTAssertEqual(decoded.kind, "shadow-candidate-snapshot")
+    }
+
+    @MainActor
+    func testAppModelCapturesAndFinalizesShadowDecisionEvidence() async throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(
+            profileDirectory: profileDirectory,
+            autoStartRemoteMonitoring: false
+        )
+        model.debugStopPollingForTesting()
+        model.automaticContinuousRecordingEnabled = false
+        model.shadowMode = true
+        defer {
+            if model.isRunning {
+                model.stopEngine()
+            }
+            model.debugStopPollingForTesting()
+            try? FileManager.default.removeItem(at: profileDirectory)
+        }
+
+        try model.debugStartSimulatedForRecoveryTesting()
+        await model.debugWaitForShadowDecisionWritesForTesting()
+
+        let logURL = try XCTUnwrap(model.shadowDecisionLogURL)
+        let lines = try String(contentsOf: logURL, encoding: .utf8)
+            .split(separator: "\n")
+        XCTAssertEqual(lines.count, 1)
+        let record = try JSONDecoder().decode(
+            ShadowDecisionRecord.self,
+            from: Data(lines[0].utf8)
+        )
+        XCTAssertTrue(record.shadowMode)
+        XCTAssertFalse(record.programAutomationApplied)
+        XCTAssertEqual(record.sampleRate, 96_000, accuracy: 0.5)
+        XCTAssertEqual(record.channelCount, 64)
+        XCTAssertEqual(record.inputLevelsDb.count, 64)
+        XCTAssertEqual(record.candidateAutoTrimDb.count, 64)
+        XCTAssertEqual(record.candidateAutoFaderDb.count, 64)
+        XCTAssertEqual(record.learnedNoiseFloorDb.count, 64)
+        XCTAssertEqual(record.channelActive.count, 64)
+        XCTAssertEqual(record.programOutputLevelsDb.count, 2)
+        XCTAssertEqual(model.shadowDecisionRecordCount, 1)
+
+        model.shadowMode = false
+        XCTAssertTrue(model.shadowDecisionCaptureStatus.contains("finalizing"))
+        await model.debugWaitForShadowDecisionWritesForTesting()
+        XCTAssertTrue(model.shadowDecisionCaptureStatus.contains("saved"))
+        XCTAssertTrue(model.shadowDecisionCaptureStatus.contains("1 snapshots"))
+    }
+
     @MainActor
     func testAppModelAutomaticallyRestartsUnexpectedEngineStopAndResumesContinuousCapture() async throws {
         let profileDirectory = FileManager.default.temporaryDirectory

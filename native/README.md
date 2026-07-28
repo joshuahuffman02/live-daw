@@ -474,6 +474,13 @@ The app does not configure the Midas console. It expects Dante to already exist:
   identity, evidence hashes, and exact sermon-manifest hash verify. Stability proof
   supports up to four hours; the evidence runner and acceptance criteria are in
   [`../docs/STAGED_ROLLOUT.md`](../docs/STAGED_ROLLOUT.md).
+- Native SHADOW runs automatically append one-second candidate snapshots containing
+  the actual engine SHADOW state, route, per-channel measurements/candidate controls,
+  master candidate trim, SAFE/FREEZE state, and program levels. The control-side
+  JSONL writer never touches the audio callback. Signed rollout acceptance parses
+  the complete file for route, continuity, activity, candidate movement, and
+  non-application semantics; see
+  [`../docs/SHADOW_DECISION_EVIDENCE.md`](../docs/SHADOW_DECISION_EVIDENCE.md).
 - The Soundcheck controls expose each phase explicitly: recording frames, saving the
   WAV file, then analyzing the saved payload for the report.
 - Stability Monitor runs a longer non-recording validation from the control side and

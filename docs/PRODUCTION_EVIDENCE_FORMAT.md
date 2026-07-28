@@ -200,9 +200,11 @@ An approved report requires all of the following:
 
 - `shadowRehearsal` records a complete service, confirms automation was not applied
   to program, confirms the operator compared the candidate behavior, reports zero
-  blocking issues, and attaches the live candidate decision log;
+  blocking issues, records exact `startedAtUTC`/`completedAtUTC` bounds, and attaches
+  the native live candidate decision log;
 - `supervisedService` records a complete service with automation enabled and a human
-  operator present; SAFE, FREEZE, and manual override must have been available;
+  operator present in its exact `startedAtUTC`/`completedAtUTC` window; SAFE, FREEZE,
+  and manual override must have been available;
   missing-speech, clipping, and unexplained-critical-incident counts must all be
   zero; every operator intervention must be reviewed; and the observation log is
   attached;
@@ -227,6 +229,16 @@ from another plan is therefore insufficient. A rejected report may preserve fail
 observations for diagnosis, but `--require-approved-rollout` and every approved signed
 acceptance reject it.
 
+The SHADOW attachment is also parsed rather than trusted by filename or size. The
+native one-second snapshot contract proves a continuous 64-channel/96 kHz,
+explicitly identified non-simulated HD96/Dante input and isolated stream-facing output
+session; engine SHADOW remained active; candidate automation never reached program;
+the expected phase, active input, observable program output, and measurable
+candidate-state changes occurred; SAFE/FREEZE did not suppress more than 10% of the
+comparison; and no observation gap exceeded five seconds. Coverage must span at least
+95% of the reported rehearsal window. See
+`SHADOW_DECISION_EVIDENCE.md`.
+
 The deterministic fixture and rejection coverage live in
 `scripts/test-production-evidence.sh` and
 `scripts/test-production-evidence-authoring.sh`. They prove fail-closed drafts,
@@ -234,6 +246,7 @@ generated bindings/hashes, overwrite protection, and rejection of slow failover,
 modified attachments, excessive residual sync, inconsistent drift math, restart
 after operator Stop, unsafe evaluator metrics, incomplete decision logs, unsafe
 approved replay, SHADOW automation reaching program, unsupervised service evidence,
-unexpected Planning Center scene changes, a cue trace from another plan, a trace with
-missing cue events, rejected promotion, wrong candidate commit, and evidence bound to
-another manifest.
+simulated or gapped native SHADOW capture, overlapping rollout windows, unexpected
+Planning Center scene changes, a cue trace from another plan, a trace with missing cue
+events, rejected promotion, wrong candidate commit, and evidence bound to another
+manifest.

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 private enum AutoMixPalette {
@@ -1090,10 +1091,33 @@ private struct NativeConsoleBar: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 18) {
                 ConsoleBarGroup(title: "AUTOMATION") {
-                    Toggle("Shadow", isOn: $model.shadowMode)
-                        .toggleStyle(.switch)
-                    Toggle("Recovery", isOn: $model.automaticRecoveryEnabled)
-                        .toggleStyle(.switch)
+                    HStack(spacing: 10) {
+                        Toggle("Shadow", isOn: $model.shadowMode)
+                            .toggleStyle(.switch)
+                        Toggle("Recovery", isOn: $model.automaticRecoveryEnabled)
+                            .toggleStyle(.switch)
+                    }
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(shadowDecisionStatusColor)
+                            .frame(width: 6, height: 6)
+                        Text(model.shadowDecisionCaptureStatus)
+                            .foregroundStyle(
+                                model.shadowDecisionCaptureStatus.hasPrefix("capture failed")
+                                    ? AutoMixPalette.red
+                                    : AutoMixPalette.secondaryText
+                            )
+                            .lineLimit(1)
+                        if let url = model.shadowDecisionLogURL {
+                            Button("Reveal") {
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(AutoMixPalette.cyan)
+                            .accessibilityLabel("Reveal SHADOW candidate-decision log")
+                        }
+                    }
+                    .font(.system(size: 9, weight: .medium))
                 }
 
                 ConsoleBarGroup(title: "REHEARSAL") {
@@ -1153,6 +1177,18 @@ private struct NativeConsoleBar: View {
         .overlay(alignment: .top) {
             Rectangle().fill(AutoMixPalette.border).frame(height: 1)
         }
+    }
+
+    private var shadowDecisionStatusColor: Color {
+        if model.shadowDecisionCaptureStatus.hasPrefix("capture failed") {
+            return AutoMixPalette.red
+        }
+        if model.shadowDecisionCaptureStatus.hasPrefix("finalizing") {
+            return AutoMixPalette.amber
+        }
+        return model.shadowDecisionRecordCount > 0
+            ? AutoMixPalette.cyan
+            : AutoMixPalette.tertiaryText
     }
 }
 

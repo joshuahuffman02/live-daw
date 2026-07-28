@@ -1,6 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
+script_directory="${0:A:h}"
+
 usage() {
   print -u2 "Usage:"
   print -u2 "  $0 --external-failover PATH --latency-lipsync PATH"
@@ -728,9 +730,9 @@ validate_planning_center_cue_trace() {
   local expected_plan_id="$2"
   local expected_item_count="$3"
   local expected_applied_cues="$4"
-  local shadow_completed="$5"
+  local supervised_started="$5"
   local supervised_completed="$6"
-  local shadow_seconds supervised_seconds shadow_ms supervised_ms
+  local supervised_started_seconds supervised_seconds supervised_started_ms supervised_ms
   local line kind severity timestamp plan_id item_count cue_count
   local cue_id cue_index scene source
   local earliest_loaded_ms=0 earliest_applied_ms=0
@@ -738,15 +740,15 @@ validate_planning_center_cue_trace() {
   integer matching_loads=0
   integer matching_applied=0
 
-  shadow_seconds="$(/bin/date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
-    "${shadow_completed}" '+%s' 2>/dev/null || true)"
+  supervised_started_seconds="$(/bin/date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
+    "${supervised_started}" '+%s' 2>/dev/null || true)"
   supervised_seconds="$(/bin/date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
     "${supervised_completed}" '+%s' 2>/dev/null || true)"
-  if [[ ! "${shadow_seconds}" =~ '^[0-9]+$' ||
+  if [[ ! "${supervised_started_seconds}" =~ '^[0-9]+$' ||
         ! "${supervised_seconds}" =~ '^[0-9]+$' ]]; then
     fail "Planning Center cue trace could not bind to the rollout timestamps."
   fi
-  shadow_ms="$(( shadow_seconds * 1000 ))"
+  supervised_started_ms="$(( supervised_started_seconds * 1000 ))"
   supervised_ms="$(( supervised_seconds * 1000 ))"
 
   while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -776,7 +778,7 @@ validate_planning_center_cue_trace() {
           (( item_count != expected_item_count ||
              cue_count < 1 ||
              cue_count > item_count ||
-             timestamp <= shadow_ms ||
+             timestamp < supervised_started_ms ||
              timestamp > supervised_ms )); then
         fail "Planning Center plan-loaded trace does not match the supervised service report."
       fi
@@ -802,7 +804,7 @@ validate_planning_center_cue_trace() {
               "${scene}" != "postService" ) ||
             ( "${source}" != "operator" && "${source}" != "timed plan" ) ]] ||
           (( cue_index >= expected_item_count ||
-             timestamp <= shadow_ms ||
+             timestamp < supervised_started_ms ||
              timestamp > supervised_ms )); then
         fail "Planning Center scene-applied trace contains invalid or out-of-window cue evidence."
       fi
@@ -823,16 +825,20 @@ validate_planning_center_cue_trace() {
 
 validate_rollout_observation() {
   local report="$1"
-  local decision candidate_commit approval_required
-  local report_completed shadow_completed supervised_completed
+  local decision candidate_commit approval_required rollout_phase
+  local report_completed shadow_started shadow_completed
+  local supervised_started supervised_completed
+  local shadow_started_seconds shadow_completed_seconds
+  local shadow_started_ms shadow_completed_ms
   local shadow_full shadow_applied shadow_compared shadow_blockers
   local supervised_full automation_enabled operator_present safe_available
   local freeze_available manual_available missing_speech clipping_events
   local critical_incidents intervention_count interventions_reviewed
   local real_plan mappings_reviewed unexpected_changes fallback_verified
-  local item_count applied_cues plan_id cue_trace
+  local item_count applied_cues plan_id cue_trace shadow_decisions
 
   validate_common "${report}" rollout-observation "rollout observation"
+  rollout_phase="$(extract "${report}" phase || true)"
   report_completed="$(extract "${report}" completedAtUTC || true)"
   require_string "${report}" reviewer "rollout observation reviewer"
   require_string "${report}" findings "rollout observation findings"
@@ -855,6 +861,10 @@ validate_rollout_observation() {
     fail "rollout observation candidate commit does not match the accepted source commit."
   fi
 
+  require_regex "${report}" shadowRehearsal.startedAtUTC \
+    '^20[2-9][0-9]-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+    "shadow rehearsal startedAtUTC"
+  shadow_started="${REPLY}"
   require_regex "${report}" shadowRehearsal.completedAtUTC \
     '^20[2-9][0-9]-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
     "shadow rehearsal completedAtUTC"
@@ -873,7 +883,12 @@ validate_rollout_observation() {
   shadow_blockers="${REPLY}"
   verify_reference "${report}" shadowRehearsal.candidateDecisionLog \
     "shadow rehearsal candidateDecisionLog"
+  shadow_decisions="${REPLY}"
 
+  require_regex "${report}" supervisedService.startedAtUTC \
+    '^20[2-9][0-9]-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
+    "supervised service startedAtUTC"
+  supervised_started="${REPLY}"
   require_regex "${report}" supervisedService.completedAtUTC \
     '^20[2-9][0-9]-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' \
     "supervised service completedAtUTC"
@@ -938,10 +953,14 @@ validate_rollout_observation() {
   cue_trace="${REPLY}"
 
   if [[ "${approval_required}" == "true" ]]; then
-    if [[ "${shadow_completed}" == "${supervised_completed}" ||
-          "${shadow_completed}" > "${supervised_completed}" ||
+    if [[ "${shadow_started}" == "${shadow_completed}" ||
+          "${shadow_started}" > "${shadow_completed}" ||
+          "${shadow_completed}" == "${supervised_started}" ||
+          "${shadow_completed}" > "${supervised_started}" ||
+          "${supervised_started}" == "${supervised_completed}" ||
+          "${supervised_started}" > "${supervised_completed}" ||
           "${supervised_completed}" > "${report_completed}" ]]; then
-      fail "approved rollout requires SHADOW before the supervised service and both before report completion."
+      fail "approved rollout requires non-overlapping SHADOW and supervised-service windows before report completion."
     fi
     if [[ "${shadow_full}" != "true" ||
           "${shadow_applied}" != "false" ||
@@ -968,12 +987,30 @@ validate_rollout_observation() {
         (( item_count < 1 || applied_cues < 1 || applied_cues > item_count )); then
       fail "approved rollout requires a reviewed real Planning Center plan, applied cues without unexpected changes, and verified offline fallback."
     fi
+    shadow_started_seconds="$(/bin/date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
+      "${shadow_started}" '+%s' 2>/dev/null || true)"
+    shadow_completed_seconds="$(/bin/date -j -u -f '%Y-%m-%dT%H:%M:%SZ' \
+      "${shadow_completed}" '+%s' 2>/dev/null || true)"
+    if [[ ! "${shadow_started_seconds}" =~ '^[0-9]+$' ||
+          ! "${shadow_completed_seconds}" =~ '^[0-9]+$' ]]; then
+      fail "SHADOW decision log could not bind to the rehearsal timestamps."
+    fi
+    shadow_started_ms="$(( shadow_started_seconds * 1000 ))"
+    shadow_completed_ms="$(( shadow_completed_seconds * 1000 ))"
+    if ! /usr/bin/xcrun swift \
+        "${script_directory}/verify-shadow-decision-evidence.swift" \
+        --log "${shadow_decisions}" \
+        --expected-phase "${rollout_phase}" \
+        --window-start-ms "${shadow_started_ms}" \
+        --window-end-ms "${shadow_completed_ms}" >/dev/null; then
+      fail "native SHADOW candidate-decision evidence failed semantic verification."
+    fi
     validate_planning_center_cue_trace \
       "${cue_trace}" \
       "${plan_id}" \
       "${item_count}" \
       "${applied_cues}" \
-      "${shadow_completed}" \
+      "${supervised_started}" \
       "${supervised_completed}"
   fi
 }

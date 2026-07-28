@@ -261,8 +261,11 @@ document includes fail-closed draft generation and automatic finalization so ven
 operators do not hand-calculate attachment hashes. The fifth report makes a full
 SHADOW rehearsal, supervised live service, and reviewed real Planning Center cue
 trace explicit prerequisites for signed promotion. The verifier parses the native
-plan-loaded and scene-applied JSONL events, so an unrelated or non-empty placeholder
-trace cannot satisfy the gate.
+plan-loaded and scene-applied JSONL events. Native SHADOW also produces its own
+one-second 64-channel candidate-decision JSONL, and acceptance checks route identity,
+coverage, gaps, candidate movement, SAFE/FREEZE exposure, and that automation never
+reached program. An unrelated or non-empty placeholder trace cannot satisfy either
+gate.
 
 ### Native/DSP verification
 

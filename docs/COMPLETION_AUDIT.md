@@ -9,7 +9,7 @@ hardware proof.
 
 | Objective requirement | Authoritative evidence | Current determination |
 | --- | --- | --- |
-| Version control and CI | Private repository at `github.com/joshuahuffman02/live-daw`; clean published `main`; `.github/workflows/ci.yml` builds/tests evidence contracts, DSP, replay, JUCE, web, native Debug/Release, and the monitor smoke | Source is published. Hosted macOS 15 run `30388652682` completed every stage successfully; fresh source changes still require their own run before publication is called green. |
+| Version control and CI | Private repository at `github.com/joshuahuffman02/live-daw`; clean published `main`; `.github/workflows/ci.yml` builds/tests evidence contracts, DSP, replay, JUCE, web, native Debug/Release, and the monitor smoke | Source is published. A slice is called green only when the hosted macOS 15 workflow succeeds for its exact commit; the stable workflow link below is the source of truth. |
 | Behavior-tested speech automixer | `appliance/dsp/Automixer.h`; 96 kHz acquisition, equal-share, silence ducking, handoff, and no-allocation assertions in `appliance/tests/test_dsp.cpp` | Verified in deterministic tests. |
 | Measurement-driven gain staging, activity/noise floor, adaptive gates, level riding, slow loudness normalization | `appliance/src/BrainThread.h`; measurement, loudness, limiter-backoff, FREEZE/SAFE, and shadow tests in `appliance/tests/test_dsp.cpp` | Verified in deterministic control-loop tests and native bridge integration. |
 | Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE verified. Independent hardware/encoder fallback is fully specified but must be built and kill-tested on the venue system. |
@@ -20,7 +20,7 @@ hardware proof.
 | Encoder/public-egress health, device recovery, relaunch, incident logging | Health contract and alert tests; exact-route recovery/backoff tests; LaunchAgent installer; incident JSONL; `docs/RUNTIME_RESILIENCE.md` | Software verified. Real encoder and public-egress endpoints plus crash/device drills remain external acceptance work. |
 | Separate-device drift mitigation/shared clock | Bounded `AsyncOutputClock`, ring telemetry, correction-limit gates, route clock preflight, stability-report tests | Algorithm and gates verified. Real independent-device or Aggregate Device run remains hardware evidence. |
 | Reproducible replay/evaluation and decision log | `appliance/tools/replay_eval.cpp`; deterministic self-test; CRC/config/metrics/20 Hz trace contract in `docs/REPLAY_EVALUATION.md` | Harness verified. Promotion still requires representative recorded services and operator-approved references. |
-| SHADOW-first progressive autonomy | Candidate-only shadow behavior tests; venue profiles default SHADOW on; staged runner forces autonomous proof controls; manifest/commit-bound `rollout-observation` evidence; `docs/STAGED_ROLLOUT.md` | Workflow and signed promotion gates are verified. An approved bundle now requires a full SHADOW rehearsal, supervised service, and reviewed real Planning Center cue trace. Those venue events have not yet occurred. |
+| SHADOW-first progressive autonomy | Candidate-only shadow behavior tests; venue profiles default SHADOW on; native one-second 64-channel candidate-decision JSONL; semantic coverage/route/non-application verifier; manifest/commit-bound `rollout-observation` evidence; `docs/STAGED_ROLLOUT.md` | Workflow and signed promotion gates are verified. An approved bundle now requires a full, continuous, non-simulated native SHADOW capture, supervised service, and reviewed real Planning Center cue trace. Those venue events have not yet occurred. |
 | Dependency and security hygiene | Locked npm graph, zero high-level audit findings, current React/Vite/TypeScript/JUCE patch, pinned CI actions, least-privilege CI token, HttpOnly cookie-only remote control, pairing lockout/bounds, CSP | Verified locally and in the hosted macOS pipeline. |
 | Realtime safety and human authority | No-allocation guards for engine, automixer, reverb/delay, brain mailbox, native input/render/recording/overrun paths; SAFE/FREEZE/manual controls and tests | Verified in deterministic and simulated native paths. Real callback timing/xrun behavior remains a rig measurement. |
 | Signed/notarized production artifact | Hardened Runtime, audio-input entitlement, fail-closed release builder, signature/notary/staple/Gatekeeper verification, proof runner binding | Pipeline verified through unsigned/ad-hoc negative and entitlement tests. No Developer ID Application identity or notary profile is installed, so no production artifact exists yet. |
@@ -33,7 +33,7 @@ hardware proof.
 
 - Deterministic DSP: **117 passed, 0 failed**.
 - Replay evaluator: self-test passed.
-- Native XCTest: **234 passed, 0 failed**.
+- Native XCTest: **236 passed, 0 failed**.
 - Remote monitor: static/auth/pairing/cookie/command/SSE smoke passed.
 - Web proof: clean install, typecheck, production build, and `npm audit` passed
   with **0 known vulnerabilities**.
@@ -52,6 +52,7 @@ hardware proof.
   unhealthy/stale/gapped/short stream observations, slow/unsafe failover, excessive
   or inconsistent A/V drift, failed recovery behavior, unsafe replay, a mismatched
   replay commit, SHADOW automation applied to program, an unsupervised service,
+  simulated/generic-route, short, gapped, silent, frozen, or overlapping SHADOW evidence,
   unexpected Planning Center scene changes, Planning Center traces from another
   plan or with missing cue events, wrong rollout phase, and reports bound to another
   manifest. Worship
@@ -60,10 +61,11 @@ hardware proof.
 - Operator UI/UX redesign: native, remote, monitor, setup, accessibility, and
   responsive-layout changes committed as `f3e6e74`.
 - Private repository publication: local `main` tracks the published private `main`.
-- Hosted macOS 15 CI:
-  [run 30388652682](https://github.com/joshuahuffman02/live-daw/actions/runs/30388652682)
-  passed evidence contracts, deterministic project generation, DSP, replay, JUCE,
-  npm audit/typecheck/build, native XCTest, monitor smoke, and native Release build.
+- Hosted macOS 15
+  [CI workflow](https://github.com/joshuahuffman02/live-daw/actions/workflows/ci.yml)
+  verifies evidence contracts, deterministic project generation, DSP, replay, JUCE,
+  npm audit/typecheck/build, native XCTest, monitor smoke, and native Release build
+  for every published commit.
 - Worktree: clean after the verified publication slice.
 
 ## Current-host readiness facts

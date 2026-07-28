@@ -47,6 +47,54 @@ production_fixture_planning_center_cue_trace() {
   } > "${path}"
 }
 
+production_fixture_json_array() {
+  local value="$1"
+  integer count="$2"
+  local output="["
+  integer index=0
+  while (( index < count )); do
+    (( index > 0 )) && output+=","
+    output+="${value}"
+    index="$(( index + 1 ))"
+  done
+  output+="]"
+  REPLY="${output}"
+}
+
+production_fixture_shadow_decision_log() {
+  local path="$1"
+  local movement="${2:-moving}"
+  local levels trims faders floors active zeroes
+  local timestamp
+  production_fixture_json_array -24 64
+  levels="${REPLY}"
+  production_fixture_json_array 2 64
+  trims="${REPLY}"
+  production_fixture_json_array -3 64
+  faders="${REPLY}"
+  production_fixture_json_array -60 64
+  floors="${REPLY}"
+  production_fixture_json_array true 64
+  active="${REPLY}"
+  production_fixture_json_array 0 64
+  zeroes="${REPLY}"
+
+  : > "${path}"
+  timestamp=1785081480000
+  while (( timestamp <= 1785081600000 )); do
+    if [[ "${movement}" == "moving" && "${timestamp}" == 1785081480000 ]]; then
+      print -r -- \
+        '{"candidateAutoFaderDb":'"${zeroes}"',"candidateAutoTrimDb":'"${zeroes}"',"candidateMasterTrimDb":0,"channelActive":'"${active}"',"channelCount":64,"formatVersion":1,"frozen":false,"inputLevelsDb":'"${levels}"',"inputName":"HD96 Dante Split","inputUID":"fixture-hd96-dante","kind":"shadow-candidate-snapshot","learnedNoiseFloorDb":'"${floors}"',"outputName":"Encoder Output","outputUID":"fixture-encoder-output","programAutomationApplied":false,"programOutputLevelsDb":[-16,-15],"safeBypass":false,"sampleRate":96000,"scene":"sermon","sessionID":"fixture-shadow-session","shadowMode":true,"timestampMs":'"${timestamp}"'}' \
+        >> "${path}"
+    else
+      print -r -- \
+        '{"candidateAutoFaderDb":'"${faders}"',"candidateAutoTrimDb":'"${trims}"',"candidateMasterTrimDb":-0.5,"channelActive":'"${active}"',"channelCount":64,"formatVersion":1,"frozen":false,"inputLevelsDb":'"${levels}"',"inputName":"HD96 Dante Split","inputUID":"fixture-hd96-dante","kind":"shadow-candidate-snapshot","learnedNoiseFloorDb":'"${floors}"',"outputName":"Encoder Output","outputUID":"fixture-encoder-output","programAutomationApplied":false,"programOutputLevelsDb":[-16,-15],"safeBypass":false,"sampleRate":96000,"scene":"sermon","sessionID":"fixture-shadow-session","shadowMode":true,"timestampMs":'"${timestamp}"'}' \
+        >> "${path}"
+    fi
+    timestamp="$(( timestamp + 1000 ))"
+  done
+}
+
 production_fixture_replay_metrics() {
   local path="$1"
   local crc="$2"
@@ -322,16 +370,19 @@ create_production_evidence_fixtures() {
     "${plist}"
 
   /usr/bin/plutil -insert shadowRehearsal -json '{}' "${plist}"
+  /usr/bin/plutil -insert shadowRehearsal.startedAtUTC -string 2026-07-26T15:58:00Z "${plist}"
   /usr/bin/plutil -insert shadowRehearsal.completedAtUTC -string 2026-07-26T16:00:00Z "${plist}"
   /usr/bin/plutil -insert shadowRehearsal.fullServiceObserved -bool true "${plist}"
   /usr/bin/plutil -insert shadowRehearsal.automationAppliedToProgram -bool false "${plist}"
   /usr/bin/plutil -insert shadowRehearsal.operatorComparisonCompleted -bool true "${plist}"
   /usr/bin/plutil -insert shadowRehearsal.blockingIssueCount -integer 0 "${plist}"
-  production_fixture_attachment "${root}" shadow-candidate-decisions.jsonl
-  production_evidence_attachments[shadow-candidate-decisions]="${REPLY}"
-  production_fixture_add_reference "${plist}" shadowRehearsal.candidateDecisionLog "${REPLY}"
+  attachment="${root}/shadow-candidate-decisions.jsonl"
+  production_fixture_shadow_decision_log "${attachment}"
+  production_evidence_attachments[shadow-candidate-decisions]="${attachment}"
+  production_fixture_add_reference "${plist}" shadowRehearsal.candidateDecisionLog "${attachment}"
 
   /usr/bin/plutil -insert supervisedService -json '{}' "${plist}"
+  /usr/bin/plutil -insert supervisedService.startedAtUTC -string 2026-07-27T13:45:00Z "${plist}"
   /usr/bin/plutil -insert supervisedService.completedAtUTC -string 2026-07-27T16:00:00Z "${plist}"
   /usr/bin/plutil -insert supervisedService.fullServiceObserved -bool true "${plist}"
   /usr/bin/plutil -insert supervisedService.automationEnabled -bool true "${plist}"

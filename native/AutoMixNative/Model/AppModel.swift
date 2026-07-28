@@ -848,6 +848,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var stabilityMinLimiterGainReductionDb = 0.0
     @Published private(set) var lastCallbackFrames: Int = 0
     @Published private(set) var maxObservedCallbackFrames: Int = 0
+    @Published private(set) var shadowDecisionLogURL: URL?
+    @Published private(set) var shadowDecisionCaptureStatus = "idle"
+    @Published private(set) var shadowDecisionRecordCount = 0
     @Published var safeBypass = false {
         didSet {
             engine.setSafeBypass(safeBypass)
@@ -868,6 +871,15 @@ final class AppModel: ObservableObject {
         didSet {
             engine.setShadowMode(shadowMode)
             if oldValue != shadowMode {
+                if engine.running {
+                    if shadowMode {
+                        startShadowDecisionCaptureIfNeeded(
+                            nowMs: Int64(Date().timeIntervalSince1970 * 1_000)
+                        )
+                    } else {
+                        finishShadowDecisionCapture(reason: "SHADOW disabled")
+                    }
+                }
                 cancelActiveStabilityMonitorForProofControlChange("SHADOW")
                 invalidateValidationEvidence()
                 saveProfile()
@@ -896,6 +908,12 @@ final class AppModel: ObservableObject {
     private var recoveryInFlight = false
     private var incidentJournal: RuntimeIncidentJournal?
     private var incidentWriteTask: Task<Void, Never>?
+    private var shadowDecisionJournal: ShadowDecisionJournal?
+    private var shadowDecisionWriteTask: Task<Void, Never>?
+    private var shadowDecisionWriteFailureSessionIDs = Set<String>()
+    private var shadowDecisionSessionID = ""
+    private var shadowDecisionStartedAtMs: Int64 = 0
+    private var shadowDecisionLastSnapshotMs: Int64 = 0
     private let recordingStorageManager = ContinuousRecordingStorageManager()
     private var recordingStorageTask: Task<Void, Never>?
     private var nextRecordingStorageCheckMs: Int64 = 0
@@ -1460,6 +1478,9 @@ final class AppModel: ObservableObject {
                     : "Core Audio engine started",
                 details: runtimeRouteDetails()
             )
+            startShadowDecisionCaptureIfNeeded(
+                nowMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
             resumingAutonomousSession = false
         } catch {
             lastError = error.localizedDescription
@@ -1508,6 +1529,7 @@ final class AppModel: ObservableObject {
             message: "Operator stopped the Core Audio engine",
             details: runtimeRouteDetails()
         )
+        finishShadowDecisionCapture(reason: "operator stopped engine")
         cancelStabilityMonitor()
         let wasContinuouslyRecording = engine.continuousRecording
         engine.stop()
@@ -1887,6 +1909,7 @@ final class AppModel: ObservableObject {
             scheduleSoundcheckReport(for: url)
         }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        captureShadowDecisionSnapshot(nowMs: nowMs)
         updateRuntimeIncidentTransitions(nowMs: nowMs)
         updateAutomaticRecovery(nowMs: nowMs)
         updateRecordingStorage(nowMs: nowMs)
@@ -2518,6 +2541,175 @@ final class AppModel: ObservableObject {
             "inputCallbackAgeMs": String(format: "%.1f", engine.inputCallbackAgeMs),
             "outputCallbackAgeMs": String(format: "%.1f", engine.outputCallbackAgeMs)
         ]
+    }
+
+    private func startShadowDecisionCaptureIfNeeded(nowMs: Int64) {
+        guard engine.running, shadowMode, shadowDecisionJournal == nil else { return }
+
+        do {
+            let directory = try appSupportDirectory()
+                .appendingPathComponent("Shadow Decisions", isDirectory: true)
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+            let sessionID = UUID().uuidString.lowercased()
+            let fileName = "shadow-decisions-\(formatter.string(from: Date()))-\(sessionID.prefix(8)).jsonl"
+            let journal = try ShadowDecisionJournal(directory: directory, fileName: fileName)
+            shadowDecisionJournal = journal
+            shadowDecisionSessionID = sessionID
+            shadowDecisionStartedAtMs = nowMs
+            shadowDecisionLastSnapshotMs = 0
+            shadowDecisionRecordCount = 0
+            shadowDecisionLogURL = journal.fileURL
+            shadowDecisionCaptureStatus = "recording · waiting for first snapshot"
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "shadow-decision-capture-started",
+                severity: .info,
+                message: "Native SHADOW candidate-decision capture started",
+                details: [
+                    "sessionID": sessionID,
+                    "path": journal.fileURL.path,
+                    "scene": selectedScene.rawValue
+                ]
+            )
+        } catch {
+            shadowDecisionCaptureStatus = "capture failed · \(error.localizedDescription)"
+            recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: "shadow-decision-capture-failed",
+                severity: .warning,
+                message: error.localizedDescription,
+                details: runtimeRouteDetails()
+            )
+        }
+    }
+
+    private func finishShadowDecisionCapture(reason: String) {
+        guard let journal = shadowDecisionJournal else { return }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        let durationMs = max(nowMs - shadowDecisionStartedAtMs, 0)
+        let sessionID = shadowDecisionSessionID
+        let recordCount = shadowDecisionRecordCount
+        let pendingWrite = shadowDecisionWriteTask
+        shadowDecisionJournal = nil
+        shadowDecisionSessionID = ""
+        shadowDecisionStartedAtMs = 0
+        shadowDecisionLastSnapshotMs = 0
+        shadowDecisionCaptureStatus = "finalizing · \(recordCount) snapshots"
+        shadowDecisionWriteTask = Task { [weak self] in
+            await pendingWrite?.value
+            guard let self else { return }
+
+            let writeFailed = self.shadowDecisionWriteFailureSessionIDs.remove(sessionID) != nil
+            if self.shadowDecisionLogURL == journal.fileURL,
+               self.shadowDecisionJournal == nil {
+                self.shadowDecisionCaptureStatus = writeFailed
+                    ? "capture failed · incomplete log"
+                    : "saved · \(recordCount) snapshots"
+            }
+            self.recordRuntimeIncident(
+                timestampMs: nowMs,
+                kind: writeFailed
+                    ? "shadow-decision-capture-incomplete"
+                    : "shadow-decision-capture-stopped",
+                severity: writeFailed ? .warning : .info,
+                message: writeFailed
+                    ? "Native SHADOW candidate-decision capture ended with a write failure"
+                    : "Native SHADOW candidate-decision capture stopped",
+                details: [
+                    "sessionID": sessionID,
+                    "path": journal.fileURL.path,
+                    "recordCount": "\(recordCount)",
+                    "durationMs": "\(durationMs)",
+                    "reason": reason
+                ]
+            )
+        }
+    }
+
+    private func captureShadowDecisionSnapshot(nowMs: Int64) {
+        guard engine.running, shadowMode else { return }
+        startShadowDecisionCaptureIfNeeded(nowMs: nowMs)
+        guard let journal = shadowDecisionJournal,
+              nowMs - shadowDecisionLastSnapshotMs >= 1_000
+        else { return }
+
+        let channelCount = channelMappings.count
+        let inputLevels = Array(levelsDb.prefix(channelCount))
+        let candidateTrim = Array(autoTrimDb.prefix(channelCount))
+        let candidateFader = Array(autoFaderDb.prefix(channelCount))
+        let noiseFloors = Array(learnedNoiseFloorDb.prefix(channelCount))
+        let active = Array(autoChannelActive.prefix(channelCount))
+        let programLevels = Array(streamOutputLevelsDb.prefix(2))
+        let numericValues = inputLevels + candidateTrim + candidateFader + noiseFloors +
+            [autoLoudnessTrimDb] + programLevels
+        guard channelCount > 0,
+              inputLevels.count == channelCount,
+              candidateTrim.count == channelCount,
+              candidateFader.count == channelCount,
+              noiseFloors.count == channelCount,
+              active.count == channelCount,
+              programLevels.count == 2,
+              numericValues.allSatisfy(\.isFinite)
+        else { return }
+
+        let engineShadowMode = engine.shadowModeEnabled
+        let runningInput = engine.runningInputDeviceInfo()
+        let runningOutput = engine.runningOutputDeviceInfo()
+        let record = ShadowDecisionRecord(
+            timestampMs: nowMs,
+            sessionID: shadowDecisionSessionID,
+            scene: selectedScene,
+            shadowMode: engineShadowMode,
+            programAutomationApplied: !engineShadowMode,
+            safeBypass: safeBypass,
+            frozen: frozen,
+            inputName: runningInput?.name ?? selectedInputDevice?.name ?? "",
+            inputUID: runningInput?.uid ?? selectedInputUID,
+            outputName: runningOutput?.name ?? selectedOutputDevice?.name ?? "",
+            outputUID: runningOutput?.uid ?? selectedOutputUID,
+            sampleRate: engine.sampleRate,
+            channelCount: channelCount,
+            inputLevelsDb: inputLevels,
+            candidateAutoTrimDb: candidateTrim,
+            candidateAutoFaderDb: candidateFader,
+            learnedNoiseFloorDb: noiseFloors,
+            channelActive: active,
+            candidateMasterTrimDb: autoLoudnessTrimDb,
+            programOutputLevelsDb: programLevels
+        )
+        shadowDecisionLastSnapshotMs = nowMs
+        shadowDecisionRecordCount += 1
+        shadowDecisionCaptureStatus = "recording · \(shadowDecisionRecordCount) snapshots"
+        let sessionID = shadowDecisionSessionID
+        let previousWrite = shadowDecisionWriteTask
+        shadowDecisionWriteTask = Task { [weak self] in
+            if let previousWrite {
+                await previousWrite.value
+            }
+            do {
+                _ = try await journal.append(record)
+            } catch {
+                guard let self else { return }
+                self.shadowDecisionWriteFailureSessionIDs.insert(sessionID)
+                if self.shadowDecisionSessionID == sessionID {
+                    self.shadowDecisionJournal = nil
+                    self.shadowDecisionCaptureStatus = "capture failed · \(error.localizedDescription)"
+                }
+                self.recordRuntimeIncident(
+                    timestampMs: nowMs,
+                    kind: "shadow-decision-write-failed",
+                    severity: .warning,
+                    message: error.localizedDescription,
+                    details: [
+                        "sessionID": sessionID,
+                        "path": journal.fileURL.path
+                    ]
+                )
+            }
+        }
     }
 
     private func recordRuntimeIncident(
@@ -3283,6 +3475,10 @@ final class AppModel: ObservableObject {
         )
         runningInRehearsal = false
         runningRouteSnapshot = liveRouteSnapshot()
+        engine.setSceneName(selectedScene.rawValue)
+        engine.setSafeBypass(safeBypass)
+        engine.setFrozen(frozen)
+        engine.setShadowMode(shadowMode)
         applyAllStereoLinks()
         applyAllManualOverrides()
         armAutomaticRecoveryAfterSuccessfulStart(nowMs: nowMs)
@@ -3291,6 +3487,9 @@ final class AppModel: ObservableObject {
             nextRecordingStorageCheckMs = 0
             saveAutonomousSessionIntent()
         }
+        startShadowDecisionCaptureIfNeeded(
+            nowMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
         pollEngine()
     }
 
@@ -3307,6 +3506,14 @@ final class AppModel: ObservableObject {
 
     func debugWaitForIncidentWritesForTesting() async {
         await incidentWriteTask?.value
+    }
+
+    func debugWaitForShadowDecisionWritesForTesting() async {
+        await shadowDecisionWriteTask?.value
+    }
+
+    func debugCaptureShadowDecisionSnapshotForTesting(nowMs: Int64) {
+        captureShadowDecisionSnapshot(nowMs: nowMs)
     }
 
     func debugSetRecordingAvailableCapacityForTesting(_ bytes: Int64?) {
