@@ -9,10 +9,10 @@ hardware proof.
 
 | Objective requirement | Authoritative evidence | Current determination |
 | --- | --- | --- |
-| Version control and CI | Private repository at `github.com/joshuahuffman02/live-daw`; clean published `main`; `.github/workflows/ci.yml` builds/tests evidence contracts, DSP, replay, JUCE, web, native Debug/Release, and the monitor smoke | Source is published. A slice is called green only when the hosted macOS 15 workflow succeeds for its exact commit; the stable workflow link below is the source of truth. |
+| Version control and CI | Private repository at `github.com/joshuahuffman02/live-daw`; clean published `main`; `.github/workflows/ci.yml` builds/tests evidence contracts, DSP, replay, JUCE, web, native Debug/Release, monitor smoke, and the external failover package on its native Linux/systemd platform | Source is published. A slice is called green only when every hosted job succeeds for its exact commit; the stable workflow link below is the source of truth. |
 | Behavior-tested speech automixer | `appliance/dsp/Automixer.h`; 96 kHz acquisition, equal-share, silence ducking, handoff, and no-allocation assertions in `appliance/tests/test_dsp.cpp` | Verified in deterministic tests. |
 | Measurement-driven gain staging, activity/noise floor, adaptive gates, level riding, slow loudness normalization | `appliance/src/BrainThread.h`; measurement, loudness, limiter-backoff, FREEZE/SAFE, and shadow tests in `appliance/tests/test_dsp.cpp` | Verified in deterministic control-loop tests and native bridge integration. |
-| Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; stale-aware fail-closed `/health` primary-audio heartbeat; independent lease-based failover supervisor and 24-test state-machine/HTTP/relay suite; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE and the independent controller software are verified. The normally de-energized relay/encoder backup path must still be built and kill-tested on the venue system. |
+| Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; stale-aware fail-closed `/health` primary-audio heartbeat; independent lease-based failover supervisor, strict private production config, hardened systemd deployment, and 30-test state-machine/HTTP/relay/config/package suite; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE and a reproducibly deployable independent controller are verified. The normally de-energized relay/encoder backup path must still be built and kill-tested on the venue system. |
 | Safe scene transitions, manual overrides, Planning Center driving | Smoothed targets in the DSP/brain; full processing and mix-override bridge tests; fail-closed startup/recovery/proof application plus visible durable live-edit rejection; Planning Center mapping/timed-cue tests; Keychain credential storage | Software verified. Live API/service-plan exercise still needs venue credentials and an actual service plan. |
 | Worship roles and stereo linking | Role profiles for speech, vocals, guitars, bass, drums, keys, percussion, and playback; linked detector/control tests; profile/preflight coverage tests | Verified in deterministic and native simulation tests. |
 | Latency and lip-sync reporting | Fixed limiter latency impulse test; native route estimate and persisted measured A/V path; `docs/LATENCY_AND_LIPSYNC.md` | Calculation/reporting verified. End-to-end camera/encoder measurement and multi-hour drift observation require the real chain. |
@@ -54,10 +54,11 @@ hardware proof.
   Production staged runs bind it to the exact phase, app, signed release metadata,
   profile, route, duration, reserve, and recording volume. The real-host result is
   deliberately not a production-acceptance substitute.
-- Independent failover supervisor: **24 passed, 0 failed** for fail-closed
+- Independent failover supervisor: **30 passed, 0 failed** for fail-closed
   heartbeat validation, startup/restart defaults, short primary leases, manual-only
-  return, relay acknowledgement binding, controller state, and private operator
-  control/status.
+  return, relay acknowledgement binding, controller state, private operator
+  control/status, strict versioned production configuration, and hardened
+  root-owned/systemd-credential deployment rendering.
 - OBS encoder-health bridge: **26 passed, 0 failed** for authenticated WebSocket v5
   negotiation, advancing encoder counters, exact name/UUID program-input track and
   carrier binding, honest observation age, stale and malformed observations,
@@ -102,11 +103,12 @@ hardware proof.
   responsive-layout changes committed as `f3e6e74`; the later remote safety audit
   verifies fail-closed startup, telemetry loss, and automatic recovery at phone size.
 - Private repository publication: local `main` tracks the published private `main`.
-- Hosted macOS 15
+- Hosted macOS 15 and Ubuntu 24.04
   [CI workflow](https://github.com/joshuahuffman02/live-daw/actions/workflows/ci.yml)
   verifies evidence contracts, deterministic project generation, DSP, replay, JUCE,
   npm audit/typecheck/build, native XCTest, monitor smoke, and native Release build
-  for every published commit.
+  plus the failover state machine/config/package tests and native systemd unit
+  verification for every published commit.
 - Device-inventory proof hardening: production input/output candidates are derived
   from enumerated device identities, simulated devices are separately disclosed and
   excluded, missing or edited production fields fail closed, and a simulated route

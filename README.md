@@ -34,7 +34,9 @@ Five layers live in this repo:
 5. **[`failover/`](failover/)** — the independent, fail-closed external
    primary/backup supervisor. It validates the native app's heartbeat, grants only a
    short renewable primary lease, starts and stops on backup, and requires an
-   explicit operator return after renewed health proof. It still requires the real
+   explicit operator return after renewed health proof. Its strict private config
+   and hardened systemd installer make the separate controller reproducible and
+   fail closed until the relay confirms backup. It still requires the real
    normally-backup relay, isolated encoder inputs, and venue kill tests.
 
 The requirement-by-requirement distinction between locally verified software and

@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -20,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from automix_failover_supervisor import (  # noqa: E402
     AtomicStatusWriter,
+    CONFIG_KIND,
     ConfigurationError,
     CONTROL_RESULT_KIND,
     EventJournal,
@@ -35,6 +37,9 @@ from automix_failover_supervisor import (  # noqa: E402
     RelayClient,
     RelayResult,
     STATUS_KIND,
+    build_argument_parser,
+    configuration_from_arguments,
+    load_supervisor_configuration,
     send_control_command,
     validate_endpoint_url,
     validate_timing_budget,
@@ -654,6 +659,309 @@ class OperatorControlTests(unittest.TestCase):
             self.assertEqual(result["kind"], CONTROL_RESULT_KIND)
             self.assertTrue(result["accepted"])
             self.assertFalse(socket_path.exists())
+
+
+class SupervisorConfigurationTests(unittest.TestCase):
+    def write_configuration(
+        self,
+        directory: Path,
+        *,
+        config_mode: int = 0o600,
+        token_mode: int = 0o600,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Path, Path, Dict[str, Any]]:
+        token_path = directory / "relay-token"
+        token_path.write_text("fixture-secret\n", encoding="utf-8")
+        token_path.chmod(token_mode)
+        payload: Dict[str, Any] = {
+            "formatVersion": FORMAT_VERSION,
+            "kind": CONFIG_KIND,
+            "heartbeatUrl": "http://automix-primary.test:8420/health",
+            "relayUrl": "https://relay.test/v1/selection",
+            "relayBearerTokenFile": "relay-token",
+            "pollIntervalMs": 250,
+            "heartbeatTimeoutMs": 500,
+            "relayTimeoutMs": 500,
+            "primaryLeaseMs": 1500,
+            "requiredHealthySamples": 3,
+            "controlSocket": str(directory / "run" / "control.sock"),
+            "statusPath": str(directory / "run" / "status.json"),
+            "journalPath": str(directory / "state" / "events.jsonl"),
+        }
+        if overrides:
+            payload.update(overrides)
+        config_path = directory / "supervisor.json"
+        config_path.write_text(
+            json.dumps(payload, sort_keys=True), encoding="utf-8"
+        )
+        config_path.chmod(config_mode)
+        return config_path, token_path, payload
+
+    def test_private_production_config_validates_without_network_access(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            config_path, token_path, _ = self.write_configuration(directory)
+            configuration = load_supervisor_configuration(config_path)
+            self.assertTrue(configuration.production_contract)
+            self.assertEqual(
+                configuration.relay_bearer_token_file, token_path
+            )
+            self.assertEqual(
+                configuration.relay_url,
+                "https://relay.test/v1/selection",
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("automix_failover_supervisor.py")),
+                    "check-config",
+                    "--config",
+                    str(config_path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            response = json.loads(result.stdout)
+            self.assertTrue(response["valid"])
+            self.assertEqual(response["relayCredential"], "validated")
+            self.assertNotIn("fixture-secret", result.stdout)
+            self.assertNotIn("relay.test", result.stdout)
+
+    def test_config_rejects_permissions_symlinks_and_unknown_fields(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            config_path, _, _ = self.write_configuration(
+                directory, config_mode=0o644
+            )
+            with self.assertRaisesRegex(
+                ConfigurationError, "group/world accessible"
+            ):
+                load_supervisor_configuration(config_path)
+
+            config_path.chmod(0o600)
+            symlink_path = directory / "linked-config.json"
+            symlink_path.symlink_to(config_path)
+            with self.assertRaises(ConfigurationError):
+                load_supervisor_configuration(symlink_path)
+
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            config_path, _, _ = self.write_configuration(
+                directory, overrides={"surprise": True}
+            )
+            with self.assertRaisesRegex(ConfigurationError, "unknown fields"):
+                load_supervisor_configuration(config_path)
+
+    def test_config_rejects_insecure_relay_paths_timing_and_token(
+        self,
+    ) -> None:
+        invalid_cases = (
+            (
+                {"relayUrl": "http://relay.test/v1/selection"},
+                "requires an HTTPS relay URL",
+            ),
+            ({"statusPath": "relative/status.json"}, "absolute path"),
+            (
+                {"pollIntervalMs": 500, "primaryLeaseMs": 1500},
+                "shorter than the primary lease",
+            ),
+            (
+                {"relayUrl": "https://relay.test/v1?token=secret"},
+                "must not contain a query",
+            ),
+            (
+                {"heartbeatUrl": "http://automix.test/\nhealth"},
+                "control characters",
+            ),
+        )
+        for overrides, expected in invalid_cases:
+            with self.subTest(overrides=overrides):
+                with tempfile.TemporaryDirectory() as directory_name:
+                    directory = Path(directory_name)
+                    config_path, _, _ = self.write_configuration(
+                        directory, overrides=overrides
+                    )
+                    with self.assertRaisesRegex(ConfigurationError, expected):
+                        load_supervisor_configuration(config_path)
+
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            config_path, _, _ = self.write_configuration(
+                directory, token_mode=0o644
+            )
+            with self.assertRaisesRegex(
+                ConfigurationError, "group/world accessible"
+            ):
+                load_supervisor_configuration(config_path)
+
+    def test_config_cannot_be_mixed_with_direct_options(self) -> None:
+        parser = build_argument_parser()
+        arguments = parser.parse_args(
+            [
+                "supervise",
+                "--config",
+                "/private/supervisor.json",
+                "--relay-url",
+                "https://different-relay.test/v1",
+            ]
+        )
+        with self.assertRaisesRegex(ConfigurationError, "cannot be mixed"):
+            configuration_from_arguments(arguments)
+
+    def test_direct_supervision_keeps_safe_bounded_defaults(self) -> None:
+        parser = build_argument_parser()
+        arguments = parser.parse_args(
+            [
+                "supervise",
+                "--heartbeat-url",
+                "http://127.0.0.1:8420/health",
+                "--relay-url",
+                "http://127.0.0.1:9842/selection",
+            ]
+        )
+        configuration = configuration_from_arguments(arguments)
+        self.assertFalse(configuration.production_contract)
+        self.assertEqual(configuration.poll_interval_ms, 250)
+        self.assertEqual(configuration.heartbeat_timeout_ms, 500)
+        self.assertEqual(configuration.relay_timeout_ms, 500)
+        self.assertEqual(configuration.primary_lease_ms, 1500)
+        self.assertEqual(configuration.required_healthy_samples, 3)
+
+    def test_systemd_installer_renders_hardened_reproducible_payload(
+        self,
+    ) -> None:
+        script_directory = Path(__file__).resolve().parent
+        installer = script_directory / "install-systemd-service.sh"
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            token_source = directory / "source-token"
+            token_source.write_text("fixture-secret\n", encoding="utf-8")
+            token_source.chmod(0o600)
+            render_root = directory / "payload"
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(installer),
+                    "--heartbeat-url",
+                    "http://automix-primary.test:8420/health",
+                    "--relay-url",
+                    "https://relay.test/v1/selection",
+                    "--relay-token-file",
+                    str(token_source),
+                    "--render-root",
+                    str(render_root),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config_path = (
+                render_root / "etc/automix-failover/supervisor.json"
+            )
+            token_path = render_root / "etc/automix-failover/relay-token"
+            unit_path = (
+                render_root / "etc/systemd/system/automix-failover.service"
+            )
+            installed_supervisor = (
+                render_root
+                / "usr/local/libexec/automix-failover"
+                / "automix_failover_supervisor.py"
+            )
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            unit = unit_path.read_text(encoding="utf-8")
+            self.assertEqual(payload["kind"], CONFIG_KIND)
+            self.assertEqual(
+                payload["relayBearerTokenFile"],
+                "relay-token",
+            )
+            self.assertNotIn("fixture-secret", config_path.read_text())
+            self.assertNotIn("fixture-secret", unit)
+            self.assertEqual(token_path.read_text(), "fixture-secret\n")
+            self.assertEqual(stat.S_IMODE(config_path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(token_path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(unit_path.stat().st_mode), 0o644)
+            self.assertEqual(
+                installed_supervisor.read_bytes(),
+                (
+                    script_directory / "automix_failover_supervisor.py"
+                ).read_bytes(),
+            )
+            for required in (
+                "User=automix-failover",
+                "ExecStartPre=/usr/bin/python3",
+                "LoadCredential=supervisor.json:/etc/automix-failover/supervisor.json",
+                "LoadCredential=relay-token:/etc/automix-failover/relay-token",
+                "Restart=always",
+                "RuntimeDirectory=automix-failover",
+                "StateDirectory=automix-failover",
+                "NoNewPrivileges=true",
+                "ProtectSystem=strict",
+                "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+                "CapabilityBoundingSet=",
+            ):
+                self.assertIn(required, unit)
+
+            token_source.chmod(0o644)
+            rejected = subprocess.run(
+                [
+                    "bash",
+                    str(installer),
+                    "--heartbeat-url",
+                    "http://automix-primary.test:8420/health",
+                    "--relay-url",
+                    "https://relay.test/v1/selection",
+                    "--relay-token-file",
+                    str(token_source),
+                    "--render-root",
+                    str(directory / "rejected-payload"),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(rejected.returncode, 1)
+            self.assertIn(
+                "must not be group/world accessible", rejected.stderr
+            )
+
+            token_source.chmod(0o600)
+            symlink_root = directory / "symlink-payload"
+            config_directory = symlink_root / "etc/automix-failover"
+            config_directory.mkdir(parents=True)
+            victim = directory / "must-not-change"
+            victim.write_text("preserve\n", encoding="utf-8")
+            (config_directory / "supervisor.json").symlink_to(victim)
+            symlink_rejected = subprocess.run(
+                [
+                    "bash",
+                    str(installer),
+                    "--heartbeat-url",
+                    "http://automix-primary.test:8420/health",
+                    "--relay-url",
+                    "https://relay.test/v1/selection",
+                    "--relay-token-file",
+                    str(token_source),
+                    "--render-root",
+                    str(symlink_root),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(symlink_rejected.returncode, 2)
+            self.assertIn("unsafe installation target", symlink_rejected.stderr)
+            self.assertEqual(victim.read_text(), "preserve\n")
 
 
 if __name__ == "__main__":

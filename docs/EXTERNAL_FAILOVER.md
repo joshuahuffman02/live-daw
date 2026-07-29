@@ -118,15 +118,24 @@ the new fault state after the controller resumes.
 
 The versioned relay request/acknowledgement contract, secure deployment rules,
 status/journal paths, and operator commands are specified in
-[`failover/README.md`](../failover/README.md). The deliberate return command is:
+[`failover/README.md`](../failover/README.md). A production controller is installed
+with the checked-in hardened systemd package:
 
 ```bash
-python3 automix_failover_supervisor.py return-primary
+sudo failover/install-systemd-service.sh \
+  --heartbeat-url http://AUTOMIX-HOST:8420/health \
+  --relay-url https://FAILOVER-RELAY.local/v1/selection \
+  --relay-token-file /private/relay-token
 ```
 
-It is carried over an owner-only local Unix socket and is rejected unless renewed
-health proof is current and the relay confirms the physical selection. Editing the
-status JSON cannot change the selected path.
+The service starts as a dedicated unprivileged user, receives its root-owned config
+and token through read-only systemd credentials, restarts automatically, and has no
+Linux capabilities or writable system filesystem. Installation itself does not
+report ready until the running supervisor has written a fresh private status record
+showing a relay-confirmed, latched backup selection. A deliberate return is carried
+over an owner-only local Unix socket and is rejected unless renewed health proof is
+current and the relay confirms the physical selection. Editing the status JSON
+cannot change the selected path.
 
 The endpoint makes the application-side heartbeat concrete. It does not replace the
 normally de-energized relay/encoder failover, primary carrier sensing, backup mix,

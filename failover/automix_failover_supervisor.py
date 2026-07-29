@@ -34,8 +34,10 @@ RELAY_ACK_KIND = "automix-failover-selection-ack"
 STATUS_KIND = "automix-failover-supervisor-status"
 CONTROL_KIND = "automix-failover-operator-command"
 CONTROL_RESULT_KIND = "automix-failover-operator-result"
+CONFIG_KIND = "automix-failover-supervisor-config"
 MAX_HTTP_BODY_BYTES = 64 * 1024
 MAX_CONTROL_BODY_BYTES = 4 * 1024
+MAX_CONFIG_BODY_BYTES = 64 * 1024
 MAX_SIGNED_TIMESTAMP_MS = (1 << 63) - 1
 
 
@@ -65,7 +67,20 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def validate_endpoint_url(value: str, label: str) -> str:
-    parsed = urllib.parse.urlsplit(value)
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or any(ord(character) <= 31 or ord(character) == 127 for character in value)
+    ):
+        raise ConfigurationError(
+            f"{label} must not contain whitespace or control characters"
+        )
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        _ = parsed.port
+    except ValueError as error:
+        raise ConfigurationError(f"{label} is malformed") from error
     if parsed.scheme not in ("http", "https"):
         raise ConfigurationError(f"{label} must use http or https")
     if not parsed.hostname:
@@ -101,6 +116,270 @@ def validate_timing_budget(
             "poll interval + heartbeat timeout + relay timeout must be shorter "
             "than the primary lease"
         )
+
+
+@dataclass(frozen=True)
+class SupervisorConfiguration:
+    heartbeat_url: str
+    relay_url: str
+    relay_bearer_token_file: Optional[Path]
+    poll_interval_ms: int
+    heartbeat_timeout_ms: int
+    relay_timeout_ms: int
+    primary_lease_ms: int
+    required_healthy_samples: int
+    control_socket: Path
+    status_path: Path
+    journal_path: Path
+    production_contract: bool = False
+
+
+def require_integer(
+    value: Any, minimum: int, maximum: int, label: str
+) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < minimum
+        or value > maximum
+    ):
+        raise ConfigurationError(
+            f"{label} must be an integer between {minimum} and {maximum}"
+        )
+    return value
+
+
+def require_absolute_path(value: Any, label: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ConfigurationError(f"{label} must be a non-empty path")
+    path = Path(value)
+    if not path.is_absolute():
+        raise ConfigurationError(f"{label} must be an absolute path")
+    return path
+
+
+def require_credential_path(
+    value: Any, config_path: Path, label: str
+) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ConfigurationError(f"{label} must be a non-empty path")
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    if len(path.parts) != 1 or path.name in ("", ".", ".."):
+        raise ConfigurationError(
+            f"{label} must be absolute or a single file beside the config"
+        )
+    return config_path.absolute().parent / path
+
+
+def _read_private_configuration(path: Path) -> Dict[str, Any]:
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise ConfigurationError(
+            f"cannot open supervisor config {path}: {error.strerror}"
+        ) from error
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ConfigurationError(
+                "supervisor config must be a regular file"
+            )
+        if info.st_mode & 0o077:
+            raise ConfigurationError(
+                "supervisor config must not be group/world accessible"
+            )
+        if info.st_size <= 0 or info.st_size > MAX_CONFIG_BODY_BYTES:
+            raise ConfigurationError(
+                "supervisor config must contain 1 byte to 64 KiB"
+            )
+        raw = b""
+        while len(raw) <= MAX_CONFIG_BODY_BYTES:
+            block = os.read(
+                descriptor, min(65536, MAX_CONFIG_BODY_BYTES + 1 - len(raw))
+            )
+            if not block:
+                break
+            raw += block
+    finally:
+        os.close(descriptor)
+    if len(raw) > MAX_CONFIG_BODY_BYTES:
+        raise ConfigurationError("supervisor config exceeds 64 KiB")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ConfigurationError(
+            "supervisor config is not valid UTF-8 JSON"
+        ) from error
+    if not isinstance(payload, dict):
+        raise ConfigurationError("supervisor config must be a JSON object")
+    return payload
+
+
+def validate_supervisor_configuration(
+    configuration: SupervisorConfiguration,
+) -> SupervisorConfiguration:
+    validate_endpoint_url(configuration.heartbeat_url, "heartbeat URL")
+    relay_url = validate_endpoint_url(configuration.relay_url, "relay URL")
+    if configuration.production_contract:
+        if urllib.parse.urlsplit(relay_url).scheme != "https":
+            raise ConfigurationError(
+                "production supervisor config requires an HTTPS relay URL"
+            )
+        if (
+            urllib.parse.urlsplit(configuration.heartbeat_url).query
+            or urllib.parse.urlsplit(relay_url).query
+        ):
+            raise ConfigurationError(
+                "production supervisor endpoints must not contain a query"
+            )
+        if configuration.relay_bearer_token_file is None:
+            raise ConfigurationError(
+                "production supervisor config requires a relay bearer token file"
+            )
+    require_range(
+        float(configuration.poll_interval_ms), 100.0, 500.0, "poll interval"
+    )
+    require_range(
+        float(configuration.heartbeat_timeout_ms),
+        50.0,
+        1000.0,
+        "heartbeat timeout",
+    )
+    require_range(
+        float(configuration.relay_timeout_ms),
+        50.0,
+        1000.0,
+        "relay timeout",
+    )
+    require_integer(
+        configuration.primary_lease_ms, 500, 1500, "primary lease"
+    )
+    require_integer(
+        configuration.required_healthy_samples,
+        2,
+        20,
+        "required healthy samples",
+    )
+    validate_timing_budget(
+        configuration.poll_interval_ms,
+        configuration.heartbeat_timeout_ms,
+        configuration.relay_timeout_ms,
+        configuration.primary_lease_ms,
+    )
+    for label, path in (
+        ("control socket", configuration.control_socket),
+        ("status path", configuration.status_path),
+        ("journal path", configuration.journal_path),
+    ):
+        if not path.is_absolute():
+            raise ConfigurationError(f"{label} must be an absolute path")
+    relay = RelayClient(
+        configuration.relay_url,
+        lease_ms=configuration.primary_lease_ms,
+        timeout_seconds=float(configuration.relay_timeout_ms) / 1000.0,
+        bearer_token_file=configuration.relay_bearer_token_file,
+    )
+    relay.validate_credentials()
+    return configuration
+
+
+def load_supervisor_configuration(path: Path) -> SupervisorConfiguration:
+    payload = _read_private_configuration(path)
+    expected_keys = {
+        "formatVersion",
+        "kind",
+        "heartbeatUrl",
+        "relayUrl",
+        "relayBearerTokenFile",
+        "pollIntervalMs",
+        "heartbeatTimeoutMs",
+        "relayTimeoutMs",
+        "primaryLeaseMs",
+        "requiredHealthySamples",
+        "controlSocket",
+        "statusPath",
+        "journalPath",
+    }
+    unknown = sorted(set(payload) - expected_keys)
+    missing = sorted(expected_keys - set(payload))
+    if unknown:
+        raise ConfigurationError(
+            "supervisor config has unknown fields: " + ", ".join(unknown)
+        )
+    if missing:
+        raise ConfigurationError(
+            "supervisor config is missing fields: " + ", ".join(missing)
+        )
+    version = payload.get("formatVersion")
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version != FORMAT_VERSION
+    ):
+        raise ConfigurationError("supervisor config formatVersion is unsupported")
+    if payload.get("kind") != CONFIG_KIND:
+        raise ConfigurationError("supervisor config kind is unsupported")
+    heartbeat_url = payload.get("heartbeatUrl")
+    relay_url = payload.get("relayUrl")
+    if not isinstance(heartbeat_url, str) or not heartbeat_url:
+        raise ConfigurationError(
+            "supervisor config heartbeatUrl must be a non-empty string"
+        )
+    if not isinstance(relay_url, str) or not relay_url:
+        raise ConfigurationError(
+            "supervisor config relayUrl must be a non-empty string"
+        )
+    configuration = SupervisorConfiguration(
+        heartbeat_url=heartbeat_url,
+        relay_url=relay_url,
+        relay_bearer_token_file=require_absolute_path(
+            str(
+                require_credential_path(
+                    payload.get("relayBearerTokenFile"),
+                    path,
+                    "relay bearer token file",
+                )
+            ),
+            "relay bearer token file",
+        ),
+        poll_interval_ms=require_integer(
+            payload.get("pollIntervalMs"), 100, 500, "poll interval"
+        ),
+        heartbeat_timeout_ms=require_integer(
+            payload.get("heartbeatTimeoutMs"),
+            50,
+            1000,
+            "heartbeat timeout",
+        ),
+        relay_timeout_ms=require_integer(
+            payload.get("relayTimeoutMs"), 50, 1000, "relay timeout"
+        ),
+        primary_lease_ms=require_integer(
+            payload.get("primaryLeaseMs"), 500, 1500, "primary lease"
+        ),
+        required_healthy_samples=require_integer(
+            payload.get("requiredHealthySamples"),
+            2,
+            20,
+            "required healthy samples",
+        ),
+        control_socket=require_absolute_path(
+            payload.get("controlSocket"), "control socket"
+        ),
+        status_path=require_absolute_path(
+            payload.get("statusPath"), "status path"
+        ),
+        journal_path=require_absolute_path(
+            payload.get("journalPath"), "journal path"
+        ),
+        production_contract=True,
+    )
+    return validate_supervisor_configuration(configuration)
 
 
 def build_direct_opener() -> Any:
@@ -303,6 +582,9 @@ class RelayClient:
         if not token or len(token) > 4096 or "\n" in token or "\r" in token:
             raise ConfigurationError("relay bearer token file is invalid")
         return token
+
+    def validate_credentials(self) -> None:
+        self._bearer_token()
 
     def select(
         self, selected_input: str, reason: str, issued_at_ms: Optional[int] = None
@@ -977,31 +1259,39 @@ def build_argument_parser() -> argparse.ArgumentParser:
     supervise = subparsers.add_parser(
         "supervise", help="poll AutoMix and maintain the relay lease"
     )
-    supervise.add_argument("--heartbeat-url", required=True)
-    supervise.add_argument("--relay-url", required=True)
+    supervise.add_argument(
+        "--config",
+        type=Path,
+        help="private production JSON config; cannot be mixed with direct options",
+    )
+    supervise.add_argument("--heartbeat-url")
+    supervise.add_argument("--relay-url")
     supervise.add_argument(
         "--relay-bearer-token-file", type=Path, default=None
     )
-    supervise.add_argument("--poll-interval-ms", type=int, default=250)
-    supervise.add_argument("--heartbeat-timeout-ms", type=int, default=500)
-    supervise.add_argument("--relay-timeout-ms", type=int, default=500)
-    supervise.add_argument("--primary-lease-ms", type=int, default=1500)
-    supervise.add_argument("--required-healthy-samples", type=int, default=3)
+    supervise.add_argument("--poll-interval-ms", type=int)
+    supervise.add_argument("--heartbeat-timeout-ms", type=int)
+    supervise.add_argument("--relay-timeout-ms", type=int)
+    supervise.add_argument("--primary-lease-ms", type=int)
+    supervise.add_argument("--required-healthy-samples", type=int)
     supervise.add_argument(
         "--control-socket",
         type=Path,
-        default=Path("/var/tmp/automix-failover/control.sock"),
     )
     supervise.add_argument(
         "--status-path",
         type=Path,
-        default=Path("/var/tmp/automix-failover/status.json"),
     )
     supervise.add_argument(
         "--journal-path",
         type=Path,
-        default=Path("/var/tmp/automix-failover/events.jsonl"),
     )
+
+    check_config = subparsers.add_parser(
+        "check-config",
+        help="validate a private production config and relay credential",
+    )
+    check_config.add_argument("--config", type=Path, required=True)
 
     return_primary = subparsers.add_parser(
         "return-primary", help="request a deliberate operator return"
@@ -1023,52 +1313,97 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def configuration_from_arguments(
+    arguments: argparse.Namespace,
+) -> SupervisorConfiguration:
+    if arguments.config is not None:
+        direct_fields = (
+            "heartbeat_url",
+            "relay_url",
+            "relay_bearer_token_file",
+            "poll_interval_ms",
+            "heartbeat_timeout_ms",
+            "relay_timeout_ms",
+            "primary_lease_ms",
+            "required_healthy_samples",
+            "control_socket",
+            "status_path",
+            "journal_path",
+        )
+        supplied = [
+            field.replace("_", "-")
+            for field in direct_fields
+            if getattr(arguments, field) is not None
+        ]
+        if supplied:
+            raise ConfigurationError(
+                "--config cannot be mixed with direct options: "
+                + ", ".join(supplied)
+            )
+        return load_supervisor_configuration(arguments.config)
+    if not arguments.heartbeat_url or not arguments.relay_url:
+        raise ConfigurationError(
+            "direct supervision requires --heartbeat-url and --relay-url"
+        )
+    configuration = SupervisorConfiguration(
+        heartbeat_url=arguments.heartbeat_url,
+        relay_url=arguments.relay_url,
+        relay_bearer_token_file=arguments.relay_bearer_token_file,
+        poll_interval_ms=(
+            250
+            if arguments.poll_interval_ms is None
+            else arguments.poll_interval_ms
+        ),
+        heartbeat_timeout_ms=(
+            500
+            if arguments.heartbeat_timeout_ms is None
+            else arguments.heartbeat_timeout_ms
+        ),
+        relay_timeout_ms=(
+            500
+            if arguments.relay_timeout_ms is None
+            else arguments.relay_timeout_ms
+        ),
+        primary_lease_ms=(
+            1500
+            if arguments.primary_lease_ms is None
+            else arguments.primary_lease_ms
+        ),
+        required_healthy_samples=(
+            3
+            if arguments.required_healthy_samples is None
+            else arguments.required_healthy_samples
+        ),
+        control_socket=arguments.control_socket
+        or Path("/var/tmp/automix-failover/control.sock"),
+        status_path=arguments.status_path
+        or Path("/var/tmp/automix-failover/status.json"),
+        journal_path=arguments.journal_path
+        or Path("/var/tmp/automix-failover/events.jsonl"),
+    )
+    return validate_supervisor_configuration(configuration)
+
+
 def run_supervisor(arguments: argparse.Namespace) -> int:
-    poll_interval_ms = int(
-        require_range(
-            float(arguments.poll_interval_ms), 100.0, 500.0, "poll interval"
-        )
-    )
-    heartbeat_timeout_ms = int(
-        require_range(
-            float(arguments.heartbeat_timeout_ms),
-            50.0,
-            1000.0,
-            "heartbeat timeout",
-        )
-    )
-    relay_timeout_ms = int(
-        require_range(
-            float(arguments.relay_timeout_ms),
-            50.0,
-            1000.0,
-            "relay timeout",
-        )
-    )
-    validate_timing_budget(
-        poll_interval_ms,
-        heartbeat_timeout_ms,
-        relay_timeout_ms,
-        arguments.primary_lease_ms,
-    )
+    configuration = configuration_from_arguments(arguments)
     heartbeat = HeartbeatClient(
-        arguments.heartbeat_url,
-        timeout_seconds=float(heartbeat_timeout_ms) / 1000.0,
+        configuration.heartbeat_url,
+        timeout_seconds=float(configuration.heartbeat_timeout_ms) / 1000.0,
     )
     relay = RelayClient(
-        arguments.relay_url,
-        lease_ms=arguments.primary_lease_ms,
-        timeout_seconds=float(relay_timeout_ms) / 1000.0,
-        bearer_token_file=arguments.relay_bearer_token_file,
+        configuration.relay_url,
+        lease_ms=configuration.primary_lease_ms,
+        timeout_seconds=float(configuration.relay_timeout_ms) / 1000.0,
+        bearer_token_file=configuration.relay_bearer_token_file,
     )
     supervisor = FailoverSupervisor(
         heartbeat,
         relay,
-        AtomicStatusWriter(arguments.status_path),
-        EventJournal(arguments.journal_path),
-        required_healthy_samples=arguments.required_healthy_samples,
+        AtomicStatusWriter(configuration.status_path),
+        EventJournal(configuration.journal_path),
+        required_healthy_samples=configuration.required_healthy_samples,
     )
-    control = OperatorControlServer(arguments.control_socket)
+    control = OperatorControlServer(configuration.control_socket)
     control.open()
     stopping = False
 
@@ -1095,7 +1430,9 @@ def run_supervisor(arguments: argparse.Namespace) -> int:
 
             control.serve_pending(handle)
             elapsed = time.monotonic() - iteration_started
-            remaining = (float(poll_interval_ms) / 1000.0) - elapsed
+            remaining = (
+                float(configuration.poll_interval_ms) / 1000.0
+            ) - elapsed
             if remaining > 0:
                 time.sleep(remaining)
     finally:
@@ -1114,6 +1451,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         if arguments.command == "supervise":
             return run_supervisor(arguments)
+        if arguments.command == "check-config":
+            configuration = load_supervisor_configuration(arguments.config)
+            print(
+                json.dumps(
+                    {
+                        "formatVersion": FORMAT_VERSION,
+                        "kind": CONFIG_KIND,
+                        "valid": True,
+                        "heartbeatEndpoint": "validated",
+                        "relayEndpoint": "validated",
+                        "relayCredential": "validated",
+                        "primaryLeaseMs": configuration.primary_lease_ms,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
         if arguments.command == "return-primary":
             response = send_control_command(
                 arguments.control_socket, "return-primary"

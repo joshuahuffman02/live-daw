@@ -1,0 +1,50 @@
+[Unit]
+Description=AutoMix independent failover supervisor
+Documentation=https://github.com/joshuahuffman02/live-daw
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=30
+StartLimitBurst=5
+ConditionPathIsRegular=/etc/automix-failover/supervisor.json
+ConditionPathIsRegular=/etc/automix-failover/relay-token
+
+[Service]
+Type=simple
+User=automix-failover
+Group=automix-failover
+UMask=0077
+RuntimeDirectory=automix-failover
+RuntimeDirectoryMode=0700
+StateDirectory=automix-failover
+StateDirectoryMode=0700
+LoadCredential=supervisor.json:/etc/automix-failover/supervisor.json
+LoadCredential=relay-token:/etc/automix-failover/relay-token
+ExecStartPre=/usr/bin/python3 -B /usr/local/libexec/automix-failover/automix_failover_supervisor.py check-config --config %d/supervisor.json
+ExecStart=/usr/bin/python3 -B /usr/local/libexec/automix-failover/automix_failover_supervisor.py supervise --config %d/supervisor.json
+Restart=always
+RestartSec=250ms
+TimeoutStopSec=3s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

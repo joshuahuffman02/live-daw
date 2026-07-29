@@ -92,18 +92,40 @@ file must be a regular file with mode `0600`; the token is re-read on each reque
 it can be rotated without placing it in the process arguments. Keep both endpoints
 on an isolated management network.
 
-## Run
+## Production installation
 
-Install this directory on the independent controller, create a dedicated
-`automix-failover` operating-system user, and run the supervisor under that
-controller's service manager with restart enabled:
+Use a dedicated Linux/systemd controller that does not share the AutoMix Mac's
+power, network path, or operating system. Copy this directory and provide the
+relay bearer token in a private `0600` file:
 
 ```bash
-python3 automix_failover_supervisor.py supervise \
+sudo ./install-systemd-service.sh \
   --heartbeat-url http://AUTOMIX-HOST:8420/health \
   --relay-url https://FAILOVER-RELAY.local/v1/selection \
-  --relay-bearer-token-file /etc/automix-failover/relay-token
+  --relay-token-file /private/relay-token
 ```
+
+The installer validates the URL/timing/credential contract before changing the
+host, creates the unprivileged `automix-failover` user, installs a root-owned,
+non-daemon-writable configuration and token, and enables
+`automix-failover.service`. systemd supplies both private files as read-only
+credentials; the daemon never owns or receives write access to its production
+configuration.
+
+The unit uses `Restart=always`, a 250 ms restart delay, owner-only runtime/state
+directories, an empty capability set, `NoNewPrivileges`, a read-only system
+filesystem, restricted address families/namespaces, and other systemd sandboxing.
+Every start performs `check-config`, commands backup before polling AutoMix, and
+fails installation readiness unless the relay positively confirms a fresh latched
+backup state. If confirmation fails, the service remains running and continues
+requesting backup, but the installer exits nonzero.
+
+The installed private config is
+`/etc/automix-failover/supervisor.json`. It is a strict versioned JSON contract;
+unknown/missing fields, insecure HTTP relay URLs, unsafe timing, relative runtime
+paths, symlinks, broad permissions, and invalid credentials are rejected. The
+relay token is stored separately and never appears in the unit, config, process
+arguments, or validation output.
 
 Defaults are:
 
@@ -112,26 +134,32 @@ Defaults are:
 - relay timeout: 500 ms;
 - primary lease: 1500 ms;
 - manual-return proof: three advancing healthy samples;
-- control socket: `/var/tmp/automix-failover/control.sock`;
-- status: `/var/tmp/automix-failover/status.json`;
-- durable event journal: `/var/tmp/automix-failover/events.jsonl`.
+- control socket: `/run/automix-failover/control.sock`;
+- status: `/run/automix-failover/status.json`;
+- durable event journal: `/var/lib/automix-failover/events.jsonl`.
 
-The service manager should alarm on process exit or a stale status timestamp. A
-stopped supervisor is nevertheless safe because the relay's primary lease expires
-and its physical default is backup.
+For packaging/CI without modifying a host, add
+`--render-root /absolute/staging/directory`. This renders the exact filesystem
+payload but does not create a user or call systemd. Direct CLI supervision remains
+available for development and deterministic tests; production uses the private
+config and hardened service.
 
 ## Operator commands
 
 Read the current state:
 
 ```bash
-python3 automix_failover_supervisor.py status
+sudo /usr/bin/python3 \
+  /usr/local/libexec/automix-failover/automix_failover_supervisor.py status \
+  --status-path /run/automix-failover/status.json
 ```
 
 After correcting a fault and listening to both paths, deliberately return to primary:
 
 ```bash
-python3 automix_failover_supervisor.py return-primary
+sudo /usr/bin/python3 \
+  /usr/local/libexec/automix-failover/automix_failover_supervisor.py return-primary \
+  --control-socket /run/automix-failover/control.sock
 ```
 
 The return command exits nonzero unless the running supervisor has current health
@@ -144,10 +172,12 @@ the status file; the status file is output only.
 python3 test_automix_failover_supervisor.py
 ```
 
-The deterministic suite covers heartbeat schema/freshness/progression, HTTP failure
-and redirects, startup/restart/shutdown defaults, manual-return gating, primary lease
-failure, relay acknowledgement binding, private credentials/control/status, and the
-end-to-end supervisor state machine.
+The 30-test deterministic suite covers heartbeat
+schema/freshness/progression, HTTP failure and redirects,
+startup/restart/shutdown defaults, manual-return gating, primary lease failure,
+relay acknowledgement binding, private credentials/control/status, strict
+production configuration, hardened systemd payload rendering, and the end-to-end
+supervisor state machine.
 
 These tests verify software behavior only. Before go-live, run and record every real
 kill test in `docs/EXTERNAL_FAILOVER.md`, including power removal from the AutoMix
