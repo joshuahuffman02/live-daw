@@ -39,6 +39,11 @@ jobs:
           scripts/test-production-evidence.sh
           scripts/test-proof-acceptance.sh
 
+      - name: Verify production host readiness audit
+        run: |
+          python3 -W error::ResourceWarning -m unittest -v \
+            scripts/test_production_host_readiness.py
+
       - name: Verify OBS encoder health bridge
         run: |
           python3 -W error::ResourceWarning -m unittest -v \
