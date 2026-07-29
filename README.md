@@ -453,14 +453,16 @@ profile-map mismatches, or incomplete hardware proof.
 Before starting the two-hour staged runner, use
 [`scripts/audit-production-host-readiness.py`](scripts/audit-production-host-readiness.py)
 with the freshly generated inventory/preflight, notarized app, reviewed venue
-profile, and intended recording volume. It checks the whole production Mac at once:
-published source, signature/notarization, real selected route, fresh preflight,
-recording capacity, Planning Center Keychain item, crash relaunch, OBS installation
-and exact-input health, plus the remote public-egress observer. The owner-only JSON
-report cannot be mistaken for final acceptance and must return
+profile, matching release `build-metadata.json`, and intended recording volume. It
+checks the whole production Mac at once: published source; the signature-sealed
+in-app provenance, release metadata, and exact executable hash; notarization; real
+selected route; fresh preflight; recording capacity; Planning Center Keychain item;
+crash relaunch; OBS installation and exact-input health; plus the remote
+public-egress observer. The owner-only JSON report cannot be mistaken for final
+acceptance and must return
 `readyForHardwareProofRun=true` before the staged runner begins. Production staged
 runs require `HOST_READINESS_REPORT`, re-run the live audit, and bind its fresh
-hashes to the exact phase/app/profile/route/recording volume. See
+hashes to the exact phase/app/release metadata/profile/route/recording volume. See
 [`docs/PRODUCTION_HOST_READINESS.md`](docs/PRODUCTION_HOST_READINESS.md).
 
 For real hardware, Output Isolation is a blocking check: use a stream encoder,

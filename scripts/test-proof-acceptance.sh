@@ -69,12 +69,36 @@ labels=(
   replay-comparison
   rollout-observation
 )
+fixture_app_binary_sha="1111111111111111111111111111111111111111111111111111111111111111"
+fixture_provenance_sha="2222222222222222222222222222222222222222222222222222222222222222"
+signature_log="${fixture_root}/app-signature-verification.txt"
+print -r -- "fixture signature, notarization, and Gatekeeper verification" > "${signature_log}"
+signature_log_sha="$(/usr/bin/shasum -a 256 "${signature_log}" | /usr/bin/awk '{print $1}')"
 typeset -A evidence_paths
 for label in "${labels[@]}"; do
   path="${fixture_root}/${label}.txt"
   if [[ "${label}" == "build-metadata" ]]; then
     /usr/bin/plutil -create xml1 "${path}"
+    /usr/bin/plutil -insert formatVersion -integer 1 "${path}"
+    /usr/bin/plutil -insert kind -string automix-native-release-build "${path}"
     /usr/bin/plutil -insert commit -string 0123456789abcdef0123456789abcdef01234567 "${path}"
+    /usr/bin/plutil -insert appBinarySHA256 -string "${fixture_app_binary_sha}" "${path}"
+    /usr/bin/plutil -insert signedProvenanceSHA256 -string "${fixture_provenance_sha}" "${path}"
+    /usr/bin/plutil -convert json "${path}"
+  elif [[ "${label}" == "app-integrity" ]]; then
+    build_metadata_sha="$(/usr/bin/shasum -a 256 "${evidence_paths[build-metadata]}" | /usr/bin/awk '{print $1}')"
+    /usr/bin/plutil -create xml1 "${path}"
+    /usr/bin/plutil -insert formatVersion -integer 1 "${path}"
+    /usr/bin/plutil -insert kind -string automix-app-integrity "${path}"
+    /usr/bin/plutil -insert sourceCommit -string 0123456789abcdef0123456789abcdef01234567 "${path}"
+    /usr/bin/plutil -insert appBinarySHA256 -string "${fixture_app_binary_sha}" "${path}"
+    /usr/bin/plutil -insert signedProvenanceSHA256 -string "${fixture_provenance_sha}" "${path}"
+    /usr/bin/plutil -insert buildMetadataSHA256 -string "${build_metadata_sha}" "${path}"
+    /usr/bin/plutil -insert signatureVerificationLogPath -string "${signature_log}" "${path}"
+    /usr/bin/plutil -insert signatureVerificationLogSHA256 -string "${signature_log_sha}" "${path}"
+    /usr/bin/plutil -insert signatureVerified -bool true "${path}"
+    /usr/bin/plutil -insert notarizationStapled -bool true "${path}"
+    /usr/bin/plutil -insert gatekeeperAccepted -bool true "${path}"
     /usr/bin/plutil -convert json "${path}"
   elif [[ -n "${production_evidence_paths[${label}]:-}" ]]; then
     path="${production_evidence_paths[${label}]}"
@@ -120,7 +144,11 @@ for label in "${labels[@]}"; do
 done
 /usr/bin/plutil -convert json -o "${json}" "${plist}"
 /bin/rm "${plist}"
-/usr/bin/ssh-keygen -Y sign -f "${key_path}" -n live-daw-acceptance "${json}" >/dev/null
+resign_acceptance() {
+  /bin/rm -f "${json}.sig"
+  /usr/bin/ssh-keygen -Y sign -f "${key_path}" -n live-daw-acceptance "${json}" >/dev/null
+}
+resign_acceptance
 
 "${script_directory}/verify-proof-acceptance.sh" \
   --acceptance-dir "${bundle}" \
@@ -128,6 +156,37 @@ done
   --expected-phase sermon \
   --expected-decision approved \
   --manifest "${evidence_paths[full-check-manifest]}" >/dev/null
+
+integer app_integrity_index=0
+while [[ "$(/usr/bin/plutil -extract "evidence.${app_integrity_index}.label" raw -o - "${json}")" !=
+         "app-integrity" ]]; do
+  app_integrity_index="$(( app_integrity_index + 1 ))"
+done
+/usr/bin/plutil -replace appBinarySHA256 -string \
+  ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \
+  "${evidence_paths[app-integrity]}"
+app_integrity_sha="$(/usr/bin/shasum -a 256 "${evidence_paths[app-integrity]}" | /usr/bin/awk '{print $1}')"
+app_integrity_bytes="$(/usr/bin/stat -f '%z' "${evidence_paths[app-integrity]}")"
+/usr/bin/plutil -replace "evidence.${app_integrity_index}.sha256" -string \
+  "${app_integrity_sha}" "${json}"
+/usr/bin/plutil -replace "evidence.${app_integrity_index}.bytes" -integer \
+  "${app_integrity_bytes}" "${json}"
+resign_acceptance
+if "${script_directory}/verify-proof-acceptance.sh" \
+    --acceptance-dir "${bundle}" \
+    --trusted-signers "${trusted_signers}" >/dev/null 2>&1; then
+  print -u2 "Verifier accepted app integrity bound to a different release binary."
+  exit 1
+fi
+/usr/bin/plutil -replace appBinarySHA256 -string \
+  "${fixture_app_binary_sha}" "${evidence_paths[app-integrity]}"
+app_integrity_sha="$(/usr/bin/shasum -a 256 "${evidence_paths[app-integrity]}" | /usr/bin/awk '{print $1}')"
+app_integrity_bytes="$(/usr/bin/stat -f '%z' "${evidence_paths[app-integrity]}")"
+/usr/bin/plutil -replace "evidence.${app_integrity_index}.sha256" -string \
+  "${app_integrity_sha}" "${json}"
+/usr/bin/plutil -replace "evidence.${app_integrity_index}.bytes" -integer \
+  "${app_integrity_bytes}" "${json}"
+resign_acceptance
 
 wrong_manifest="${fixture_root}/wrong-manifest.txt"
 print -r -- "different manifest" > "${wrong_manifest}"

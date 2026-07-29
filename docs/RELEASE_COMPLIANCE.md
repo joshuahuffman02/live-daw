@@ -41,8 +41,9 @@ notarize, install, or run `AutoMix Native.app`.
 
 ## Evidence to retain
 
-- `build-metadata.json`, `notary-result.json`, `signed-entitlements.plist`, ZIP
-  SHA-256, and the stapled app;
+- `build-metadata.json`, the code-signature-sealed
+  `AutoMixReleaseProvenance.plist`, `notary-result.json`,
+  `signed-entitlements.plist`, ZIP SHA-256, and the stapled app;
 - the exact source commit and CI run used for the build;
 - each staged run's `continuous-recording-proof.json` and complete checkpointed
   64-input-plus-program segment directory;

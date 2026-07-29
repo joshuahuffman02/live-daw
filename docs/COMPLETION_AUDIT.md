@@ -23,7 +23,7 @@ hardware proof.
 | SHADOW-first progressive autonomy | Candidate-only shadow behavior tests; venue profiles default SHADOW on; native one-second 64-channel candidate-decision JSONL; semantic coverage/route/non-application verifier; manifest/commit-bound `rollout-observation` evidence; `docs/STAGED_ROLLOUT.md` | Workflow and signed promotion gates are verified. An approved bundle now requires a full, continuous, non-simulated native SHADOW capture, supervised service, and reviewed real Planning Center cue trace. Those venue events have not yet occurred. |
 | Dependency and security hygiene | Locked npm graph, zero high-level audit findings, current React/Vite/TypeScript/JUCE releases, pinned CI actions, least-privilege CI token, HttpOnly cookie-only remote control, pairing lockout/bounds, snapshot-bound remote commands, CSP | Verified locally and in the hosted macOS pipeline. |
 | Realtime safety and human authority | No-allocation guards for engine, automixer, reverb/delay, brain mailbox, native input/render/recording/overrun paths; SAFE/FREEZE/manual controls and tests; fail-closed remote mutation on stale telemetry, 750 ms pre-routing expiry, one-second acknowledgement timeout, and local-only FREEZE | Verified in deterministic and simulated native paths. Real callback timing/xrun behavior remains a rig measurement. |
-| Signed/notarized production artifact | Hardened Runtime, audio-input entitlement, fail-closed release builder, signature/notary/staple/Gatekeeper verification, proof runner binding | Pipeline verified through unsigned/ad-hoc negative and entitlement tests. No Developer ID Application identity or notary profile is installed, so no production artifact exists yet. |
+| Signed/notarized production artifact | Hardened Runtime, audio-input entitlement, fail-closed release builder, code-signature-sealed source provenance, executable/release-metadata hash binding, signature/notary/staple/Gatekeeper verification, proof runner and signed-acceptance cross-binding | Pipeline verified through unsigned/ad-hoc, provenance-mismatch, and entitlement negative tests. No Developer ID Application identity or notary profile is installed, so no production artifact exists yet. |
 | Real 64-channel 96 kHz HD96/Dante proof | Full-check runner, semantic manifest verifier, simulation-resistant source checks, notarized-build gate | Not achieved. Current inventory contains only built-in 48 kHz speakers and the explicit simulated HD96 device. |
 | Sermon-autopilot milestone | Sermon-first staged runner, minimum two-hour health/stability/recording proof, post-review SSH-signed decision bundle, trusted-signer and evidence-hash verifier | Software gate verified; the approval itself is not achieved because it requires the production rig, complete evidence, and a supervised service. |
 | Worship autonomy acceptance | Cryptographically verified approved sermon prerequisite bound to the exact manifest, recorded-service comparison, supervised worship proof, equivalent signed final go-live decision | Not achieved and deliberately gated behind verified sermon acceptance. |
@@ -44,14 +44,16 @@ hardware proof.
 - Browser master safety: **3 passed, 0 failed** for sustained overload, isolated
   full-scale transients, post-limiter true-peak ceiling compliance, and transparent
   sub-ceiling operation.
-- Production-host readiness audit: **9 passed, 0 failed** for complete and blocked
+- Production-host readiness audit: **12 passed, 0 failed** for complete and blocked
   fixture hosts, simulated-route relabel rejection, token-bearing URL redaction,
   redirect/compressed-response refusal, loopback/control-character URL rejection,
-  atomic owner-only report handling, and fresh hash-bound report re-verification,
-  including rejection when a production staged run tries to skip the gate.
-  Production staged runs bind it to the exact phase, app, profile, route, duration,
-  reserve, and recording volume. The real-host result is deliberately not a
-  production-acceptance substitute.
+  atomic owner-only report handling, Developer ID/Hardened Runtime/production-
+  entitlement enforcement, signed-app/release-metadata mismatch rejection, and fresh
+  hash-bound report re-verification, including rejection when a production staged
+  run tries to skip the gate.
+  Production staged runs bind it to the exact phase, app, signed release metadata,
+  profile, route, duration, reserve, and recording volume. The real-host result is
+  deliberately not a production-acceptance substitute.
 - Independent failover supervisor: **24 passed, 0 failed** for fail-closed
   heartbeat validation, startup/restart defaults, short primary leases, manual-only
   return, relay acknowledgement binding, controller state, and private operator
@@ -83,10 +85,13 @@ hardware proof.
   rejects malformed journals, hidden warning/critical events, short windows, and
   manifest substitution. Fail-closed authoring tests prove template defaults cannot
   pass, bindings/hashes are generated, and finalized reports are not silently
-  overwritten. The complete chain rejects evidence modified after signing,
-  unhealthy/stale/gapped/short stream observations, slow/unsafe failover, excessive
-  or inconsistent A/V drift, failed recovery behavior, unsafe replay, a mismatched
-  replay commit, SHADOW automation applied to program, an unsupervised service,
+  overwritten. The complete chain cross-binds the signed in-app source provenance,
+  release metadata, executable hash, signature log, and structured integrity report;
+  it rejects a freshly re-signed decision that mixes those between builds, evidence
+  modified after signing, unhealthy/stale/gapped/short stream observations,
+  slow/unsafe failover, excessive or inconsistent A/V drift, failed recovery
+  behavior, unsafe replay, a mismatched replay commit, SHADOW automation applied to
+  program, an unsupervised service,
   simulated/generic-route, short, gapped, silent, frozen, or overlapping SHADOW evidence,
   unexpected Planning Center scene changes, Planning Center traces from another
   plan or with missing cue events, wrong rollout phase, and reports bound to another

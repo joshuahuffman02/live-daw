@@ -90,6 +90,7 @@ if (( ${#reviewer} > 200 || ${#notes} > 2000 )) ||
 fi
 
 app_binary="${app_path}/Contents/MacOS/AutoMix Native"
+signed_provenance="${app_path}/Contents/Resources/AutoMixReleaseProvenance.plist"
 if [[ ! -x "${app_binary}" ]]; then
   print -u2 "AutoMix executable not found or not executable: ${app_binary}"
   exit 3
@@ -133,13 +134,57 @@ if ! /usr/sbin/spctl --assess --type execute "${app_path}"; then
   exit 4
 fi
 app_binary_sha="$(/usr/bin/shasum -a 256 "${app_binary}" | /usr/bin/awk '{print $1}')"
-if ! /usr/bin/grep -Fq "${app_binary_sha}" "${app_integrity_path}"; then
-  print -u2 "App integrity evidence does not bind the current executable SHA-256."
+if [[ ! -f "${signed_provenance}" || -L "${signed_provenance}" ||
+      ! -f "${build_metadata_path}" || -L "${build_metadata_path}" ||
+      ! -f "${app_integrity_path}" || -L "${app_integrity_path}" ]]; then
+  print -u2 "Release provenance, build metadata, and app integrity must be regular non-symlink files."
   exit 4
 fi
+signed_provenance_sha="$(/usr/bin/shasum -a 256 "${signed_provenance}" | /usr/bin/awk '{print $1}')"
+build_metadata_sha="$(/usr/bin/shasum -a 256 "${build_metadata_path}" | /usr/bin/awk '{print $1}')"
+metadata_kind="$(/usr/bin/plutil -extract kind raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_format="$(/usr/bin/plutil -extract formatVersion raw -o - "${build_metadata_path}" 2>/dev/null || true)"
 build_commit="$(/usr/bin/plutil -extract commit raw -o - "${build_metadata_path}" 2>/dev/null || true)"
-if [[ "${build_commit}" != "${source_commit}" ]]; then
-  print -u2 "Build metadata does not bind the supplied source commit."
+metadata_binary_sha="$(/usr/bin/plutil -extract appBinarySHA256 raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_provenance_sha="$(/usr/bin/plutil -extract signedProvenanceSHA256 raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+provenance_kind="$(/usr/bin/plutil -extract kind raw -o - "${signed_provenance}" 2>/dev/null || true)"
+provenance_format="$(/usr/bin/plutil -extract formatVersion raw -o - "${signed_provenance}" 2>/dev/null || true)"
+provenance_commit="$(/usr/bin/plutil -extract sourceCommit raw -o - "${signed_provenance}" 2>/dev/null || true)"
+integrity_kind="$(/usr/bin/plutil -extract kind raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_format="$(/usr/bin/plutil -extract formatVersion raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_commit="$(/usr/bin/plutil -extract sourceCommit raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_binary_sha="$(/usr/bin/plutil -extract appBinarySHA256 raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_provenance_sha="$(/usr/bin/plutil -extract signedProvenanceSHA256 raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_metadata_sha="$(/usr/bin/plutil -extract buildMetadataSHA256 raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_signature_verified="$(/usr/bin/plutil -extract signatureVerified raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_notarization_stapled="$(/usr/bin/plutil -extract notarizationStapled raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_gatekeeper_accepted="$(/usr/bin/plutil -extract gatekeeperAccepted raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+signature_log_path="$(/usr/bin/plutil -extract signatureVerificationLogPath raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+signature_log_sha="$(/usr/bin/plutil -extract signatureVerificationLogSHA256 raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+if [[ "${metadata_kind}" != "automix-native-release-build" ||
+      "${metadata_format}" != "1" ||
+      "${provenance_kind}" != "automix-native-signed-provenance" ||
+      "${provenance_format}" != "1" ||
+      "${integrity_kind}" != "automix-app-integrity" ||
+      "${integrity_format}" != "1" ||
+      "${build_commit}" != "${source_commit}" ||
+      "${provenance_commit}" != "${source_commit}" ||
+      "${integrity_commit}" != "${source_commit}" ||
+      "${metadata_binary_sha}" != "${app_binary_sha}" ||
+      "${integrity_binary_sha}" != "${app_binary_sha}" ||
+      "${metadata_provenance_sha}" != "${signed_provenance_sha}" ||
+      "${integrity_provenance_sha}" != "${signed_provenance_sha}" ||
+      "${integrity_metadata_sha}" != "${build_metadata_sha}" ||
+      "${integrity_signature_verified}" != "true" ||
+      "${integrity_notarization_stapled}" != "true" ||
+      "${integrity_gatekeeper_accepted}" != "true" ]]; then
+  print -u2 "Signed app, release metadata, and app integrity evidence do not bind the same source and binary."
+  exit 4
+fi
+if [[ ! -f "${signature_log_path}" || -L "${signature_log_path}" ||
+      "$(/usr/bin/shasum -a 256 "${signature_log_path}" | /usr/bin/awk '{print $1}')" !=
+        "${signature_log_sha}" ]]; then
+  print -u2 "App integrity evidence does not bind an intact signature-verification log."
   exit 4
 fi
 

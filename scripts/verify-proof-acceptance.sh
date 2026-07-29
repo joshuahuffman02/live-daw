@@ -177,6 +177,55 @@ for label in "${required_labels[@]}"; do
     exit 6
   fi
 done
+
+build_metadata_path="${verified_evidence_paths[build-metadata]}"
+app_integrity_path="${verified_evidence_paths[app-integrity]}"
+if [[ ! -f "${build_metadata_path}" || -L "${build_metadata_path}" ||
+      ! -f "${app_integrity_path}" || -L "${app_integrity_path}" ]]; then
+  print -u2 "Release metadata and app integrity evidence must be regular non-symlink files."
+  exit 6
+fi
+metadata_kind="$(/usr/bin/plutil -extract kind raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_format="$(/usr/bin/plutil -extract formatVersion raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_commit="$(/usr/bin/plutil -extract commit raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_binary_sha="$(/usr/bin/plutil -extract appBinarySHA256 raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_provenance_sha="$(/usr/bin/plutil -extract signedProvenanceSHA256 raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+integrity_kind="$(/usr/bin/plutil -extract kind raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_format="$(/usr/bin/plutil -extract formatVersion raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_commit="$(/usr/bin/plutil -extract sourceCommit raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_binary_sha="$(/usr/bin/plutil -extract appBinarySHA256 raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_provenance_sha="$(/usr/bin/plutil -extract signedProvenanceSHA256 raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_metadata_sha="$(/usr/bin/plutil -extract buildMetadataSHA256 raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_signature_verified="$(/usr/bin/plutil -extract signatureVerified raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_notarization_stapled="$(/usr/bin/plutil -extract notarizationStapled raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+integrity_gatekeeper_accepted="$(/usr/bin/plutil -extract gatekeeperAccepted raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+signature_log_path="$(/usr/bin/plutil -extract signatureVerificationLogPath raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+signature_log_sha="$(/usr/bin/plutil -extract signatureVerificationLogSHA256 raw -o - "${app_integrity_path}" 2>/dev/null || true)"
+build_metadata_sha="$(/usr/bin/shasum -a 256 "${build_metadata_path}" | /usr/bin/awk '{print $1}')"
+if [[ "${metadata_kind}" != "automix-native-release-build" ||
+      "${metadata_format}" != "1" ||
+      "${integrity_kind}" != "automix-app-integrity" ||
+      "${integrity_format}" != "1" ||
+      "${metadata_commit}" != "${source_commit}" ||
+      "${integrity_commit}" != "${source_commit}" ||
+      ! "${metadata_binary_sha}" =~ '^[0-9a-f]{64}$' ||
+      "${integrity_binary_sha}" != "${metadata_binary_sha}" ||
+      ! "${metadata_provenance_sha}" =~ '^[0-9a-f]{64}$' ||
+      "${integrity_provenance_sha}" != "${metadata_provenance_sha}" ||
+      "${integrity_metadata_sha}" != "${build_metadata_sha}" ||
+      "${integrity_signature_verified}" != "true" ||
+      "${integrity_notarization_stapled}" != "true" ||
+      "${integrity_gatekeeper_accepted}" != "true" ]]; then
+  print -u2 "Signed acceptance does not bind one release commit, binary, provenance resource, and integrity report."
+  exit 6
+fi
+if [[ ! -f "${signature_log_path}" || -L "${signature_log_path}" ||
+      "$(/usr/bin/shasum -a 256 "${signature_log_path}" | /usr/bin/awk '{print $1}')" !=
+        "${signature_log_sha}" ]]; then
+  print -u2 "Signed acceptance app integrity does not bind its signature-verification log."
+  exit 6
+fi
+
 if [[ "${phase}" == "worship" ]]; then
   for label in sermon-acceptance-json sermon-acceptance-signature; do
     if [[ -z "${seen_labels[${label}]:-}" ]]; then

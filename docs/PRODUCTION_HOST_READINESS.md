@@ -21,6 +21,7 @@ Generate the inventory and preflight immediately before the audit:
 APP="/Applications/AutoMix Native.app/Contents/MacOS/AutoMix Native"
 EVIDENCE_ROOT="/Volumes/AutoMix Proof/sermon-readiness"
 PROFILE="$HOME/Library/Application Support/AutoMix Native/VenueProfile.json"
+BUILD_METADATA="/Volumes/AutoMix Proof/Release/build-metadata.json"
 
 "$APP" --smoke-test --write-device-inventory \
   --input-uid "DANTE_OR_AGGREGATE_INPUT_UID" \
@@ -42,6 +43,7 @@ Then run the consolidated audit with the exact generated files:
 python3 scripts/audit-production-host-readiness.py \
   --phase sermon \
   --app "/Applications/AutoMix Native.app" \
+  --build-metadata "$BUILD_METADATA" \
   --inventory "$EVIDENCE_ROOT/automix-core-audio-device-inventory-YYYYMMDD-HHMMSS.json" \
   --preflight "$EVIDENCE_ROOT/automix-core-audio-preflight-YYYYMMDD-HHMMSS.json" \
   --profile "$PROFILE" \
@@ -59,8 +61,12 @@ other evidence attachments.
 The report requires all eleven checks to pass:
 
 1. The exact clean source commit is published to `origin/main`.
-2. The supplied app is an executable Developer ID build with an intact signature,
-   stapled notarization ticket, and Gatekeeper acceptance.
+2. The supplied app is an executable Developer ID build with Hardened Runtime,
+   production audio-input entitlement, no debugger entitlement, an intact signature,
+   stapled notarization ticket, and Gatekeeper acceptance. Its code-signature
+   envelope must contain `AutoMixReleaseProvenance.plist`, and the untouched release
+   `build-metadata.json` must bind that signed source commit and the exact executable
+   SHA-256.
 3. A fresh inventory selects a real production-eligible 64-channel input and isolated
    stream output; simulated devices cannot satisfy either side.
 4. A fresh `core-audio-device` preflight is ready and bound to the inventory's exact
@@ -96,11 +102,11 @@ Existing output is never overwritten without `--replace`, and symlink output tar
 are rejected. `--skip-network-probes` is available for offline diagnostics, but both
 observer checks remain failed; it can never produce a ready report.
 
-Ready reports bind the source commit and SHA-256 hashes of the app binary, inventory,
-preflight, and venue profile. They expire after 15 minutes when used by the staged
-runner. Verification rechecks every file binding, signature, route, free-space
-measurement, Keychain/LaunchAgent state, and live observer instead of trusting edited
-booleans:
+Ready reports bind the source commit and SHA-256 hashes of the app binary, release
+metadata, signed in-app provenance, inventory, preflight, and venue profile. They
+expire after 15 minutes when used by the staged runner. Verification rechecks every
+file binding, signature, provenance relationship, route, free-space measurement,
+Keychain/LaunchAgent state, and live observer instead of trusting edited booleans:
 
 ```sh
 python3 scripts/audit-production-host-readiness.py \

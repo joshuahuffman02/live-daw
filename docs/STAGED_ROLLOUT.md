@@ -17,8 +17,9 @@ first because speech automation has fewer interacting sources than a worship mix
   VPN/firewall path as described in `egress/README.md`.
 - The signed app is installed at its permanent path; the LaunchAgent is installed.
   The proof runner independently requires a valid signature, stapled notarization
-  ticket, and Gatekeeper acceptance, then records the signing details and executable
-  SHA-256 in `app-integrity.txt`.
+  ticket, and Gatekeeper acceptance. It verifies that the signed in-app provenance,
+  release `build-metadata.json`, published commit, and executable SHA-256 all describe
+  the same build, then records those bindings in `app-integrity.json`.
 - Continuous recording has adequate free space (about 91.2 GB/hour at 64+2 channels,
   96 kHz float). The staged runner now records raw inputs plus program for the complete
   stability window, refuses to start unless the planned capture plus reserve fits,
@@ -101,10 +102,10 @@ For an approved sermon, bind the exact proof and supporting evidence:
   --trusted-signers "/secure/live-daw-allowed-signers" \
   --source-commit "40_CHARACTER_GIT_SHA" \
   --app "/Applications/AutoMix Native.app" \
-  --build-metadata "/Volumes/Proof/Release/build-metadata.json" \
+  --build-metadata "/Volumes/Proof/AutoMix/sermon-.../build-metadata.json" \
   --manifest "/Volumes/Proof/AutoMix/sermon-.../automix-core-audio-full-check-....json" \
   --recording-report "/Volumes/Proof/AutoMix/sermon-.../automix-continuous-recording-.../continuous-recording-proof.json" \
-  --app-integrity "/Volumes/Proof/AutoMix/sermon-.../app-integrity.txt" \
+  --app-integrity "/Volumes/Proof/AutoMix/sermon-.../app-integrity.json" \
   --stream-health "/Volumes/Proof/AutoMix/sermon-.../stream-health-observations.tsv" \
   --runtime-incidents "/Volumes/Proof/AutoMix/sermon-.../runtime-incident-evidence.json" \
   --external-failover "/Volumes/Proof/AutoMix/sermon-.../external-failover-evidence.json" \
@@ -158,6 +159,7 @@ example,
 
 ```sh
 REHEARSAL_ONLY=1 STABILITY_SECONDS=30 \
+  BUILD_METADATA="/Volumes/Proof/Release/build-metadata.json" \
   ./scripts/run-staged-hardware-proof.sh sermon \
   "/Applications/AutoMix Native.app" \
   "DANTE_INPUT_UID" "ENCODER_OUTPUT_UID" \
@@ -165,10 +167,11 @@ REHEARSAL_ONLY=1 STABILITY_SECONDS=30 \
   "/Volumes/Proof/AutoMix"
 ```
 
-The same route, signature, health, and recording checks run, but the result is labeled
-as rehearsal-only. A rehearsal may omit the host-readiness report and receives an
-explicit warning. Without `REHEARSAL_ONLY=1`, the script rejects a missing readiness
-report or a stability window shorter than 7,200 seconds.
+The same route, signature, signed-provenance, health, and recording checks run, but
+the result is labeled as rehearsal-only. A rehearsal may omit the host-readiness
+report and receives an explicit warning, but it must identify the matching release
+metadata with `BUILD_METADATA`. Without `REHEARSAL_ONLY=1`, the script rejects a
+missing readiness report or a stability window shorter than 7,200 seconds.
 
 ## Production acceptance
 

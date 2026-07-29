@@ -8,6 +8,7 @@ usage() {
   print -u2 ""
   print -u2 "Production environment: HOST_READINESS_REPORT=/absolute/ready-report.json"
   print -u2 "Optional environment: STABILITY_SECONDS=7200 SOUNDCHECK_SECONDS=30 RECORDING_RESERVE_GB=20"
+  print -u2 "Rehearsal-only environment: BUILD_METADATA=/absolute/release/build-metadata.json"
   print -u2 "Short engineering runs require REHEARSAL_ONLY=1 and never mint production proof."
 }
 
@@ -30,7 +31,9 @@ soundcheck_seconds="${SOUNDCHECK_SECONDS:-30}"
 recording_reserve_gb="${RECORDING_RESERVE_GB:-20}"
 rehearsal_only="${REHEARSAL_ONLY:-0}"
 host_readiness_report="${HOST_READINESS_REPORT:-}"
+build_metadata_path="${BUILD_METADATA:-}"
 app_binary="${app_path}/Contents/MacOS/AutoMix Native"
+signed_provenance="${app_path}/Contents/Resources/AutoMixReleaseProvenance.plist"
 script_directory="${0:A:h}"
 
 if [[ "${phase}" != "sermon" && "${phase}" != "worship" ]]; then
@@ -80,28 +83,30 @@ fi
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 phase_directory="${evidence_root}/${phase}-${timestamp}"
 /bin/mkdir -p "${phase_directory}"
-app_integrity_report="${phase_directory}/app-integrity.txt"
+app_signature_log="${phase_directory}/app-signature-verification.txt"
+app_integrity_report="${phase_directory}/app-integrity.json"
 
 # A rehearsal build can exercise every software check but cannot mint production
 # hardware proof. Bind the evidence to an intact, notarized, Gatekeeper-accepted app.
-: > "${app_integrity_report}"
+: > "${app_signature_log}"
 if ! /usr/bin/codesign --verify --deep --strict --verbose=2 \
-    "${app_path}" >> "${app_integrity_report}" 2>&1; then
-  print -u2 "Hardware proof requires an intact signed app; inspect ${app_integrity_report}."
+    "${app_path}" >> "${app_signature_log}" 2>&1; then
+  print -u2 "Hardware proof requires an intact signed app; inspect ${app_signature_log}."
   exit 3
 fi
-/usr/bin/codesign -dv --verbose=4 "${app_path}" >> "${app_integrity_report}" 2>&1
+/usr/bin/codesign -dv --verbose=4 "${app_path}" >> "${app_signature_log}" 2>&1
 if ! /usr/bin/xcrun stapler validate \
-    "${app_path}" >> "${app_integrity_report}" 2>&1; then
-  print -u2 "Hardware proof requires a stapled notarization ticket; inspect ${app_integrity_report}."
+    "${app_path}" >> "${app_signature_log}" 2>&1; then
+  print -u2 "Hardware proof requires a stapled notarization ticket; inspect ${app_signature_log}."
   exit 3
 fi
 if ! /usr/sbin/spctl --assess --type execute --verbose=4 \
-    "${app_path}" >> "${app_integrity_report}" 2>&1; then
-  print -u2 "Hardware proof requires Gatekeeper acceptance; inspect ${app_integrity_report}."
+    "${app_path}" >> "${app_signature_log}" 2>&1; then
+  print -u2 "Hardware proof requires Gatekeeper acceptance; inspect ${app_signature_log}."
   exit 3
 fi
-/usr/bin/shasum -a 256 "${app_binary}" >> "${app_integrity_report}"
+app_binary_sha256="$(/usr/bin/shasum -a 256 "${app_binary}" | /usr/bin/awk '{print $1}')"
+print -r -- "${app_binary_sha256}  ${app_binary}" >> "${app_signature_log}"
 
 if [[ -n "${host_readiness_report}" ]]; then
   if [[ ! -f "${host_readiness_report}" || -L "${host_readiness_report}" ]]; then
@@ -120,6 +125,7 @@ if [[ -n "${host_readiness_report}" ]]; then
 
   report_phase="$(/usr/bin/plutil -extract phase raw -o - "${host_readiness_report}")"
   report_app="$(/usr/bin/plutil -extract inputs.appPath raw -o - "${host_readiness_report}")"
+  report_build_metadata="$(/usr/bin/plutil -extract inputs.buildMetadataPath raw -o - "${host_readiness_report}")"
   report_profile="$(/usr/bin/plutil -extract inputs.profilePath raw -o - "${host_readiness_report}")"
   report_inventory="$(/usr/bin/plutil -extract inputs.inventoryPath raw -o - "${host_readiness_report}")"
   report_recording_root="$(/usr/bin/plutil -extract inputs.recordingRoot raw -o - "${host_readiness_report}")"
@@ -136,6 +142,12 @@ if [[ -n "${host_readiness_report}" ]]; then
     print -u2 "Host readiness is bound to a different phase, app, profile, or Core Audio route."
     exit 3
   fi
+  if [[ -n "${build_metadata_path}" &&
+        "${build_metadata_path:A}" != "${report_build_metadata:A}" ]]; then
+    print -u2 "BUILD_METADATA does not match the release metadata bound by host readiness."
+    exit 3
+  fi
+  build_metadata_path="${report_build_metadata}"
   if (( report_duration < stability_seconds || report_reserve < recording_reserve_gb )); then
     print -u2 "Host readiness duration/reserve is smaller than this proof request."
     exit 3
@@ -155,6 +167,60 @@ if [[ -n "${host_readiness_report}" ]]; then
 elif [[ "${rehearsal_only}" == "1" ]]; then
   print -u2 "WARNING: rehearsal is running without a production host-readiness report."
 fi
+
+if [[ -z "${build_metadata_path}" ||
+      ! -f "${build_metadata_path}" ||
+      -L "${build_metadata_path}" ||
+      ! -f "${signed_provenance}" ||
+      -L "${signed_provenance}" ]]; then
+  print -u2 "The untouched release build-metadata.json and signed provenance resource are required."
+  print -u2 "For rehearsal-only runs, set BUILD_METADATA to the release metadata path."
+  exit 3
+fi
+
+metadata_kind="$(/usr/bin/plutil -extract kind raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_format="$(/usr/bin/plutil -extract formatVersion raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_commit="$(/usr/bin/plutil -extract commit raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_binary_sha="$(/usr/bin/plutil -extract appBinarySHA256 raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+metadata_provenance_sha="$(/usr/bin/plutil -extract signedProvenanceSHA256 raw -o - "${build_metadata_path}" 2>/dev/null || true)"
+provenance_kind="$(/usr/bin/plutil -extract kind raw -o - "${signed_provenance}" 2>/dev/null || true)"
+provenance_format="$(/usr/bin/plutil -extract formatVersion raw -o - "${signed_provenance}" 2>/dev/null || true)"
+provenance_commit="$(/usr/bin/plutil -extract sourceCommit raw -o - "${signed_provenance}" 2>/dev/null || true)"
+signed_provenance_sha256="$(/usr/bin/shasum -a 256 "${signed_provenance}" | /usr/bin/awk '{print $1}')"
+if [[ "${metadata_kind}" != "automix-native-release-build" ||
+      "${metadata_format}" != "1" ||
+      "${provenance_kind}" != "automix-native-signed-provenance" ||
+      "${provenance_format}" != "1" ||
+      ! "${metadata_commit}" =~ '^[0-9a-f]{40}$' ||
+      "${metadata_commit}" != "${provenance_commit}" ||
+      "${metadata_binary_sha}" != "${app_binary_sha256}" ||
+      "${metadata_provenance_sha}" != "${signed_provenance_sha256}" ]]; then
+  print -u2 "Release metadata, signed provenance, and the staged app do not describe the same build."
+  exit 3
+fi
+
+build_metadata_copy="${phase_directory}/build-metadata.json"
+/bin/cp "${build_metadata_path}" "${build_metadata_copy}"
+/bin/chmod 600 "${build_metadata_copy}"
+build_metadata_sha256="$(/usr/bin/shasum -a 256 "${build_metadata_copy}" | /usr/bin/awk '{print $1}')"
+signature_log_sha256="$(/usr/bin/shasum -a 256 "${app_signature_log}" | /usr/bin/awk '{print $1}')"
+integrity_plist="${phase_directory}/.app-integrity.plist"
+/usr/bin/plutil -create xml1 "${integrity_plist}"
+/usr/bin/plutil -insert formatVersion -integer 1 "${integrity_plist}"
+/usr/bin/plutil -insert kind -string automix-app-integrity "${integrity_plist}"
+/usr/bin/plutil -insert sourceCommit -string "${metadata_commit}" "${integrity_plist}"
+/usr/bin/plutil -insert appBinarySHA256 -string "${app_binary_sha256}" "${integrity_plist}"
+/usr/bin/plutil -insert signedProvenanceSHA256 -string "${signed_provenance_sha256}" "${integrity_plist}"
+/usr/bin/plutil -insert buildMetadataSHA256 -string "${build_metadata_sha256}" "${integrity_plist}"
+/usr/bin/plutil -insert signatureVerificationLogPath -string "${app_signature_log:A}" "${integrity_plist}"
+/usr/bin/plutil -insert signatureVerificationLogSHA256 -string "${signature_log_sha256}" "${integrity_plist}"
+/usr/bin/plutil -insert signatureVerified -bool true "${integrity_plist}"
+/usr/bin/plutil -insert notarizationStapled -bool true "${integrity_plist}"
+/usr/bin/plutil -insert gatekeeperAccepted -bool true "${integrity_plist}"
+/usr/bin/plutil -insert checkedAtUTC -string "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${integrity_plist}"
+/usr/bin/plutil -convert json -o "${app_integrity_report}" "${integrity_plist}"
+/bin/chmod 600 "${app_integrity_report}"
+/bin/rm "${integrity_plist}"
 
 encoder_health_url="$(/usr/bin/plutil -extract encoderHealthURL raw -o - "${profile_path}" 2>/dev/null || true)"
 egress_health_url="$(/usr/bin/plutil -extract egressHealthURL raw -o - "${profile_path}" 2>/dev/null || true)"

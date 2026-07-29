@@ -593,11 +593,13 @@ Run this on the actual HD96/Dante rig before trusting it live:
 16. Confirm Watchdog SAFE remains inactive during normal audio; if it becomes active,
     treat that as a control-thread failure and do not go live until it is understood.
 17. Use `scripts/run-staged-hardware-proof.sh` for acceptance evidence. It refuses
-    development/ad-hoc builds and records signature, notarization, Gatekeeper, and
-    executable-hash evidence before the run. Production mode also requires a fresh
+    development/ad-hoc builds and cross-checks the signature-sealed source
+    provenance, release metadata, executable hash, notarization, and Gatekeeper
+    evidence before the run. Production mode also requires a fresh
     `scripts/audit-production-host-readiness.py` report, rechecks its live state and
-    file hashes, binds it to the requested phase/route/profile/recording volume, and
-    verifies at least two hours of continuous 64-input-plus-program recording.
+    file hashes, binds it to the requested phase/app/release metadata/route/profile/
+    recording volume, and verifies at least two hours of continuous
+    64-input-plus-program recording.
     Shorter `REHEARSAL_ONLY=1` runs cannot mint production proof. After reviewing a
     production run, use `scripts/record-proof-acceptance.sh`; the worship gate accepts
     only an approved sermon bundle that passes `scripts/verify-proof-acceptance.sh`

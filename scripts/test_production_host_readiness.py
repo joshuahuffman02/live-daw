@@ -24,6 +24,7 @@ assert SPEC and SPEC.loader
 readiness = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = readiness
 SPEC.loader.exec_module(readiness)
+PRODUCTION_SIGNATURE_CONTRACT = readiness.production_signature_contract
 
 NOW = dt.datetime(2026, 7, 29, 1, 0, tzinfo=dt.timezone.utc)
 INPUT_UID = "real-hd96-dante-input"
@@ -82,11 +83,73 @@ class ProductionHostReadinessTests(unittest.TestCase):
         self.home = self.root / "home"
         self.repo.mkdir()
         self.home.mkdir()
+        signature_patcher = mock.patch.object(
+            readiness,
+            "production_signature_contract",
+            return_value=(
+                True,
+                "Developer ID, Hardened Runtime, production entitlements, and team identity verified",
+            ),
+        )
+        signature_patcher.start()
+        self.addCleanup(signature_patcher.stop)
         self.app = self.root / "AutoMix Native.app"
         (self.app / "Contents" / "MacOS").mkdir(parents=True)
         binary = self.app / "Contents" / "MacOS" / "AutoMix Native"
         binary.write_bytes(b"app")
         binary.chmod(0o700)
+        info_path = self.app / "Contents" / "Info.plist"
+        info_path.write_bytes(
+            plistlib.dumps(
+                {
+                    "CFBundleShortVersionString": "1.0.0",
+                    "CFBundleVersion": "1",
+                    "CFBundleIdentifier": "com.livedaw.automixnative",
+                }
+            )
+        )
+        provenance_path = (
+            self.app
+            / "Contents"
+            / "Resources"
+            / "AutoMixReleaseProvenance.plist"
+        )
+        provenance_path.parent.mkdir(parents=True)
+        provenance_path.write_bytes(
+            plistlib.dumps(
+                {
+                    "formatVersion": 1,
+                    "kind": "automix-native-signed-provenance",
+                    "sourceCommit": "a" * 40,
+                    "builtAtUTC": "2026-07-29T00:58:00Z",
+                    "version": "1.0.0",
+                    "build": "1",
+                    "bundleIdentifier": "com.livedaw.automixnative",
+                }
+            )
+        )
+        self.build_metadata = self.root / "build-metadata.json"
+        write_json(
+            self.build_metadata,
+            {
+                "formatVersion": 1,
+                "kind": "automix-native-release-build",
+                "version": "1.0.0",
+                "build": "1",
+                "commit": "a" * 40,
+                "builtAtUTC": "2026-07-29T00:58:00Z",
+                "bundleIdentifier": "com.livedaw.automixnative",
+                "signingIdentity": "Developer ID Application: AutoMix Test (TEAMID)",
+                "hardenedRuntime": True,
+                "notarized": True,
+                "audioInputEntitlement": True,
+                "appBinarySHA256": readiness.hash_file(binary),
+                "signedProvenanceResource": (
+                    "Contents/Resources/AutoMixReleaseProvenance.plist"
+                ),
+                "signedProvenanceSHA256": readiness.hash_file(provenance_path),
+            },
+        )
         self.obs_app = self.root / "OBS.app"
         (self.obs_app / "Contents" / "PlugIns" / "obs-websocket.plugin").mkdir(
             parents=True
@@ -160,6 +223,7 @@ class ProductionHostReadinessTests(unittest.TestCase):
             "repo": self.repo,
             "home": self.home,
             "app": self.app,
+            "build_metadata": self.build_metadata,
             "obs_app": self.obs_app,
             "inventory": self.inventory,
             "preflight": self.preflight,
@@ -235,6 +299,7 @@ class ProductionHostReadinessTests(unittest.TestCase):
         completed = SimpleNamespace(returncode=0, stdout="")
         args = self.arguments(
             app=None,
+            build_metadata=None,
             inventory=None,
             preflight=None,
             profile=None,
@@ -256,6 +321,116 @@ class ProductionHostReadinessTests(unittest.TestCase):
         serialized = json.dumps(report)
         self.assertNotIn("password", serialized.lower())
         self.assertNotIn("secret", serialized.lower())
+
+    def test_release_metadata_cannot_be_mixed_with_a_different_signed_app(self) -> None:
+        metadata = json.loads(self.build_metadata.read_text(encoding="utf-8"))
+        metadata["appBinarySHA256"] = "f" * 64
+        write_json(self.build_metadata, metadata)
+        completed = SimpleNamespace(returncode=0, stdout="")
+        with (
+            mock.patch.object(readiness, "run_quiet", return_value=True),
+            mock.patch.object(readiness, "git_commit", return_value="a" * 40),
+            mock.patch.object(readiness.subprocess, "run", return_value=completed),
+            mock.patch.object(
+                readiness.os,
+                "statvfs",
+                return_value=SimpleNamespace(f_bavail=300, f_frsize=1024**3),
+            ),
+            mock.patch.object(
+                readiness,
+                "fetch_json",
+                side_effect=[self.encoder_payload(), self.egress_payload()],
+            ),
+        ):
+            report = readiness.Auditor(self.arguments(), now=NOW).run()
+        app_check = next(
+            item
+            for item in report["checks"]
+            if item["id"] == "app.signed-notarized-release"
+        )
+        self.assertFalse(app_check["passed"])
+        self.assertIn("does not match", app_check["summary"])
+        self.assertFalse(report["readyForHardwareProofRun"])
+
+    def test_signed_provenance_must_match_the_published_source_commit(self) -> None:
+        provenance_path = (
+            self.app
+            / "Contents"
+            / "Resources"
+            / "AutoMixReleaseProvenance.plist"
+        )
+        provenance = plistlib.loads(provenance_path.read_bytes())
+        provenance["sourceCommit"] = "b" * 40
+        provenance_path.write_bytes(plistlib.dumps(provenance))
+        metadata = json.loads(self.build_metadata.read_text(encoding="utf-8"))
+        metadata["commit"] = "b" * 40
+        metadata["signedProvenanceSHA256"] = readiness.hash_file(provenance_path)
+        write_json(self.build_metadata, metadata)
+        completed = SimpleNamespace(returncode=0, stdout="")
+        with (
+            mock.patch.object(readiness, "run_quiet", return_value=True),
+            mock.patch.object(readiness, "git_commit", return_value="a" * 40),
+            mock.patch.object(readiness.subprocess, "run", return_value=completed),
+            mock.patch.object(
+                readiness.os,
+                "statvfs",
+                return_value=SimpleNamespace(f_bavail=300, f_frsize=1024**3),
+            ),
+            mock.patch.object(
+                readiness,
+                "fetch_json",
+                side_effect=[self.encoder_payload(), self.egress_payload()],
+            ),
+        ):
+            report = readiness.Auditor(self.arguments(), now=NOW).run()
+        app_check = next(
+            item
+            for item in report["checks"]
+            if item["id"] == "app.signed-notarized-release"
+        )
+        self.assertFalse(app_check["passed"])
+        self.assertIn("source commit", app_check["summary"])
+
+    def test_signature_contract_requires_runtime_and_production_entitlements(self) -> None:
+        good_details = SimpleNamespace(
+            returncode=0,
+            stderr=(
+                b"flags=0x10000(runtime)\n"
+                b"Authority=Developer ID Application: AutoMix Test (TEAMID)\n"
+                b"TeamIdentifier=TEAMID\n"
+            ),
+        )
+        good_entitlements = SimpleNamespace(
+            returncode=0,
+            stdout=plistlib.dumps(
+                {"com.apple.security.device.audio-input": True}
+            ),
+        )
+        with mock.patch.object(
+            readiness.subprocess,
+            "run",
+            side_effect=[good_details, good_entitlements],
+        ):
+            passed, _ = PRODUCTION_SIGNATURE_CONTRACT(self.app)
+        self.assertTrue(passed)
+
+        debug_entitlements = SimpleNamespace(
+            returncode=0,
+            stdout=plistlib.dumps(
+                {
+                    "com.apple.security.device.audio-input": True,
+                    "com.apple.security.get-task-allow": True,
+                }
+            ),
+        )
+        with mock.patch.object(
+            readiness.subprocess,
+            "run",
+            side_effect=[good_details, debug_entitlements],
+        ):
+            passed, summary = PRODUCTION_SIGNATURE_CONTRACT(self.app)
+        self.assertFalse(passed)
+        self.assertIn("Hardened Runtime", summary)
 
     def test_inventory_cannot_relabel_a_simulated_selected_route(self) -> None:
         inventory = json.loads(self.inventory.read_text(encoding="utf-8"))

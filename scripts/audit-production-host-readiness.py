@@ -23,10 +23,15 @@ from pathlib import Path
 from typing import Any
 
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 KIND = "automix-production-host-readiness"
 PCO_KEYCHAIN_SERVICE = "com.livedaw.automixnative.planning-center"
 AUTOMIX_LAUNCH_LABEL = "com.livedaw.automixnative"
+RELEASE_PROVENANCE_KIND = "automix-native-signed-provenance"
+RELEASE_METADATA_KIND = "automix-native-release-build"
+RELEASE_PROVENANCE_RELATIVE_PATH = Path(
+    "Contents/Resources/AutoMixReleaseProvenance.plist"
+)
 EXPECTED_CHECK_IDS = {
     "source.published-clean-commit",
     "app.signed-notarized-release",
@@ -157,6 +162,59 @@ def run_quiet(arguments: list[str], timeout: float = 10) -> bool:
     return result.returncode == 0
 
 
+def production_signature_contract(app: Path) -> tuple[bool, str]:
+    try:
+        details = subprocess.run(
+            ["/usr/bin/codesign", "-dv", "--verbose=4", str(app)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+        entitlements = subprocess.run(
+            ["/usr/bin/codesign", "-d", "--entitlements", ":-", str(app)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
+        return False, "could not inspect the production code-signature contract"
+    try:
+        detail_text = details.stderr.decode("utf-8", errors="replace")
+        entitlement_document = plistlib.loads(entitlements.stdout)
+    except (AttributeError, plistlib.InvalidFileException, TypeError, ValueError):
+        return False, "code-signature details or entitlements are unreadable"
+    developer_id = "Authority=Developer ID Application:" in detail_text
+    hardened_runtime = "(runtime)" in detail_text
+    team_bound = "TeamIdentifier=not set" not in detail_text and "TeamIdentifier=" in detail_text
+    audio_input = (
+        isinstance(entitlement_document, dict)
+        and entitlement_document.get("com.apple.security.device.audio-input") is True
+    )
+    debug_disabled = (
+        isinstance(entitlement_document, dict)
+        and entitlement_document.get("com.apple.security.get-task-allow") is not True
+    )
+    passed = (
+        details.returncode == 0
+        and entitlements.returncode == 0
+        and developer_id
+        and hardened_runtime
+        and team_bound
+        and audio_input
+        and debug_disabled
+    )
+    return (
+        passed,
+        "Developer ID, Hardened Runtime, production entitlements, and team identity verified"
+        if passed
+        else "app lacks Developer ID, Hardened Runtime, production entitlements, or team identity",
+    )
+
+
 class RejectRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(
         self,
@@ -271,6 +329,7 @@ class Auditor:
         self.inventory: dict[str, Any] | None = None
         self.preflight: dict[str, Any] | None = None
         self.profile: dict[str, Any] | None = None
+        self.build_metadata: dict[str, Any] | None = None
         self.source_commit: str | None = None
 
     def add(
@@ -313,29 +372,109 @@ class Auditor:
 
     def audit_app(self) -> None:
         app = self.args.app
-        if app is None:
+        metadata_path = self.args.build_metadata
+        if app is None or metadata_path is None:
+            missing = "production app path" if app is None else "release build metadata"
             self.add(
                 "app.signed-notarized-release",
                 "application",
                 False,
-                "production app path was not supplied",
-                "Build the Developer ID signed, notarized release and pass --app.",
+                f"{missing} was not supplied",
+                "Build the Developer ID signed, notarized release and pass both --app and --build-metadata.",
             )
             return
         binary = app / "Contents" / "MacOS" / "AutoMix Native"
-        exists = app.is_dir() and not app.is_symlink() and binary.is_file() and os.access(binary, os.X_OK)
+        info_path = app / "Contents" / "Info.plist"
+        provenance_path = app / RELEASE_PROVENANCE_RELATIVE_PATH
+        exists = (
+            app.is_dir()
+            and not app.is_symlink()
+            and binary.is_file()
+            and not binary.is_symlink()
+            and os.access(binary, os.X_OK)
+        )
         signed = exists and run_quiet(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)])
         stapled = exists and run_quiet(["/usr/bin/xcrun", "stapler", "validate", str(app)])
         gatekeeper = exists and run_quiet(
             ["/usr/sbin/spctl", "--assess", "--type", "execute", str(app)]
         )
-        passed = exists and signed and stapled and gatekeeper
+        signature_contract, signature_summary = (
+            production_signature_contract(app)
+            if exists
+            else (False, "production app is missing")
+        )
+        provenance_valid = False
+        provenance_error = ""
+        try:
+            info = load_document(info_path)
+            provenance = load_document(provenance_path)
+            metadata = load_document(metadata_path)
+            binary_sha = hash_file(binary)
+            provenance_sha = hash_file(provenance_path)
+            source_matches = (
+                self.source_commit is not None
+                and provenance.get("sourceCommit") == self.source_commit
+                and metadata.get("commit") == self.source_commit
+            )
+            identity_matches = (
+                provenance.get("version") == info.get("CFBundleShortVersionString")
+                and provenance.get("build") == info.get("CFBundleVersion")
+                and provenance.get("bundleIdentifier") == info.get("CFBundleIdentifier")
+                and metadata.get("version") == provenance.get("version")
+                and metadata.get("build") == provenance.get("build")
+                and metadata.get("bundleIdentifier") == provenance.get("bundleIdentifier")
+                and metadata.get("builtAtUTC") == provenance.get("builtAtUTC")
+            )
+            metadata_trust_claims = (
+                metadata.get("hardenedRuntime") is True
+                and metadata.get("notarized") is True
+                and metadata.get("audioInputEntitlement") is True
+                and safe_text(metadata.get("signingIdentity"), 256)
+                and str(metadata.get("signingIdentity")).startswith(
+                    "Developer ID Application:"
+                )
+            )
+            provenance_valid = (
+                provenance.get("formatVersion") == 1
+                and provenance.get("kind") == RELEASE_PROVENANCE_KIND
+                and metadata.get("formatVersion") == 1
+                and metadata.get("kind") == RELEASE_METADATA_KIND
+                and metadata.get("signedProvenanceResource")
+                == str(RELEASE_PROVENANCE_RELATIVE_PATH)
+                and metadata.get("appBinarySHA256") == binary_sha
+                and metadata.get("signedProvenanceSHA256") == provenance_sha
+                and source_matches
+                and identity_matches
+                and metadata_trust_claims
+            )
+            if provenance_valid:
+                self.build_metadata = metadata
+            else:
+                provenance_error = "signed provenance or build metadata does not match this app and source commit"
+        except (KeyError, TypeError, ValueError, OSError) as error:
+            provenance_error = f"release provenance rejected: {error}"
+        passed = (
+            exists
+            and signed
+            and stapled
+            and gatekeeper
+            and signature_contract
+            and provenance_valid
+        )
+        if passed:
+            summary = "signed, notarized app is bound to published source and release metadata"
+        elif exists and signed and stapled and gatekeeper and not signature_contract:
+            summary = signature_summary
+        elif provenance_error:
+            summary = provenance_error
+        else:
+            summary = "app is missing or lacks production signature/notarization"
         self.add(
             "app.signed-notarized-release",
             "application",
             passed,
-            "signed, stapled, and Gatekeeper-accepted app" if passed else "app is missing or lacks production signature/notarization",
-            "Run scripts/build-notarized-release.sh with the Developer ID identity and notary profile.",
+            summary,
+            "Run scripts/build-notarized-release.sh and supply its untouched app plus build-metadata.json from the same release directory.",
         )
 
     def audit_inventory(self) -> None:
@@ -638,6 +777,7 @@ class Auditor:
         self.audit_egress()
         failed = [check for check in self.checks if not check.passed]
         input_paths: dict[str, Path | None] = {
+            "buildMetadata": self.args.build_metadata,
             "inventory": self.args.inventory,
             "preflight": self.args.preflight,
             "profile": self.args.profile,
@@ -676,6 +816,8 @@ class Auditor:
                 "sourceCommit": self.source_commit,
                 "appPath": str(self.args.app.resolve()) if self.args.app is not None else None,
                 "appBinarySHA256": app_binary_sha,
+                "buildMetadataPath": str(self.args.build_metadata.resolve()) if self.args.build_metadata is not None else None,
+                "buildMetadataSHA256": evidence_hashes["buildMetadata"],
                 "obsAppPath": str(self.args.obs_app.resolve()),
                 "inventoryPath": str(self.args.inventory.resolve()) if self.args.inventory is not None else None,
                 "inventorySHA256": evidence_hashes["inventory"],
@@ -751,6 +893,8 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
         "sourceCommit",
         "appPath",
         "appBinarySHA256",
+        "buildMetadataPath",
+        "buildMetadataSHA256",
         "obsAppPath",
         "inventoryPath",
         "inventorySHA256",
@@ -767,6 +911,7 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
         raise ValueError("source commit no longer matches readiness report")
     bound_files = (
         (Path(inputs["appPath"]) / "Contents" / "MacOS" / "AutoMix Native", inputs["appBinarySHA256"]),
+        (Path(inputs["buildMetadataPath"]), inputs["buildMetadataSHA256"]),
         (Path(inputs["inventoryPath"]), inputs["inventorySHA256"]),
         (Path(inputs["preflightPath"]), inputs["preflightSHA256"]),
         (Path(inputs["profilePath"]), inputs["profileSHA256"]),
@@ -779,6 +924,7 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
         repo=Path(inputs["repoPath"]),
         home=home or Path.home(),
         app=Path(inputs["appPath"]),
+        build_metadata=Path(inputs["buildMetadataPath"]),
         obs_app=Path(inputs["obsAppPath"]),
         inventory=Path(inputs["inventoryPath"]),
         preflight=Path(inputs["preflightPath"]),
@@ -814,6 +960,7 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--home", type=Path, default=Path.home(), help=argparse.SUPPRESS)
     parser.add_argument("--app", type=Path)
+    parser.add_argument("--build-metadata", type=Path)
     parser.add_argument("--obs-app", type=Path, default=Path("/Applications/OBS.app"))
     parser.add_argument("--inventory", type=Path)
     parser.add_argument("--preflight", type=Path)
