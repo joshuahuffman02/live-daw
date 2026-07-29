@@ -117,5 +117,7 @@ verify >/dev/null
 
 /usr/bin/env python3 \
   "${script_directory}/../failover/test_automix_failover_supervisor.py"
+/usr/bin/env python3 \
+  "${script_directory}/../failover/test_failover_controller_readiness.py"
 
 print "stream-health-evidence self-test PASS"

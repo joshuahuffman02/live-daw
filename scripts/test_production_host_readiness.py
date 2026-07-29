@@ -83,6 +83,95 @@ class ProductionHostReadinessTests(unittest.TestCase):
         self.home = self.root / "home"
         self.repo.mkdir()
         self.home.mkdir()
+        failover_source = (
+            self.repo / "failover" / "automix_failover_supervisor.py"
+        )
+        failover_audit = (
+            self.repo / "failover" / "audit_failover_controller.py"
+        )
+        failover_unit = self.repo / "failover" / "automix-failover.service"
+        failover_source.parent.mkdir(parents=True)
+        failover_source.write_text(
+            "#!/usr/bin/env python3\n# fixture supervisor\n",
+            encoding="utf-8",
+        )
+        failover_audit.write_text(
+            "#!/usr/bin/env python3\n# fixture audit\n",
+            encoding="utf-8",
+        )
+        failover_unit.write_text(
+            "[Service]\nProtectSystem=strict\n",
+            encoding="utf-8",
+        )
+        self.failover_readiness = self.root / "failover-readiness.json"
+        failover_checks = [
+            {
+                "id": check_id,
+                "passed": True,
+                "summary": "fixture passed",
+                "remediation": "none",
+            }
+            for check_id in sorted(readiness.FAILOVER_READINESS_CHECK_IDS)
+        ]
+        write_json(
+            self.failover_readiness,
+            {
+                "formatVersion": 1,
+                "kind": "automix-failover-controller-readiness",
+                "generatedAtMs": int(NOW.timestamp() * 1_000),
+                "expiresAtMs": int(NOW.timestamp() * 1_000) + 900_000,
+                "ready": True,
+                "notProductionAcceptance": True,
+                "primaryHostname": readiness.local_hostname(),
+                "controllerHostname": "failover-controller.test",
+                "serviceName": "automix-failover.service",
+                "config": {
+                    "sha256": "c" * 64,
+                    "productionContract": True,
+                    "heartbeatHost": "automix-primary.test",
+                    "relayHost": "relay.test",
+                },
+                "software": {
+                    "supervisorSHA256": readiness.hash_file(
+                        failover_source
+                    ),
+                    "auditSHA256": readiness.hash_file(failover_audit),
+                    "unitSHA256": readiness.hash_file(failover_unit),
+                },
+                "service": {
+                    "loadState": "loaded",
+                    "activeState": "active",
+                    "subState": "running",
+                    "unitFileState": "enabled",
+                    "user": "automix-failover",
+                    "group": "automix-failover",
+                    "restart": "always",
+                    "noNewPrivileges": "yes",
+                    "protectSystem": "strict",
+                    "needDaemonReload": "no",
+                    "mainPID": "421",
+                    "fragmentPath": (
+                        "/etc/systemd/system/automix-failover.service"
+                    ),
+                },
+                "relay": {
+                    "selectedInput": "backup",
+                    "backupLatched": True,
+                    "manualReturnRequired": True,
+                    "relayConfirmed": True,
+                    "relayRequestId": "fixture-backup-ack",
+                    "statusUpdatedAtMs": int(NOW.timestamp() * 1_000) - 100,
+                    "primaryLeaseRemainingMs": 0,
+                },
+                "summary": {
+                    "passed": len(readiness.FAILOVER_READINESS_CHECK_IDS),
+                    "failed": 0,
+                    "total": len(readiness.FAILOVER_READINESS_CHECK_IDS),
+                },
+                "checks": failover_checks,
+            },
+        )
+        self.failover_readiness.chmod(0o600)
         signature_patcher = mock.patch.object(
             readiness,
             "production_signature_contract",
@@ -228,6 +317,7 @@ class ProductionHostReadinessTests(unittest.TestCase):
             "inventory": self.inventory,
             "preflight": self.preflight,
             "profile": self.profile,
+            "failover_readiness": self.failover_readiness,
             "recording_root": self.recording_root,
             "expected_inputs": 64,
             "sample_rate": 96_000,
@@ -292,7 +382,12 @@ class ProductionHostReadinessTests(unittest.TestCase):
             report = readiness.Auditor(self.arguments(), now=NOW).run()
         self.assertTrue(report["readyForHardwareProofRun"])
         self.assertTrue(report["notProductionAcceptance"])
-        self.assertEqual(report["summary"], {"passed": 11, "failed": 0, "total": 11})
+        self.assertEqual(report["formatVersion"], 3)
+        self.assertEqual(report["summary"], {"passed": 12, "failed": 0, "total": 12})
+        self.assertEqual(
+            report["inputs"]["failoverReadinessSHA256"],
+            readiness.hash_file(self.failover_readiness),
+        )
         self.assertTrue(all(item["passed"] for item in report["checks"]))
 
     def test_missing_provisioning_reports_every_blocker_without_secrets(self) -> None:
@@ -303,6 +398,7 @@ class ProductionHostReadinessTests(unittest.TestCase):
             inventory=None,
             preflight=None,
             profile=None,
+            failover_readiness=None,
             recording_root=None,
             obs_app=self.root / "Missing OBS.app",
             skip_network_probes=True,
@@ -317,10 +413,105 @@ class ProductionHostReadinessTests(unittest.TestCase):
         self.assertIn("app.signed-notarized-release", ids)
         self.assertIn("audio.production-route-inventory", ids)
         self.assertIn("storage.proof-window-capacity", ids)
+        self.assertIn("failover.independent-controller", ids)
         self.assertIn("encoder.exact-program-observer", ids)
         serialized = json.dumps(report)
         self.assertNotIn("password", serialized.lower())
         self.assertNotIn("secret", serialized.lower())
+
+    def test_failover_readiness_requires_separate_fresh_exact_controller(
+        self,
+    ) -> None:
+        fixture = json.loads(
+            self.failover_readiness.read_text(encoding="utf-8")
+        )
+        invalid_cases = (
+            (
+                {"primaryHostname": "different-primary.test"},
+                "mismatched",
+            ),
+            (
+                {
+                    "generatedAtMs": int(NOW.timestamp() * 1_000)
+                    - 900_001
+                },
+                "expired",
+            ),
+            (
+                {
+                    "software": {
+                        **fixture["software"],
+                        "supervisorSHA256": "f" * 64,
+                    }
+                },
+                "mismatched",
+            ),
+            (
+                {
+                    "relay": {
+                        **fixture["relay"],
+                        "relayConfirmed": False,
+                    }
+                },
+                "unsafe",
+            ),
+            (
+                {
+                    "service": {
+                        **fixture["service"],
+                        "needDaemonReload": "yes",
+                    }
+                },
+                "unsafe",
+            ),
+        )
+        completed = SimpleNamespace(returncode=0, stdout="")
+        for changes, expected in invalid_cases:
+            with self.subTest(changes=changes):
+                changed = json.loads(json.dumps(fixture))
+                changed.update(changes)
+                write_json(self.failover_readiness, changed)
+                self.failover_readiness.chmod(0o600)
+                with (
+                    mock.patch.object(
+                        readiness, "run_quiet", return_value=True
+                    ),
+                    mock.patch.object(
+                        readiness, "git_commit", return_value="a" * 40
+                    ),
+                    mock.patch.object(
+                        readiness.subprocess,
+                        "run",
+                        return_value=completed,
+                    ),
+                    mock.patch.object(
+                        readiness.os,
+                        "statvfs",
+                        return_value=SimpleNamespace(
+                            f_bavail=300, f_frsize=1024**3
+                        ),
+                    ),
+                    mock.patch.object(
+                        readiness,
+                        "fetch_json",
+                        side_effect=[
+                            self.encoder_payload(),
+                            self.egress_payload(),
+                        ],
+                    ),
+                ):
+                    report = readiness.Auditor(
+                        self.arguments(), now=NOW
+                    ).run()
+                check = next(
+                    item
+                    for item in report["checks"]
+                    if item["id"] == "failover.independent-controller"
+                )
+                self.assertFalse(check["passed"])
+                self.assertIn(expected, check["summary"])
+        write_json(self.failover_readiness, fixture)
+        self.failover_readiness.chmod(0o600)
 
     def test_release_metadata_cannot_be_mixed_with_a_different_signed_app(self) -> None:
         metadata = json.loads(self.build_metadata.read_text(encoding="utf-8"))
@@ -526,6 +717,19 @@ class ProductionHostReadinessTests(unittest.TestCase):
         profile = json.loads(self.profile.read_text(encoding="utf-8"))
         profile["shadowMode"] = False
         write_json(self.profile, profile)
+        with (
+            mock.patch.object(readiness, "git_commit", return_value="a" * 40),
+            self.assertRaisesRegex(ValueError, "bound readiness input changed"),
+        ):
+            readiness.verify_report(output, home=self.home, now=NOW)
+
+        profile["shadowMode"] = True
+        write_json(self.profile, profile)
+        failover = json.loads(
+            self.failover_readiness.read_text(encoding="utf-8")
+        )
+        failover["relay"]["relayConfirmed"] = False
+        write_json(self.failover_readiness, failover)
         with (
             mock.patch.object(readiness, "git_commit", return_value="a" * 40),
             self.assertRaisesRegex(ValueError, "bound readiness input changed"),

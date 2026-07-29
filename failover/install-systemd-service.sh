@@ -4,6 +4,7 @@ umask 077
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 supervisor_source="${script_directory}/automix_failover_supervisor.py"
+audit_source="${script_directory}/audit_failover_controller.py"
 unit_source="${script_directory}/automix-failover.service"
 service_user="automix-failover"
 heartbeat_url=""
@@ -60,7 +61,9 @@ if [[ ! -f "${token_source}" || -L "${token_source}" ]]; then
   >&2 echo "Relay token source must be a regular, non-symlink file."
   exit 2
 fi
-if [[ ! -f "${supervisor_source}" || ! -f "${unit_source}" ]]; then
+if [[ ! -f "${supervisor_source}" ||
+      ! -f "${audit_source}" ||
+      ! -f "${unit_source}" ]]; then
   >&2 echo "Failover supervisor package sources are incomplete."
   exit 2
 fi
@@ -156,6 +159,7 @@ library_directory="${render_root%/}/usr/local/libexec/automix-failover"
 configuration_directory="${render_root%/}/etc/automix-failover"
 unit_directory="${render_root%/}/etc/systemd/system"
 installed_supervisor="${library_directory}/automix_failover_supervisor.py"
+installed_audit="${library_directory}/audit_failover_controller.py"
 installed_token="${configuration_directory}/relay-token"
 installed_config="${configuration_directory}/supervisor.json"
 installed_unit="${unit_directory}/automix-failover.service"
@@ -189,6 +193,7 @@ chmod 0755 "${library_directory}"
 chmod 0700 "${configuration_directory}"
 for destination in \
   "${installed_supervisor}" \
+  "${installed_audit}" \
   "${installed_token}" \
   "${installed_config}" \
   "${installed_unit}"; do
@@ -198,6 +203,7 @@ for destination in \
   fi
 done
 install -m 0755 "${supervisor_source}" "${installed_supervisor}"
+install -m 0755 "${audit_source}" "${installed_audit}"
 install -m 0600 "${token_source}" "${installed_token}"
 install -m 0644 "${unit_source}" "${installed_unit}"
 "${local_python}" - "${installed_config}" "${heartbeat_url}" "${relay_url}" <<'PY'
@@ -243,7 +249,7 @@ if [[ "${render_root}" != "/" ]]; then
 fi
 
 chown -R root:root "${library_directory}" "${configuration_directory}"
-chmod 0755 "${installed_supervisor}"
+chmod 0755 "${installed_supervisor}" "${installed_audit}"
 chmod 0600 "${installed_config}" "${installed_token}"
 chmod 0644 "${installed_unit}"
 

@@ -876,6 +876,11 @@ class SupervisorConfigurationTests(unittest.TestCase):
                 / "usr/local/libexec/automix-failover"
                 / "automix_failover_supervisor.py"
             )
+            installed_audit = (
+                render_root
+                / "usr/local/libexec/automix-failover"
+                / "audit_failover_controller.py"
+            )
             payload = json.loads(config_path.read_text(encoding="utf-8"))
             unit = unit_path.read_text(encoding="utf-8")
             self.assertEqual(payload["kind"], CONFIG_KIND)
@@ -894,6 +899,15 @@ class SupervisorConfigurationTests(unittest.TestCase):
                 (
                     script_directory / "automix_failover_supervisor.py"
                 ).read_bytes(),
+            )
+            self.assertEqual(
+                installed_audit.read_bytes(),
+                (
+                    script_directory / "audit_failover_controller.py"
+                ).read_bytes(),
+            )
+            self.assertEqual(
+                stat.S_IMODE(installed_audit.stat().st_mode), 0o755
             )
             for required in (
                 "User=automix-failover",

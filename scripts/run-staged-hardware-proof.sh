@@ -128,6 +128,7 @@ if [[ -n "${host_readiness_report}" ]]; then
   report_build_metadata="$(/usr/bin/plutil -extract inputs.buildMetadataPath raw -o - "${host_readiness_report}")"
   report_profile="$(/usr/bin/plutil -extract inputs.profilePath raw -o - "${host_readiness_report}")"
   report_inventory="$(/usr/bin/plutil -extract inputs.inventoryPath raw -o - "${host_readiness_report}")"
+  report_failover_readiness="$(/usr/bin/plutil -extract inputs.failoverReadinessPath raw -o - "${host_readiness_report}")"
   report_recording_root="$(/usr/bin/plutil -extract inputs.recordingRoot raw -o - "${host_readiness_report}")"
   report_duration="$(/usr/bin/plutil -extract requirements.durationSeconds raw -o - "${host_readiness_report}")"
   report_reserve="$(/usr/bin/plutil -extract requirements.recordingReserveGiB raw -o - "${host_readiness_report}")"
@@ -164,6 +165,11 @@ if [[ -n "${host_readiness_report}" ]]; then
   /bin/chmod 600 "${readiness_copy}"
   /usr/bin/shasum -a 256 "${readiness_copy}" > "${readiness_copy}.sha256"
   /bin/chmod 600 "${readiness_copy}.sha256"
+  failover_readiness_copy="${phase_directory}/external-failover-controller-readiness.json"
+  /bin/cp "${report_failover_readiness}" "${failover_readiness_copy}"
+  /bin/chmod 600 "${failover_readiness_copy}"
+  /usr/bin/shasum -a 256 "${failover_readiness_copy}" > "${failover_readiness_copy}.sha256"
+  /bin/chmod 600 "${failover_readiness_copy}.sha256"
 elif [[ "${rehearsal_only}" == "1" ]]; then
   print -u2 "WARNING: rehearsal is running without a production host-readiness report."
 fi

@@ -137,6 +137,16 @@ over an owner-only local Unix socket and is rejected unless renewed health proof
 current and the relay confirms the physical selection. Editing the status JSON
 cannot change the selected path.
 
+Immediately before the Mac's production-host audit, run the installed
+`audit_failover_controller.py` on this separate controller and transfer its
+owner-only report to the Mac. The report expires after 15 minutes and binds the
+controller hostname, strict config, exact root-owned supervisor/audit/unit hashes,
+active hardened systemd state with no pending daemon reload, and a status sample no
+more than two seconds old that confirms the physical relay is latched to backup. The
+Mac refuses to begin a
+production proof without this report, and the staged runner preserves it beside
+the main host-readiness report.
+
 The endpoint makes the application-side heartbeat concrete. It does not replace the
 normally de-energized relay/encoder failover, primary carrier sensing, backup mix,
 or real kill tests.

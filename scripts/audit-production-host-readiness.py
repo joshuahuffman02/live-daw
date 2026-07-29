@@ -23,8 +23,17 @@ from pathlib import Path
 from typing import Any
 
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 KIND = "automix-production-host-readiness"
+FAILOVER_READINESS_KIND = "automix-failover-controller-readiness"
+FAILOVER_READINESS_FORMAT_VERSION = 1
+FAILOVER_READINESS_CHECK_IDS = {
+    "controller.separate-failure-domain",
+    "controller.production-config",
+    "controller.software-unit-integrity",
+    "controller.systemd-service",
+    "relay.fresh-backup-latch",
+}
 PCO_KEYCHAIN_SERVICE = "com.livedaw.automixnative.planning-center"
 AUTOMIX_LAUNCH_LABEL = "com.livedaw.automixnative"
 RELEASE_PROVENANCE_KIND = "automix-native-signed-provenance"
@@ -41,6 +50,7 @@ EXPECTED_CHECK_IDS = {
     "storage.proof-window-capacity",
     "planning-center.credentials",
     "runtime.crash-relaunch-agent",
+    "failover.independent-controller",
     "encoder.obs-install",
     "encoder.exact-program-observer",
     "egress.remote-playback-observer",
@@ -87,6 +97,150 @@ def hash_file(path: Path) -> str:
                 break
             digest.update(block)
     return digest.hexdigest()
+
+
+def local_hostname() -> str:
+    return socket.gethostname()
+
+
+def valid_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def validate_failover_controller_readiness(
+    path: Path,
+    repo: Path,
+    now_ms: int,
+    primary_hostname: str | None = None,
+) -> dict[str, Any]:
+    report = load_document(path)
+    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+        raise ValueError(
+            "failover readiness permissions must be owner-only"
+        )
+    checks = report.get("checks")
+    summary = report.get("summary")
+    software = report.get("software")
+    service = report.get("service")
+    relay = report.get("relay")
+    config = report.get("config")
+    generated_at = report.get("generatedAtMs")
+    expires_at = report.get("expiresAtMs")
+    if (
+        not isinstance(checks, list)
+        or not isinstance(summary, dict)
+        or not isinstance(software, dict)
+        or not isinstance(service, dict)
+        or not isinstance(relay, dict)
+        or not isinstance(config, dict)
+        or not isinstance(generated_at, int)
+        or isinstance(generated_at, bool)
+        or not isinstance(expires_at, int)
+        or isinstance(expires_at, bool)
+    ):
+        raise ValueError("failover readiness structure is invalid")
+    age_ms = now_ms - generated_at
+    report_lifetime = expires_at - generated_at
+    if (
+        age_ms < -5_000
+        or age_ms > 15 * 60 * 1_000
+        or report_lifetime <= 0
+        or report_lifetime > 15 * 60 * 1_000
+        or now_ms > expires_at
+    ):
+        raise ValueError(
+            "failover readiness is expired, stale, or future-dated"
+        )
+    expected_primary = primary_hostname or local_hostname()
+    controller = report.get("controllerHostname")
+    reported_primary = report.get("primaryHostname")
+    identities_valid = (
+        safe_text(expected_primary, 253)
+        and safe_text(reported_primary, 253)
+        and safe_text(controller, 253)
+        and str(reported_primary).casefold()
+        == str(expected_primary).casefold()
+        and str(controller).casefold() != str(reported_primary).casefold()
+    )
+    expected_supervisor = repo / "failover" / "automix_failover_supervisor.py"
+    expected_audit = repo / "failover" / "audit_failover_controller.py"
+    expected_unit = repo / "failover" / "automix-failover.service"
+    supervisor_sha = software.get("supervisorSHA256")
+    audit_sha = software.get("auditSHA256")
+    unit_sha = software.get("unitSHA256")
+    software_valid = (
+        valid_sha256(supervisor_sha)
+        and valid_sha256(audit_sha)
+        and valid_sha256(unit_sha)
+        and hash_file(expected_supervisor) == supervisor_sha
+        and hash_file(expected_audit) == audit_sha
+        and hash_file(expected_unit) == unit_sha
+    )
+    check_ids = {
+        item.get("id") for item in checks if isinstance(item, dict)
+    }
+    status_updated = relay.get("statusUpdatedAtMs")
+    status_was_fresh = (
+        isinstance(status_updated, int)
+        and not isinstance(status_updated, bool)
+        and -250 <= generated_at - status_updated <= 2_000
+    )
+    exact_contract = (
+        report.get("formatVersion") == FAILOVER_READINESS_FORMAT_VERSION
+        and report.get("kind") == FAILOVER_READINESS_KIND
+        and report.get("ready") is True
+        and report.get("notProductionAcceptance") is True
+        and report.get("serviceName") == "automix-failover.service"
+        and identities_valid
+        and software_valid
+        and check_ids == FAILOVER_READINESS_CHECK_IDS
+        and len(checks) == len(FAILOVER_READINESS_CHECK_IDS)
+        and all(
+            isinstance(item, dict) and item.get("passed") is True
+            for item in checks
+        )
+        and summary
+        == {
+            "passed": len(FAILOVER_READINESS_CHECK_IDS),
+            "failed": 0,
+            "total": len(FAILOVER_READINESS_CHECK_IDS),
+        }
+        and safe_text(config.get("heartbeatHost"), 253)
+        and safe_text(config.get("relayHost"), 253)
+        and valid_sha256(config.get("sha256"))
+        and config.get("productionContract") is True
+        and service.get("loadState") == "loaded"
+        and service.get("activeState") == "active"
+        and service.get("subState") == "running"
+        and service.get("unitFileState") == "enabled"
+        and service.get("user") == "automix-failover"
+        and service.get("group") == "automix-failover"
+        and service.get("restart") == "always"
+        and service.get("noNewPrivileges") == "yes"
+        and service.get("protectSystem") == "strict"
+        and service.get("needDaemonReload") == "no"
+        and service.get("fragmentPath")
+        == "/etc/systemd/system/automix-failover.service"
+        and isinstance(service.get("mainPID"), str)
+        and service["mainPID"].isdigit()
+        and int(service["mainPID"]) > 0
+        and relay.get("selectedInput") == "backup"
+        and relay.get("backupLatched") is True
+        and relay.get("manualReturnRequired") is True
+        and relay.get("relayConfirmed") is True
+        and relay.get("primaryLeaseRemainingMs") == 0
+        and safe_text(relay.get("relayRequestId"), 128)
+        and status_was_fresh
+    )
+    if not exact_contract:
+        raise ValueError(
+            "failover readiness is incomplete, mismatched, or unsafe"
+        )
+    return report
 
 
 def git_commit(repo: Path) -> str | None:
@@ -330,6 +484,7 @@ class Auditor:
         self.preflight: dict[str, Any] | None = None
         self.profile: dict[str, Any] | None = None
         self.build_metadata: dict[str, Any] | None = None
+        self.failover_readiness: dict[str, Any] | None = None
         self.source_commit: str | None = None
 
     def add(
@@ -707,6 +862,43 @@ class Auditor:
             "Run scripts/install-automix-launch-agent.sh against the permanent notarized app path.",
         )
 
+    def audit_failover(self) -> None:
+        path = self.args.failover_readiness
+        if path is None:
+            self.add(
+                "failover.independent-controller",
+                "failover",
+                False,
+                "independent controller readiness was not supplied",
+                "Run failover/audit_failover_controller.py on the separate controller, copy its fresh report to this Mac, and pass --failover-readiness.",
+            )
+            return
+        try:
+            report = validate_failover_controller_readiness(
+                path,
+                self.args.repo,
+                self.now_ms,
+            )
+            self.failover_readiness = report
+            self.add(
+                "failover.independent-controller",
+                "failover",
+                True,
+                (
+                    f"separate controller {report['controllerHostname']} is "
+                    "running and the relay confirmed backup"
+                ),
+                "Keep the controller online and latched to backup until the proof starts.",
+            )
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            self.add(
+                "failover.independent-controller",
+                "failover",
+                False,
+                f"independent controller readiness rejected: {error}",
+                "Regenerate the readiness report on the separate controller with the exact published supervisor package.",
+            )
+
     def audit_obs(self) -> None:
         app = self.args.obs_app
         plugin = app / "Contents" / "PlugIns" / "obs-websocket.plugin"
@@ -773,6 +965,7 @@ class Auditor:
         self.audit_storage()
         self.audit_pco()
         self.audit_relaunch()
+        self.audit_failover()
         self.audit_obs()
         self.audit_egress()
         failed = [check for check in self.checks if not check.passed]
@@ -781,6 +974,7 @@ class Auditor:
             "inventory": self.args.inventory,
             "preflight": self.args.preflight,
             "profile": self.args.profile,
+            "failoverReadiness": self.args.failover_readiness,
         }
         evidence_hashes: dict[str, str | None] = {}
         for label, path in input_paths.items():
@@ -825,6 +1019,8 @@ class Auditor:
                 "preflightSHA256": evidence_hashes["preflight"],
                 "profilePath": str(self.args.profile.resolve()) if self.args.profile is not None else None,
                 "profileSHA256": evidence_hashes["profile"],
+                "failoverReadinessPath": str(self.args.failover_readiness.resolve()) if self.args.failover_readiness is not None else None,
+                "failoverReadinessSHA256": evidence_hashes["failoverReadiness"],
                 "recordingRoot": str(self.args.recording_root.resolve()) if self.args.recording_root is not None else None,
             },
             "summary": {
@@ -902,6 +1098,8 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
         "preflightSHA256",
         "profilePath",
         "profileSHA256",
+        "failoverReadinessPath",
+        "failoverReadinessSHA256",
         "recordingRoot",
     )
     if any(not isinstance(inputs.get(field), str) or not inputs[field] for field in required_input_fields):
@@ -915,6 +1113,10 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
         (Path(inputs["inventoryPath"]), inputs["inventorySHA256"]),
         (Path(inputs["preflightPath"]), inputs["preflightSHA256"]),
         (Path(inputs["profilePath"]), inputs["profileSHA256"]),
+        (
+            Path(inputs["failoverReadinessPath"]),
+            inputs["failoverReadinessSHA256"],
+        ),
     )
     for bound_path, expected_hash in bound_files:
         if hash_file(bound_path) != expected_hash:
@@ -929,6 +1131,7 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
         inventory=Path(inputs["inventoryPath"]),
         preflight=Path(inputs["preflightPath"]),
         profile=Path(inputs["profilePath"]),
+        failover_readiness=Path(inputs["failoverReadinessPath"]),
         recording_root=Path(inputs["recordingRoot"]),
         expected_inputs=int(requirements["expectedInputChannels"]),
         sample_rate=int(requirements["sampleRate"]),
@@ -965,6 +1168,7 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--inventory", type=Path)
     parser.add_argument("--preflight", type=Path)
     parser.add_argument("--profile", type=Path)
+    parser.add_argument("--failover-readiness", type=Path)
     parser.add_argument("--recording-root", type=Path)
     parser.add_argument("--expected-inputs", type=int, default=64)
     parser.add_argument("--sample-rate", type=int, default=96_000)

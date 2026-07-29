@@ -144,6 +144,41 @@ payload but does not create a user or call systemd. Direct CLI supervision remai
 available for development and deterministic tests; production uses the private
 config and hardened service.
 
+## Production-readiness handoff
+
+Immediately before the Mac's production-host audit, generate a fresh report on the
+independent controller. Use the exact hostname returned by `hostname` on the AutoMix
+Mac:
+
+```bash
+sudo /usr/bin/python3 \
+  /usr/local/libexec/automix-failover/audit_failover_controller.py \
+  --primary-hostname "AUTOMIX-MAC-HOSTNAME" \
+  --output /var/lib/automix-failover/controller-readiness.json \
+  --replace
+```
+
+Copy that owner-only report to the Mac over the isolated management network. It is
+valid for at most 15 minutes. The audit proves that:
+
+- the controller hostname differs from the named AutoMix Mac;
+- the strict production config and private relay credential validate;
+- the root-owned installed supervisor, readiness audit, and systemd unit hashes
+  match the repository files used by the Mac's clean published source commit;
+- `automix-failover.service` is enabled, active, running as the dedicated user and
+  group, set to restart, has no pending daemon reload, and retains its packaged
+  `NoNewPrivileges`/`ProtectSystem` contract;
+- the latest private status is no more than two seconds old and records a physical
+  relay acknowledgement for latched backup with no primary lease remaining.
+
+The Mac's `audit-production-host-readiness.py` rejects a missing, stale, edited,
+same-host, wrong-version, wrong-package, inactive, or non-acknowledged controller
+report. The staged production runner preserves an exact copy and hash beside its
+host-readiness evidence.
+
+This is a start-readiness gate, not hardware acceptance. It cannot replace power,
+network, carrier, and process kill tests or the selected encoder-output recordings.
+
 ## Operator commands
 
 Read the current state:
@@ -169,15 +204,17 @@ the status file; the status file is output only.
 ## Verify
 
 ```bash
-python3 test_automix_failover_supervisor.py
+python3 -m unittest -v \
+  test_automix_failover_supervisor.py \
+  test_failover_controller_readiness.py
 ```
 
-The 30-test deterministic suite covers heartbeat
+The 35-test deterministic suite covers heartbeat
 schema/freshness/progression, HTTP failure and redirects,
 startup/restart/shutdown defaults, manual-return gating, primary lease failure,
 relay acknowledgement binding, private credentials/control/status, strict
-production configuration, hardened systemd payload rendering, and the end-to-end
-supervisor state machine.
+production configuration, hardened systemd payload rendering, controller readiness
+handoff, and the end-to-end supervisor state machine.
 
 These tests verify software behavior only. Before go-live, run and record every real
 kill test in `docs/EXTERNAL_FAILOVER.md`, including power removal from the AutoMix

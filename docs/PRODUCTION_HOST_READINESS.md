@@ -22,6 +22,7 @@ APP="/Applications/AutoMix Native.app/Contents/MacOS/AutoMix Native"
 EVIDENCE_ROOT="/Volumes/AutoMix Proof/sermon-readiness"
 PROFILE="$HOME/Library/Application Support/AutoMix Native/VenueProfile.json"
 BUILD_METADATA="/Volumes/AutoMix Proof/Release/build-metadata.json"
+FAILOVER_READINESS="$EVIDENCE_ROOT/failover-controller-readiness.json"
 
 "$APP" --smoke-test --write-device-inventory \
   --input-uid "DANTE_OR_AGGREGATE_INPUT_UID" \
@@ -37,6 +38,29 @@ BUILD_METADATA="/Volumes/AutoMix Proof/Release/build-metadata.json"
   --output-dir "$EVIDENCE_ROOT"
 ```
 
+On the separately powered failover controller, generate its readiness handoff using
+the exact value returned by `hostname` on the AutoMix Mac:
+
+```sh
+sudo /usr/bin/python3 \
+  /usr/local/libexec/automix-failover/audit_failover_controller.py \
+  --primary-hostname "AUTOMIX-MAC-HOSTNAME" \
+  --output /var/lib/automix-failover/controller-readiness.json \
+  --replace
+```
+
+Copy that file to `$FAILOVER_READINESS` over the isolated management network and
+keep it owner-only (`0600`). One safe pattern is:
+
+```sh
+ssh FAILOVER-CONTROLLER \
+  sudo /bin/cat /var/lib/automix-failover/controller-readiness.json \
+  > "$FAILOVER_READINESS"
+chmod 600 "$FAILOVER_READINESS"
+```
+
+Generate the Mac report within 15 minutes.
+
 Then run the consolidated audit with the exact generated files:
 
 ```sh
@@ -47,6 +71,7 @@ python3 scripts/audit-production-host-readiness.py \
   --inventory "$EVIDENCE_ROOT/automix-core-audio-device-inventory-YYYYMMDD-HHMMSS.json" \
   --preflight "$EVIDENCE_ROOT/automix-core-audio-preflight-YYYYMMDD-HHMMSS.json" \
   --profile "$PROFILE" \
+  --failover-readiness "$FAILOVER_READINESS" \
   --recording-root "/Volumes/AutoMix Proof" \
   --output "$EVIDENCE_ROOT/automix-production-host-readiness.json"
 ```
@@ -58,7 +83,7 @@ other evidence attachments.
 
 ## Fail-closed checks
 
-The report requires all eleven checks to pass:
+The report requires all twelve checks to pass:
 
 1. The exact clean source commit is published to `origin/main`.
 2. The supplied app is an executable Developer ID build with Hardened Runtime,
@@ -77,10 +102,16 @@ The report requires all eleven checks to pass:
    proof window plus reserve.
 7. Planning Center credentials exist in the app's macOS Keychain service.
 8. The crash-relaunch LaunchAgent is loaded and points to the same notarized app.
-9. OBS Studio and its bundled WebSocket plugin are signed and Gatekeeper-accepted.
-10. The loopback OBS observer returns fresh production-eligible health for the exact
-    streaming input/track with authenticated, advancing, clean encoder counters.
-11. The token-free remote `/health` endpoint returns fresh production-eligible HLS
+9. A readiness report generated within the last 15 minutes on a differently named
+   controller proves that the strict config validates, its installed supervisor,
+   audit tool, and systemd unit are root-owned and match the current published
+   repository files, the hardened service is enabled/running with no pending daemon
+   reload, and a status sample no more than two seconds old confirms that the
+   physical relay is latched to backup.
+10. OBS Studio and its bundled WebSocket plugin are signed and Gatekeeper-accepted.
+11. The loopback OBS observer returns fresh production-eligible health for the exact
+   streaming input/track with authenticated, advancing, clean encoder counters.
+12. The token-free remote `/health` endpoint returns fresh production-eligible HLS
     playback evidence with an offsite identity, public playback host, media sequence,
     and decoded audio.
 
@@ -104,9 +135,11 @@ observer checks remain failed; it can never produce a ready report.
 
 Ready reports bind the source commit and SHA-256 hashes of the app binary, release
 metadata, signed in-app provenance, inventory, preflight, and venue profile. They
-expire after 15 minutes when used by the staged runner. Verification rechecks every
-file binding, signature, provenance relationship, route, free-space measurement,
-Keychain/LaunchAgent state, and live observer instead of trusting edited booleans:
+also bind the transferred failover-controller readiness report. They expire after
+15 minutes when used by the staged runner. Verification rechecks every file binding,
+signature, provenance relationship, controller/package/relay state, route,
+free-space measurement, Keychain/LaunchAgent state, and live observer instead of
+trusting edited booleans:
 
 ```sh
 python3 scripts/audit-production-host-readiness.py \
@@ -125,7 +158,8 @@ HOST_READINESS_REPORT="$EVIDENCE_ROOT/automix-production-host-readiness.json" \
   "$PROFILE" "$EVIDENCE_ROOT"
 ```
 
-The runner copies the verified report and its SHA-256 into the phase evidence
-directory. Short `REHEARSAL_ONLY=1` engineering runs may omit it but print an
+The runner copies the verified host and failover-controller readiness reports and
+their SHA-256 values into the phase evidence directory. Short `REHEARSAL_ONLY=1`
+engineering runs may omit them but print an
 explicit warning and can never mint production proof. The staged runner and signed
 acceptance verifiers remain the authoritative proof gates.
