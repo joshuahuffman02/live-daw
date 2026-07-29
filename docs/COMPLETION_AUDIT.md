@@ -13,7 +13,7 @@ hardware proof.
 | Behavior-tested speech automixer | `appliance/dsp/Automixer.h`; 96 kHz acquisition, equal-share, silence ducking, handoff, and no-allocation assertions in `appliance/tests/test_dsp.cpp` | Verified in deterministic tests. |
 | Measurement-driven gain staging, activity/noise floor, adaptive gates, level riding, slow loudness normalization | `appliance/src/BrainThread.h`; measurement, loudness, limiter-backoff, FREEZE/SAFE, and shadow tests in `appliance/tests/test_dsp.cpp` | Verified in deterministic control-loop tests and native bridge integration. |
 | Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; stale-aware fail-closed `/health` primary-audio heartbeat; independent lease-based failover supervisor and 24-test state-machine/HTTP/relay suite; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE and the independent controller software are verified. The normally de-energized relay/encoder backup path must still be built and kill-tested on the venue system. |
-| Safe scene transitions, manual overrides, Planning Center driving | Smoothed targets in the DSP/brain; full processing and mix-override bridge tests; Planning Center mapping/timed-cue tests; Keychain credential storage | Software verified. Live API/service-plan exercise still needs venue credentials and an actual service plan. |
+| Safe scene transitions, manual overrides, Planning Center driving | Smoothed targets in the DSP/brain; full processing and mix-override bridge tests; fail-closed startup/recovery/proof application plus visible durable live-edit rejection; Planning Center mapping/timed-cue tests; Keychain credential storage | Software verified. Live API/service-plan exercise still needs venue credentials and an actual service plan. |
 | Worship roles and stereo linking | Role profiles for speech, vocals, guitars, bass, drums, keys, percussion, and playback; linked detector/control tests; profile/preflight coverage tests | Verified in deterministic and native simulation tests. |
 | Latency and lip-sync reporting | Fixed limiter latency impulse test; native route estimate and persisted measured A/V path; `docs/LATENCY_AND_LIPSYNC.md` | Calculation/reporting verified. End-to-end camera/encoder measurement and multi-hour drift observation require the real chain. |
 | Continuous raw/program recording | Preallocated SPSC recording path, 60-second checkpoint segments, capacity/retention controls, remapped-input-order and no-allocation tests; staged full-window recorder; `ContinuousRecordingProofReport` segment/frame/capacity verifier | Software and the headless proof integration are verified. Current internal disk still has insufficient space for the two-hour 64+2-channel hardware run. |
@@ -33,7 +33,9 @@ hardware proof.
 
 - Deterministic DSP: **117 passed, 0 failed**.
 - Replay evaluator: self-test passed.
-- Native XCTest: **255 passed, 0 failed**.
+- Native XCTest: **258 passed, 0 failed**, including fail-closed startup,
+  operator-visible incident behavior when the native bridge rejects a saved or live
+  manual override, and an honest remote NACK when native control is not applied.
 - Remote monitor: static/auth/pairing/cookie, heartbeat, snapshot-freshness,
   SAFE-release confirmation, bounded command timeout, and SSE smoke passed.
 - Remote browser control safety: **6 passed, 0 failed** for forward-only timestamp

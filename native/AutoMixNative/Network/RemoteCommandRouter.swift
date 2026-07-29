@@ -1,15 +1,21 @@
 import Foundation
 
 // The control surface the remote console can drive. AppModel conforms to this
-// (see MonitorBridge); tests drive a spy. Channel-index methods return false when
-// the index is out of range so the router can answer the phone honestly.
+// (see MonitorBridge); tests drive a spy. Channel-index methods distinguish an
+// invalid index from a native-control rejection so the router can answer honestly.
 protocol RemoteControlTarget: AnyObject {
     func remoteSetSafe(_ on: Bool)
     func remoteSetScene(_ scene: String) -> Bool
-    func remoteSetMute(idx: Int, on: Bool) -> Bool
-    func remoteSetFaderOverride(idx: Int, on: Bool, db: Double) -> Bool
-    func remoteSetPanOverride(idx: Int, on: Bool, pan: Double) -> Bool
-    func remoteClearOverride(idx: Int) -> Bool
+    func remoteSetMute(idx: Int, on: Bool) -> RemoteChannelMutationResult
+    func remoteSetFaderOverride(idx: Int, on: Bool, db: Double) -> RemoteChannelMutationResult
+    func remoteSetPanOverride(idx: Int, on: Bool, pan: Double) -> RemoteChannelMutationResult
+    func remoteClearOverride(idx: Int) -> RemoteChannelMutationResult
+}
+
+enum RemoteChannelMutationResult: Equatable, Sendable {
+    case applied
+    case channelOutOfRange
+    case nativeControlRejected
 }
 
 enum RemoteCommandRouter {
@@ -31,31 +37,51 @@ enum RemoteCommandRouter {
                 : CommandResult(ok: false, message: "unknown scene \(scene)")
 
         case .setMute(let idx, let on):
-            return target.remoteSetMute(idx: idx, on: on)
-                ? CommandResult(ok: true)
-                : outOfRange(idx)
+            return channelResult(
+                target.remoteSetMute(idx: idx, on: on),
+                idx: idx
+            )
 
         case .setFaderOverride(let idx, let on, let db):
             let clamped = db.clamped(to: ChannelMapping.faderDbOverrideRange)
-            return target.remoteSetFaderOverride(idx: idx, on: on, db: clamped)
-                ? CommandResult(ok: true)
-                : outOfRange(idx)
+            return channelResult(
+                target.remoteSetFaderOverride(idx: idx, on: on, db: clamped),
+                idx: idx
+            )
 
         case .setPanOverride(let idx, let on, let pan):
             let clamped = pan.clamped(to: ChannelMapping.panOverrideRange)
-            return target.remoteSetPanOverride(idx: idx, on: on, pan: clamped)
-                ? CommandResult(ok: true)
-                : outOfRange(idx)
+            return channelResult(
+                target.remoteSetPanOverride(idx: idx, on: on, pan: clamped),
+                idx: idx
+            )
 
         case .clearOverride(let idx):
-            return target.remoteClearOverride(idx: idx)
-                ? CommandResult(ok: true)
-                : outOfRange(idx)
+            return channelResult(
+                target.remoteClearOverride(idx: idx),
+                idx: idx
+            )
         }
     }
 
-    private static func outOfRange(_ idx: Int) -> CommandResult {
-        CommandResult(ok: false, message: "channel \(idx) out of range")
+    private static func channelResult(
+        _ result: RemoteChannelMutationResult,
+        idx: Int
+    ) -> CommandResult {
+        switch result {
+        case .applied:
+            return CommandResult(ok: true)
+        case .channelOutOfRange:
+            return CommandResult(
+                ok: false,
+                message: "channel \(idx) out of range"
+            )
+        case .nativeControlRejected:
+            return CommandResult(
+                ok: false,
+                message: "channel \(idx) control was not applied; check the Mac"
+            )
+        }
     }
 }
 

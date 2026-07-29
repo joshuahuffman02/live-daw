@@ -399,7 +399,11 @@ not fall back to the Dante input UID; if no stream/encoder/virtual/capture/Aggre
 output is visible, the command fails with a clear output-selection error. Headless
 validation also applies every saved manual processing override before soundcheck and
 stability runs, so the generated proof reports describe the mix state that was
-actually rendered.
+actually rendered. A rejected override now stops startup or headless proof capture
+instead of silently falling back to autonomous settings. A rejection during a live
+operator edit keeps program audio running but raises a critical visible error and
+durable incident with the exact mixer channel. The alert remains latched until every
+channel control applies successfully on a later retry, which is also journaled.
 
 The individual steps can still be run separately when isolating a route, recording,
 or dropout problem:

@@ -144,7 +144,13 @@ struct AutoMixNativeApp: App {
             )
             defer { bridge.stop() }
 
-            let manualSummary = CLIManualOverrideApplier.apply(mappings, to: bridge)
+            let manualSummary = ManualOverrideApplier.applyForValidation(
+                mappings,
+                to: bridge
+            )
+            guard manualSummary.isComplete else {
+                throw CLIValidationError(manualSummary.failureDescription)
+            }
             bridge.setSceneName(MixScene.worship.rawValue)
             bridge.setSafeBypass(false)
             bridge.setFrozen(false)
@@ -284,7 +290,13 @@ struct AutoMixNativeApp: App {
             )
             bridge.setSceneName(MixScene.sermon.rawValue)
             let roleApplied = bridge.setChannelRoleForChannel(0, role: ChannelRole.speech.rawValue)
-            let manualSummary = CLIManualOverrideApplier.apply(mappings, to: bridge)
+            let manualSummary = ManualOverrideApplier.applyForValidation(
+                mappings,
+                to: bridge
+            )
+            guard manualSummary.isComplete else {
+                throw CLIValidationError(manualSummary.failureDescription)
+            }
             Thread.sleep(forTimeInterval: 0.25)
             let levels = bridge.inputLevelsDb().prefix(8).map { String(format: "%.1f", $0.doubleValue) }.joined(separator: ", ")
             let outputLevels = bridge.outputLevelsDb().map { String(format: "%.1f", $0.doubleValue) }.joined(separator: ", ")
@@ -1339,9 +1351,17 @@ struct AutoMixNativeApp: App {
                 maxInputChannels: options.expectedInputChannels
             )
         )
-        let manualSummary = CLIManualOverrideApplier.apply(orderedMappings, to: bridge)
+        let manualSummary = ManualOverrideApplier.applyForValidation(
+            orderedMappings,
+            to: bridge
+        )
         if manualSummary.requestedCount > 0 {
             print("Core Audio validation manual overrides applied: \(manualSummary.appliedCount)/\(manualSummary.requestedCount)")
+        }
+        guard manualSummary.isComplete else {
+            throw CLIValidationError(
+                "Core Audio validation \(manualSummary.failureDescription); no proof audio was captured"
+            )
         }
     }
 
@@ -1579,37 +1599,4 @@ struct AutoMixNativeApp: App {
         try data.write(to: url, options: .atomic)
     }
 
-}
-
-struct CLIManualOverrideSummary: Equatable, Sendable {
-    var requestedCount: Int
-    var appliedCount: Int
-    var failedMixerChannels: [Int]
-}
-
-enum CLIManualOverrideApplier {
-    static func apply(_ mappings: [ChannelMapping], to bridge: AutoMixEngineBridge) -> CLIManualOverrideSummary {
-        var requestedCount = 0
-        var appliedCount = 0
-        var failedMixerChannels: [Int] = []
-
-        for mapping in mappings where mapping.hasAnyManualOverride {
-            requestedCount += 1
-            let applied = bridge.setManualChannelProcessing(
-                mapping.makeNativeProcessingOverride(),
-                forChannel: mapping.index
-            )
-            if applied {
-                appliedCount += 1
-            } else {
-                failedMixerChannels.append(mapping.index)
-            }
-        }
-
-        return CLIManualOverrideSummary(
-            requestedCount: requestedCount,
-            appliedCount: appliedCount,
-            failedMixerChannels: failedMixerChannels
-        )
-    }
 }

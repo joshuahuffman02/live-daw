@@ -214,7 +214,12 @@ the command fails with a clear output-selection error.
 
 Headless validation commands load the saved profile's Dante input assignments, source
 roles, and complete manual processing overrides, then apply those overrides to the
-running bridge before soundcheck or stability evidence is captured.
+running bridge before soundcheck or stability evidence is captured. Startup,
+automatic recovery, and headless proof capture fail closed if the bridge rejects any
+enabled override. A rejected live edit does not interrupt program audio, but it
+raises a critical operator-visible error and records the affected mixer channel in
+the runtime incident journal. The error clears only after every channel control
+applies on a later retry, and that recovery is journaled separately.
 
 Use the Channel Map `Service Roles` button to seed a starter church role layout. It
 updates names/source roles and seeds adjacent linked keys, overhead, and playback

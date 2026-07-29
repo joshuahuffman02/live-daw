@@ -7,6 +7,7 @@ private final class SpyTarget: RemoteControlTarget {
     var scene: String?
     var knownScenes: Set<String> = ["worship", "sermon", "patch"]
     var validIdx: Range<Int> = 0..<32
+    var rejectedIdx: Set<Int> = []
 
     var muteCalls: [(idx: Int, on: Bool)] = []
     var faderCalls: [(idx: Int, on: Bool, db: Double)] = []
@@ -21,24 +22,36 @@ private final class SpyTarget: RemoteControlTarget {
         return true
     }
 
-    func remoteSetMute(idx: Int, on: Bool) -> Bool {
-        guard validIdx.contains(idx) else { return false }
-        muteCalls.append((idx, on)); return true
+    func remoteSetMute(idx: Int, on: Bool) -> RemoteChannelMutationResult {
+        guard validIdx.contains(idx) else { return .channelOutOfRange }
+        guard !rejectedIdx.contains(idx) else { return .nativeControlRejected }
+        muteCalls.append((idx, on)); return .applied
     }
 
-    func remoteSetFaderOverride(idx: Int, on: Bool, db: Double) -> Bool {
-        guard validIdx.contains(idx) else { return false }
-        faderCalls.append((idx, on, db)); return true
+    func remoteSetFaderOverride(
+        idx: Int,
+        on: Bool,
+        db: Double
+    ) -> RemoteChannelMutationResult {
+        guard validIdx.contains(idx) else { return .channelOutOfRange }
+        guard !rejectedIdx.contains(idx) else { return .nativeControlRejected }
+        faderCalls.append((idx, on, db)); return .applied
     }
 
-    func remoteSetPanOverride(idx: Int, on: Bool, pan: Double) -> Bool {
-        guard validIdx.contains(idx) else { return false }
-        panCalls.append((idx, on, pan)); return true
+    func remoteSetPanOverride(
+        idx: Int,
+        on: Bool,
+        pan: Double
+    ) -> RemoteChannelMutationResult {
+        guard validIdx.contains(idx) else { return .channelOutOfRange }
+        guard !rejectedIdx.contains(idx) else { return .nativeControlRejected }
+        panCalls.append((idx, on, pan)); return .applied
     }
 
-    func remoteClearOverride(idx: Int) -> Bool {
-        guard validIdx.contains(idx) else { return false }
-        clearedIdx.append(idx); return true
+    func remoteClearOverride(idx: Int) -> RemoteChannelMutationResult {
+        guard validIdx.contains(idx) else { return .channelOutOfRange }
+        guard !rejectedIdx.contains(idx) else { return .nativeControlRejected }
+        clearedIdx.append(idx); return .applied
     }
 }
 
@@ -97,6 +110,25 @@ final class RemoteCommandRoutingTests: XCTestCase {
         XCTAssertFalse(result.ok)
         XCTAssertNotNil(result.message)
         XCTAssertTrue(spy.muteCalls.isEmpty)
+    }
+
+    func testNativeControlRejectionReturnsHonestRemoteNack() {
+        let spy = SpyTarget()
+        spy.rejectedIdx = [5]
+
+        let result = RemoteCommandRouter.apply(
+            .setFaderOverride(idx: 5, on: true, db: -12),
+            to: spy
+        )
+
+        XCTAssertFalse(result.ok)
+        XCTAssertTrue(
+            result.message?.localizedCaseInsensitiveContains("not applied") == true
+        )
+        XCTAssertTrue(
+            result.message?.localizedCaseInsensitiveContains("check the Mac") == true
+        )
+        XCTAssertTrue(spy.faderCalls.isEmpty)
     }
 
     func testExpiredCommandNeverMutatesTargetButFreshCommandDoes() {

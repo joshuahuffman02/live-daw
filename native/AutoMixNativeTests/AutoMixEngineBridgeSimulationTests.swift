@@ -3412,7 +3412,7 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
         XCTAssertEqual(coverage.invalidOverrideChannels, [])
     }
 
-    func testCLIManualOverrideApplierPushesProfileOverridesToRunningBridge() throws {
+    func testValidationManualOverrideGateStopsBridgeOnIncompleteApplication() throws {
         try bridge.startSimulated(
             withChannelCount: 4,
             sampleRate: 96_000,
@@ -3436,11 +3436,118 @@ final class AutoMixEngineBridgeSimulationTests: XCTestCase {
             faderDb: -10.0
         ))
 
-        let summary = CLIManualOverrideApplier.apply(mappings, to: bridge)
+        let summary = ManualOverrideApplier.applyForValidation(mappings, to: bridge)
 
         XCTAssertEqual(summary.requestedCount, 4)
         XCTAssertEqual(summary.appliedCount, 3)
         XCTAssertEqual(summary.failedMixerChannels, [7])
+        XCTAssertFalse(summary.isComplete)
+        XCTAssertFalse(bridge.running)
+        XCTAssertEqual(
+            summary.failureDescription,
+            "manual override application failed for Mix Ch 8"
+        )
+    }
+
+    @MainActor
+    func testAppModelStartFailsClosedWhenManualOverrideApplicationIsRejected() throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(
+            profileDirectory: profileDirectory,
+            autoStartRemoteMonitoring: false
+        )
+        model.debugStopPollingForTesting()
+        var invalid = ChannelMapping(
+            index: 99,
+            name: "Invalid manual target",
+            role: .speech
+        )
+        invalid.faderOverrideEnabled = true
+        invalid.faderDb = -12
+        model.channelMappings = [invalid]
+        defer {
+            if model.isRunning {
+                model.stopEngine()
+            }
+            model.debugStopPollingForTesting()
+            try? FileManager.default.removeItem(at: profileDirectory)
+        }
+
+        XCTAssertThrowsError(
+            try model.debugStartSimulatedForRecoveryTesting()
+        ) { error in
+            XCTAssertTrue(
+                error.localizedDescription.localizedCaseInsensitiveContains(
+                    "manual override application failed for Mix Ch 100"
+                )
+            )
+        }
+        XCTAssertFalse(model.isRunning)
+        XCTAssertEqual(model.automaticRecoveryStatus, "disarmed")
+    }
+
+    @MainActor
+    func testAppModelSurfacesAndJournalsRejectedLiveManualOverride() async throws {
+        let profileDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let model = AppModel(
+            profileDirectory: profileDirectory,
+            autoStartRemoteMonitoring: false
+        )
+        model.debugStopPollingForTesting()
+        try model.debugStartSimulatedForRecoveryTesting()
+        defer {
+            if model.isRunning {
+                model.stopEngine()
+            }
+            model.debugStopPollingForTesting()
+            try? FileManager.default.removeItem(at: profileDirectory)
+        }
+
+        var invalid = ChannelMapping(
+            index: 99,
+            name: "Invalid live manual target",
+            role: .speech
+        )
+        invalid.faderOverrideEnabled = true
+        invalid.faderDb = -12
+        model.channelMappings = [invalid]
+        model.channelDidChange(invalid)
+
+        XCTAssertTrue(model.isRunning, "a rejected edit must not interrupt program audio")
+        XCTAssertTrue(
+            model.lastError?.localizedCaseInsensitiveContains(
+                "manual override application failed for Mix Ch 100"
+            ) == true
+        )
+        XCTAssertTrue(
+            model.statusText.localizedCaseInsensitiveContains(
+                "manual control was not applied"
+            )
+        )
+
+        await model.debugWaitForIncidentWritesForTesting()
+        let incidentURL = try XCTUnwrap(model.incidentLogURL)
+        let journal = try String(contentsOf: incidentURL, encoding: .utf8)
+        XCTAssertTrue(journal.contains("manual-override-application-failed"))
+        XCTAssertTrue(journal.contains("\"failedMixerChannels\":\"100\""))
+
+        var valid = ChannelMapping(
+            index: 0,
+            name: "Recovered manual target",
+            role: .speech
+        )
+        valid.faderOverrideEnabled = true
+        valid.faderDb = -12
+        model.channelMappings = [valid]
+        model.channelDidChange(valid)
+
+        XCTAssertTrue(model.isRunning)
+        XCTAssertNil(model.lastError)
+        await model.debugWaitForIncidentWritesForTesting()
+        let recoveredJournal = try String(contentsOf: incidentURL, encoding: .utf8)
+        XCTAssertTrue(recoveredJournal.contains("manual-override-application-recovered"))
     }
 
     func testServiceRoleTemplateSeedsUsefulRolesAndPreservesRoutingFields() {

@@ -55,6 +55,68 @@ extension ChannelMapping {
     }
 }
 
+struct ManualOverrideApplicationSummary: Equatable, Sendable {
+    var requestedCount: Int
+    var appliedCount: Int
+    var failedMixerChannels: [Int]
+
+    var isComplete: Bool {
+        requestedCount == appliedCount && failedMixerChannels.isEmpty
+    }
+
+    var failureDescription: String {
+        let channels = failedMixerChannels
+            .map { "Mix Ch \($0 + 1)" }
+            .joined(separator: ", ")
+        return channels.isEmpty
+            ? "manual override application was incomplete"
+            : "manual override application failed for \(channels)"
+    }
+}
+
+enum ManualOverrideApplier {
+    static func apply(
+        _ mappings: [ChannelMapping],
+        to bridge: AutoMixEngineBridge,
+        includeClearOperations: Bool = false
+    ) -> ManualOverrideApplicationSummary {
+        var requestedCount = 0
+        var appliedCount = 0
+        var failedMixerChannels: [Int] = []
+
+        for mapping in mappings
+        where includeClearOperations || mapping.hasAnyManualOverride {
+            requestedCount += 1
+            let applied = bridge.setManualChannelProcessing(
+                mapping.makeNativeProcessingOverride(),
+                forChannel: mapping.index
+            )
+            if applied {
+                appliedCount += 1
+            } else {
+                failedMixerChannels.append(mapping.index)
+            }
+        }
+
+        return ManualOverrideApplicationSummary(
+            requestedCount: requestedCount,
+            appliedCount: appliedCount,
+            failedMixerChannels: failedMixerChannels
+        )
+    }
+
+    static func applyForValidation(
+        _ mappings: [ChannelMapping],
+        to bridge: AutoMixEngineBridge
+    ) -> ManualOverrideApplicationSummary {
+        let summary = apply(mappings, to: bridge)
+        if !summary.isComplete {
+            bridge.stop()
+        }
+        return summary
+    }
+}
+
 struct PlanningCenterCredentials: Codable, Equatable, Sendable {
     var applicationID: String
     var secret: String
@@ -932,6 +994,7 @@ final class AppModel: ObservableObject {
     private var previousOutputClockWarning = false
     private var previousWatchdogSafeActive = false
     private var previousRuntimeRouteHealthy = true
+    private var manualOverrideApplicationFailed = false
 
     // Rehearsal/monitor mode: relaxes the broadcast go-live gates so the operator can
     // verify signal flow before the rig is fully configured. Not broadcast-safe.
@@ -1470,7 +1533,7 @@ final class AppModel: ObservableObject {
             engine.setFrozen(frozen)
             engine.setShadowMode(shadowMode)
             applyAllStereoLinks()
-            applyAllManualOverrides()
+            try requireAllManualOverridesApplied(context: "Core Audio engine start")
             statusText = engine.status
             nextStreamHealthProbeMs = 0
             armAutomaticRecoveryAfterSuccessfulStart(nowMs: Int64(Date().timeIntervalSince1970 * 1_000))
@@ -1629,15 +1692,17 @@ final class AppModel: ObservableObject {
         pollEngine()
     }
 
-    func channelDidChange(_ channel: ChannelMapping) {
+    @discardableResult
+    func channelDidChange(_ channel: ChannelMapping) -> Bool {
         synchronizeStereoPairAfterEdit(channelIndex: channel.index)
         for mappedChannel in channelMappings {
             applyInputChannelMap(mappedChannel)
             applyChannelRole(mappedChannel)
         }
         applyAllStereoLinks()
-        applyAllManualOverrides()
+        let manualSummary = applyAllManualOverrides()
         saveProfile()
+        return manualSummary.isComplete
     }
 
     func applyServiceRoleTemplate() {
@@ -2381,7 +2446,7 @@ final class AppModel: ObservableObject {
             engine.setFrozen(frozen)
             engine.setShadowMode(shadowMode)
             applyAllStereoLinks()
-            applyAllManualOverrides()
+            try requireAllManualOverridesApplied(context: "automatic audio recovery")
             runningRouteSnapshot = liveRouteSnapshot()
             runtimeRecoveryCoordinator.noteAttemptResult(success: true, nowMs: nowMs)
             automaticRecoveryStatus = "restarted · verifying"
@@ -3307,9 +3372,76 @@ final class AppModel: ObservableObject {
         return SoundcheckDeviceSnapshot(device: device)
     }
 
-    private func applyAllManualOverrides() {
-        for channel in channelMappings {
-            applyManualOverride(channel)
+    @discardableResult
+    private func applyAllManualOverrides(
+        reportFailure: Bool = true
+    ) -> ManualOverrideApplicationSummary {
+        guard engine.running else {
+            return ManualOverrideApplicationSummary(
+                requestedCount: 0,
+                appliedCount: 0,
+                failedMixerChannels: []
+            )
+        }
+        let summary = ManualOverrideApplier.apply(
+            channelMappings,
+            to: engine,
+            includeClearOperations: true
+        )
+        if reportFailure {
+            if !summary.isComplete {
+                manualOverrideApplicationFailed = true
+                let message = "Manual control was not applied: \(summary.failureDescription)."
+                lastError = message
+                statusText = message
+                recordRuntimeIncident(
+                    kind: "manual-override-application-failed",
+                    severity: .critical,
+                    message: message,
+                    details: [
+                        "attemptedChannels": "\(summary.requestedCount)",
+                        "appliedChannels": "\(summary.appliedCount)",
+                        "failedMixerChannels": summary.failedMixerChannels
+                            .map { "\($0 + 1)" }
+                            .joined(separator: ",")
+                    ]
+                )
+            } else if manualOverrideApplicationFailed {
+                manualOverrideApplicationFailed = false
+                if lastError?.hasPrefix("Manual control was not applied:") == true {
+                    lastError = nil
+                }
+                statusText = engine.status
+                recordRuntimeIncident(
+                    kind: "manual-override-application-recovered",
+                    severity: .info,
+                    message: "All manual channel controls were applied after retry",
+                    details: [
+                        "appliedChannels": "\(summary.appliedCount)"
+                    ]
+                )
+            }
+        }
+        return summary
+    }
+
+    private func requireAllManualOverridesApplied(context: String) throws {
+        let summary = applyAllManualOverrides(reportFailure: false)
+        guard summary.isComplete else {
+            engine.stop()
+            runningRouteSnapshot = nil
+            throw NSError(
+                domain: "AutoMixManualOverrideApplication",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "\(context) blocked because \(summary.failureDescription)"
+                ]
+            )
+        }
+        manualOverrideApplicationFailed = false
+        if lastError?.hasPrefix("Manual control was not applied:") == true {
+            lastError = nil
         }
     }
 
@@ -3413,14 +3545,6 @@ final class AppModel: ObservableObject {
         _ = engine.setChannelRoleForChannel(channel.index, role: channel.role.rawValue)
     }
 
-    private func applyManualOverride(_ channel: ChannelMapping) {
-        guard engine.running else { return }
-        _ = engine.setManualChannelProcessing(
-            channel.makeNativeProcessingOverride(),
-            forChannel: channel.index
-        )
-    }
-
     private func refreshAudioInputPermission() {
         audioInputPermission = AudioInputPermissionState(status: AVCaptureDevice.authorizationStatus(for: .audio))
     }
@@ -3499,7 +3623,7 @@ final class AppModel: ObservableObject {
         engine.setFrozen(frozen)
         engine.setShadowMode(shadowMode)
         applyAllStereoLinks()
-        applyAllManualOverrides()
+        try requireAllManualOverridesApplied(context: "simulated recovery test start")
         armAutomaticRecoveryAfterSuccessfulStart(nowMs: nowMs)
         if automaticContinuousRecordingEnabled {
             continuousRecordingRequested = true
