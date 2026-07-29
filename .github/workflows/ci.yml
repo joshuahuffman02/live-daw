@@ -27,7 +27,8 @@ jobs:
         run: |
           bash -n failover/install-systemd-service.sh
           python3 -W error::ResourceWarning -m unittest -v \
-            failover/test_automix_failover_supervisor.py
+            failover/test_automix_failover_supervisor.py \
+            failover/test_failover_controller_readiness.py
 
       - name: Verify the production systemd unit
         run: |
