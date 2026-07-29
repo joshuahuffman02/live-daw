@@ -12,6 +12,37 @@ permissions:
   contents: read
 
 jobs:
+  failover:
+    name: External failover controller
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Verify controller behavior and package rendering
+        run: |
+          bash -n failover/install-systemd-service.sh
+          python3 -W error::ResourceWarning -m unittest -v \
+            failover/test_automix_failover_supervisor.py
+
+      - name: Verify the production systemd unit
+        run: |
+          if ! id automix-failover >/dev/null 2>&1; then
+            sudo useradd --system \
+              --home-dir /var/lib/automix-failover \
+              --shell /usr/sbin/nologin \
+              automix-failover
+          fi
+          sudo install -d -m 0755 /usr/local/libexec/automix-failover
+          sudo install -m 0755 \
+            failover/automix_failover_supervisor.py \
+            /usr/local/libexec/automix-failover/automix_failover_supervisor.py
+          systemd-analyze verify failover/automix-failover.service
+
   verify:
     name: DSP, web, and native
     runs-on: macos-15
@@ -26,6 +57,7 @@ jobs:
       - name: Lint deployment contracts
         run: |
           zsh -n scripts/*.sh scripts/test-support/*.sh
+          bash -n failover/install-systemd-service.sh
           plutil -lint native/AutoMixNative/AutoMixNative.entitlements
           plutil -lint native/launchd/com.livedaw.automixnative.plist.template
           plutil -lint encoder/com.livedaw.obshealthbridge.plist.template
