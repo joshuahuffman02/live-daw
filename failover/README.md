@@ -146,6 +146,11 @@ config and hardened service.
 
 ## Production-readiness handoff
 
+The installer creates a persistent root-owned Ed25519 readiness-signing key at
+`/etc/automix-failover/readiness-signing-key`. Its public half is
+`readiness-signing-key.pub`; copy only that public key to the Mac's dedicated
+controller `allowed_signers` file. Never copy the private key off the controller.
+
 Immediately before the Mac's production-host audit, generate a fresh report on the
 independent controller. Use the exact hostname returned by `hostname` on the AutoMix
 Mac:
@@ -158,11 +163,14 @@ sudo /usr/bin/python3 \
   --replace
 ```
 
-Copy that owner-only report to the Mac over the isolated management network. It is
-valid for at most 15 minutes. The audit proves that:
+The command atomically produces the owner-only report and
+`controller-readiness.json.sig`. Copy both to the Mac over the isolated management
+network. The signed report is valid for at most 15 minutes. The audit proves that:
 
 - the controller hostname differs from the named AutoMix Mac;
 - the strict production config and private relay credential validate;
+- the controller's private Ed25519 identity is owner-only and signs the exact report
+  under the fixed `live-daw-failover-readiness` namespace;
 - the root-owned installed supervisor, readiness audit, and systemd unit hashes
   match the repository files used by the Mac's clean published source commit;
 - `automix-failover.service` is enabled, active, running as the dedicated user and
@@ -171,10 +179,12 @@ valid for at most 15 minutes. The audit proves that:
 - the latest private status is no more than two seconds old and records a physical
   relay acknowledgement for latched backup with no primary lease remaining.
 
-The Mac's `audit-production-host-readiness.py` rejects a missing, stale, edited,
-same-host, wrong-version, wrong-package, inactive, or non-acknowledged controller
-report. The staged production runner preserves an exact copy and hash beside its
-host-readiness evidence.
+The Mac's `audit-production-host-readiness.py` verifies the signature against exactly
+one separately provisioned `automix-failover-controller` Ed25519 key before parsing
+the JSON. It rejects a missing, stale, edited, self-signed, same-host, wrong-version,
+wrong-package, inactive, or non-acknowledged controller report. The staged production
+runner preserves the report, signature, dedicated trust root, and their hashes beside
+its host-readiness evidence.
 
 This is a start-readiness gate, not hardware acceptance. It cannot replace power,
 network, carrier, and process kill tests or the selected encoder-output recordings.
@@ -209,12 +219,12 @@ python3 -m unittest -v \
   test_failover_controller_readiness.py
 ```
 
-The 35-test deterministic suite covers heartbeat
+The 36-test deterministic suite covers heartbeat
 schema/freshness/progression, HTTP failure and redirects,
 startup/restart/shutdown defaults, manual-return gating, primary lease failure,
 relay acknowledgement binding, private credentials/control/status, strict
-production configuration, hardened systemd payload rendering, controller readiness
-handoff, and the end-to-end supervisor state machine.
+production configuration, hardened systemd payload rendering, signed controller
+readiness handoff/tamper rejection, and the end-to-end supervisor state machine.
 
 These tests verify software behavior only. Before go-live, run and record every real
 kill test in `docs/EXTERNAL_FAILOVER.md`, including power removal from the AutoMix

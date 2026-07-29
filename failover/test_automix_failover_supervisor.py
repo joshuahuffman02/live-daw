@@ -868,6 +868,13 @@ class SupervisorConfigurationTests(unittest.TestCase):
                 render_root / "etc/automix-failover/supervisor.json"
             )
             token_path = render_root / "etc/automix-failover/relay-token"
+            signing_key = (
+                render_root
+                / "etc/automix-failover/readiness-signing-key"
+            )
+            signing_public_key = signing_key.with_name(
+                f"{signing_key.name}.pub"
+            )
             unit_path = (
                 render_root / "etc/systemd/system/automix-failover.service"
             )
@@ -893,6 +900,30 @@ class SupervisorConfigurationTests(unittest.TestCase):
             self.assertEqual(token_path.read_text(), "fixture-secret\n")
             self.assertEqual(stat.S_IMODE(config_path.stat().st_mode), 0o600)
             self.assertEqual(stat.S_IMODE(token_path.stat().st_mode), 0o600)
+            self.assertEqual(
+                stat.S_IMODE(signing_key.stat().st_mode), 0o600
+            )
+            self.assertEqual(
+                stat.S_IMODE(signing_public_key.stat().st_mode), 0o644
+            )
+            public_key = subprocess.run(
+                [
+                    "/usr/bin/ssh-keygen",
+                    "-y",
+                    "-f",
+                    str(signing_key),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertEqual(public_key.returncode, 0, public_key.stderr)
+            self.assertEqual(
+                public_key.stdout.strip(),
+                signing_public_key.read_text(encoding="utf-8").strip(),
+            )
+            self.assertTrue(public_key.stdout.startswith("ssh-ed25519 "))
             self.assertEqual(stat.S_IMODE(unit_path.stat().st_mode), 0o644)
             self.assertEqual(
                 installed_supervisor.read_bytes(),
@@ -923,6 +954,32 @@ class SupervisorConfigurationTests(unittest.TestCase):
                 "CapabilityBoundingSet=",
             ):
                 self.assertIn(required, unit)
+
+            original_signing_key = signing_key.read_bytes()
+            reinstalled = subprocess.run(
+                [
+                    "bash",
+                    str(installer),
+                    "--heartbeat-url",
+                    "http://automix-primary.test:8420/health",
+                    "--relay-url",
+                    "https://relay.test/v1/selection",
+                    "--relay-token-file",
+                    str(token_source),
+                    "--render-root",
+                    str(render_root),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(
+                reinstalled.returncode,
+                0,
+                reinstalled.stderr,
+            )
+            self.assertEqual(signing_key.read_bytes(), original_signing_key)
 
             token_source.chmod(0o644)
             rejected = subprocess.run(

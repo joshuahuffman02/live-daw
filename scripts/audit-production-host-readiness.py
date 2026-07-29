@@ -23,13 +23,18 @@ from pathlib import Path
 from typing import Any
 
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 KIND = "automix-production-host-readiness"
 FAILOVER_READINESS_KIND = "automix-failover-controller-readiness"
 FAILOVER_READINESS_FORMAT_VERSION = 1
+FAILOVER_SIGNER_IDENTITY = "automix-failover-controller"
+FAILOVER_SIGNATURE_NAMESPACE = "live-daw-failover-readiness"
+SSH_KEYGEN = Path("/usr/bin/ssh-keygen")
+MAX_FAILOVER_DOCUMENT_BYTES = 64 * 1024
 FAILOVER_READINESS_CHECK_IDS = {
     "controller.separate-failure-domain",
     "controller.production-config",
+    "controller.signing-key",
     "controller.software-unit-integrity",
     "controller.systemd-service",
     "relay.fresh-backup-latch",
@@ -111,13 +116,143 @@ def valid_sha256(value: Any) -> bool:
     )
 
 
+def trusted_failover_public_key(
+    path: Path,
+    expected_owner_uid: int = 0,
+    expected_owner_gid: int = 0,
+) -> str:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(
+            "failover trusted-signers file must be regular and non-symlink"
+        )
+    info = path.stat()
+    if (
+        info.st_uid != expected_owner_uid
+        or info.st_gid != expected_owner_gid
+        or stat.S_IMODE(info.st_mode) & 0o022
+    ):
+        raise ValueError(
+            "failover trusted-signers file must be root-owned and not group/world writable"
+        )
+    if info.st_size <= 0 or info.st_size > MAX_FAILOVER_DOCUMENT_BYTES:
+        raise ValueError("failover trusted-signers file size is invalid")
+    try:
+        lines = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except UnicodeDecodeError as error:
+        raise ValueError("failover trusted-signers file is not UTF-8") from error
+    if len(lines) != 1:
+        raise ValueError(
+            "failover trusted-signers must contain exactly one controller key"
+        )
+    fields = lines[0].split()
+    if (
+        len(fields) < 3
+        or fields[0] != FAILOVER_SIGNER_IDENTITY
+        or fields[1] != "ssh-ed25519"
+        or not safe_text(fields[2], 8_192)
+    ):
+        raise ValueError(
+            "failover trusted-signers entry has the wrong identity or key type"
+        )
+    return f"{fields[1]} {fields[2]}"
+
+
+def verify_failover_readiness_signature(
+    report_path: Path,
+    signature_path: Path,
+    trusted_signers_path: Path,
+    expected_trust_owner_uid: int = 0,
+    expected_trust_owner_gid: int = 0,
+) -> tuple[str, bytes]:
+    for path, label, owner_only in (
+        (report_path, "readiness report", True),
+        (signature_path, "readiness signature", True),
+        (trusted_signers_path, "trusted-signers file", False),
+    ):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"failover {label} must be regular and non-symlink")
+        info = path.stat()
+        denied_mode = 0o077 if owner_only else 0o022
+        if stat.S_IMODE(info.st_mode) & denied_mode:
+            permission = (
+                "owner-only"
+                if owner_only
+                else "not group/world writable"
+            )
+            raise ValueError(f"failover {label} must be {permission}")
+        if info.st_size <= 0 or info.st_size > MAX_FAILOVER_DOCUMENT_BYTES:
+            raise ValueError(f"failover {label} size is invalid")
+    public_key = trusted_failover_public_key(
+        trusted_signers_path,
+        expected_trust_owner_uid,
+        expected_trust_owner_gid,
+    )
+    report_bytes = report_path.read_bytes()
+    try:
+        result = subprocess.run(
+            [
+                str(SSH_KEYGEN),
+                "-Y",
+                "verify",
+                "-f",
+                str(trusted_signers_path),
+                "-I",
+                FAILOVER_SIGNER_IDENTITY,
+                "-n",
+                FAILOVER_SIGNATURE_NAMESPACE,
+                "-s",
+                str(signature_path),
+            ],
+            input=report_bytes,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as error:
+        raise ValueError(
+            "ssh-keygen could not verify failover readiness"
+        ) from error
+    if result.returncode != 0:
+        raise ValueError(
+            "failover readiness signature is invalid or untrusted"
+        )
+    return public_key, report_bytes
+
+
 def validate_failover_controller_readiness(
     path: Path,
+    signature_path: Path,
+    trusted_signers_path: Path,
     repo: Path,
     now_ms: int,
     primary_hostname: str | None = None,
+    expected_trust_owner_uid: int = 0,
+    expected_trust_owner_gid: int = 0,
 ) -> dict[str, Any]:
-    report = load_document(path)
+    trusted_public_key, signed_report_bytes = (
+        verify_failover_readiness_signature(
+            path,
+            signature_path,
+            trusted_signers_path,
+            expected_trust_owner_uid,
+            expected_trust_owner_gid,
+        )
+    )
+    try:
+        report = json.loads(signed_report_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(
+            "signed failover readiness is not valid UTF-8 JSON"
+        ) from error
+    if not isinstance(report, dict):
+        raise ValueError(
+            "signed failover readiness must contain a top-level object"
+        )
     if stat.S_IMODE(path.stat().st_mode) & 0o077:
         raise ValueError(
             "failover readiness permissions must be owner-only"
@@ -128,6 +263,7 @@ def validate_failover_controller_readiness(
     service = report.get("service")
     relay = report.get("relay")
     config = report.get("config")
+    signature = report.get("signature")
     generated_at = report.get("generatedAtMs")
     expires_at = report.get("expiresAtMs")
     if (
@@ -137,6 +273,7 @@ def validate_failover_controller_readiness(
         or not isinstance(service, dict)
         or not isinstance(relay, dict)
         or not isinstance(config, dict)
+        or not isinstance(signature, dict)
         or not isinstance(generated_at, int)
         or isinstance(generated_at, bool)
         or not isinstance(expires_at, int)
@@ -195,6 +332,12 @@ def validate_failover_controller_readiness(
         and report.get("ready") is True
         and report.get("notProductionAcceptance") is True
         and report.get("serviceName") == "automix-failover.service"
+        and signature.get("signerIdentity") == FAILOVER_SIGNER_IDENTITY
+        and signature.get("namespace") == FAILOVER_SIGNATURE_NAMESPACE
+        and signature.get("publicKeySHA256")
+        == hashlib.sha256(
+            trusted_public_key.encode("utf-8")
+        ).hexdigest()
         and identities_valid
         and software_valid
         and check_ids == FAILOVER_READINESS_CHECK_IDS
@@ -864,20 +1007,38 @@ class Auditor:
 
     def audit_failover(self) -> None:
         path = self.args.failover_readiness
-        if path is None:
+        signature_path = self.args.failover_readiness_signature
+        trusted_signers_path = self.args.failover_trusted_signers
+        if (
+            path is None
+            or signature_path is None
+            or trusted_signers_path is None
+        ):
             self.add(
                 "failover.independent-controller",
                 "failover",
                 False,
-                "independent controller readiness was not supplied",
-                "Run failover/audit_failover_controller.py on the separate controller, copy its fresh report to this Mac, and pass --failover-readiness.",
+                "signed independent controller readiness was not supplied",
+                "Run failover/audit_failover_controller.py on the separate controller, copy its fresh report and signature to this Mac, and pass the readiness, signature, and dedicated trusted-signers paths.",
             )
             return
         try:
             report = validate_failover_controller_readiness(
                 path,
+                signature_path,
+                trusted_signers_path,
                 self.args.repo,
                 self.now_ms,
+                expected_trust_owner_uid=getattr(
+                    self.args,
+                    "failover_trust_owner_uid",
+                    0,
+                ),
+                expected_trust_owner_gid=getattr(
+                    self.args,
+                    "failover_trust_owner_gid",
+                    0,
+                ),
             )
             self.failover_readiness = report
             self.add(
@@ -975,6 +1136,10 @@ class Auditor:
             "preflight": self.args.preflight,
             "profile": self.args.profile,
             "failoverReadiness": self.args.failover_readiness,
+            "failoverReadinessSignature": (
+                self.args.failover_readiness_signature
+            ),
+            "failoverTrustedSigners": self.args.failover_trusted_signers,
         }
         evidence_hashes: dict[str, str | None] = {}
         for label, path in input_paths.items():
@@ -1021,6 +1186,10 @@ class Auditor:
                 "profileSHA256": evidence_hashes["profile"],
                 "failoverReadinessPath": str(self.args.failover_readiness.resolve()) if self.args.failover_readiness is not None else None,
                 "failoverReadinessSHA256": evidence_hashes["failoverReadiness"],
+                "failoverReadinessSignaturePath": str(self.args.failover_readiness_signature.resolve()) if self.args.failover_readiness_signature is not None else None,
+                "failoverReadinessSignatureSHA256": evidence_hashes["failoverReadinessSignature"],
+                "failoverTrustedSignersPath": str(self.args.failover_trusted_signers.resolve()) if self.args.failover_trusted_signers is not None else None,
+                "failoverTrustedSignersSHA256": evidence_hashes["failoverTrustedSigners"],
                 "recordingRoot": str(self.args.recording_root.resolve()) if self.args.recording_root is not None else None,
             },
             "summary": {
@@ -1039,7 +1208,13 @@ class Auditor:
         }
 
 
-def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None = None) -> dict[str, Any]:
+def verify_report(
+    path: Path,
+    home: Path | None = None,
+    now: dt.datetime | None = None,
+    failover_trust_owner_uid: int = 0,
+    failover_trust_owner_gid: int = 0,
+) -> dict[str, Any]:
     report = load_document(path)
     if stat.S_IMODE(path.stat().st_mode) & 0o077:
         raise ValueError("readiness report permissions must be owner-only")
@@ -1100,6 +1275,10 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
         "profileSHA256",
         "failoverReadinessPath",
         "failoverReadinessSHA256",
+        "failoverReadinessSignaturePath",
+        "failoverReadinessSignatureSHA256",
+        "failoverTrustedSignersPath",
+        "failoverTrustedSignersSHA256",
         "recordingRoot",
     )
     if any(not isinstance(inputs.get(field), str) or not inputs[field] for field in required_input_fields):
@@ -1117,6 +1296,14 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
             Path(inputs["failoverReadinessPath"]),
             inputs["failoverReadinessSHA256"],
         ),
+        (
+            Path(inputs["failoverReadinessSignaturePath"]),
+            inputs["failoverReadinessSignatureSHA256"],
+        ),
+        (
+            Path(inputs["failoverTrustedSignersPath"]),
+            inputs["failoverTrustedSignersSHA256"],
+        ),
     )
     for bound_path, expected_hash in bound_files:
         if hash_file(bound_path) != expected_hash:
@@ -1132,6 +1319,14 @@ def verify_report(path: Path, home: Path | None = None, now: dt.datetime | None 
         preflight=Path(inputs["preflightPath"]),
         profile=Path(inputs["profilePath"]),
         failover_readiness=Path(inputs["failoverReadinessPath"]),
+        failover_readiness_signature=Path(
+            inputs["failoverReadinessSignaturePath"]
+        ),
+        failover_trusted_signers=Path(
+            inputs["failoverTrustedSignersPath"]
+        ),
+        failover_trust_owner_uid=failover_trust_owner_uid,
+        failover_trust_owner_gid=failover_trust_owner_gid,
         recording_root=Path(inputs["recordingRoot"]),
         expected_inputs=int(requirements["expectedInputChannels"]),
         sample_rate=int(requirements["sampleRate"]),
@@ -1169,6 +1364,8 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--preflight", type=Path)
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--failover-readiness", type=Path)
+    parser.add_argument("--failover-readiness-signature", type=Path)
+    parser.add_argument("--failover-trusted-signers", type=Path)
     parser.add_argument("--recording-root", type=Path)
     parser.add_argument("--expected-inputs", type=int, default=64)
     parser.add_argument("--sample-rate", type=int, default=96_000)

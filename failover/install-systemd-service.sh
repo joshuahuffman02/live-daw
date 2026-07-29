@@ -73,6 +73,13 @@ if [[ -z "${local_python}" || "${local_python}" != /* || ! -x "${local_python}" 
   >&2 echo "An absolute executable python3 is required to validate the package."
   exit 2
 fi
+local_ssh_keygen="$(command -v ssh-keygen || true)"
+if [[ -z "${local_ssh_keygen}" ||
+      "${local_ssh_keygen}" != /* ||
+      ! -x "${local_ssh_keygen}" ]]; then
+  >&2 echo "An absolute executable ssh-keygen is required for controller identity."
+  exit 2
+fi
 "${local_python}" - "${token_source}" <<'PY'
 import os
 import stat
@@ -162,6 +169,8 @@ installed_supervisor="${library_directory}/automix_failover_supervisor.py"
 installed_audit="${library_directory}/audit_failover_controller.py"
 installed_token="${configuration_directory}/relay-token"
 installed_config="${configuration_directory}/supervisor.json"
+installed_signing_key="${configuration_directory}/readiness-signing-key"
+installed_signing_public_key="${installed_signing_key}.pub"
 installed_unit="${unit_directory}/automix-failover.service"
 
 "${local_python}" - "${render_root}" <<'PY'
@@ -196,6 +205,8 @@ for destination in \
   "${installed_audit}" \
   "${installed_token}" \
   "${installed_config}" \
+  "${installed_signing_key}" \
+  "${installed_signing_public_key}" \
   "${installed_unit}"; do
   if [[ -L "${destination}" || (-e "${destination}" && ! -f "${destination}") ]]; then
     >&2 echo "Refusing unsafe installation target: ${destination}"
@@ -243,6 +254,27 @@ os.chmod(destination, 0o600)
 PY
 chmod 0600 "${installed_config}"
 
+if [[ ! -e "${installed_signing_key}" ]]; then
+  "${local_ssh_keygen}" -q \
+    -t ed25519 \
+    -N "" \
+    -C "automix-failover-controller" \
+    -f "${installed_signing_key}"
+fi
+staged_public_key="${temporary_directory}/readiness-signing-key.pub"
+"${local_ssh_keygen}" -y \
+  -P "" \
+  -f "${installed_signing_key}" > "${staged_public_key}"
+read -r signing_key_type _signing_key_material _signing_key_comment \
+  < "${staged_public_key}"
+if [[ "${signing_key_type}" != "ssh-ed25519" ]]; then
+  >&2 echo "Controller readiness signing key must be an unencrypted Ed25519 key."
+  exit 2
+fi
+install -m 0644 "${staged_public_key}" "${installed_signing_public_key}"
+chmod 0600 "${installed_signing_key}"
+chmod 0644 "${installed_signing_public_key}"
+
 if [[ "${render_root}" != "/" ]]; then
   echo "Rendered hardened failover package at ${render_root}"
   exit 0
@@ -250,7 +282,11 @@ fi
 
 chown -R root:root "${library_directory}" "${configuration_directory}"
 chmod 0755 "${installed_supervisor}" "${installed_audit}"
-chmod 0600 "${installed_config}" "${installed_token}"
+chmod 0600 \
+  "${installed_config}" \
+  "${installed_token}" \
+  "${installed_signing_key}"
+chmod 0644 "${installed_signing_public_key}"
 chmod 0644 "${installed_unit}"
 
 /usr/bin/python3 -B "${installed_supervisor}" check-config \
@@ -301,3 +337,4 @@ fi
 
 echo "Installed and enabled automix-failover.service."
 echo "The relay confirmed backup; an operator must deliberately return to primary after health proof."
+echo "Controller trust key: ${installed_signing_public_key}"

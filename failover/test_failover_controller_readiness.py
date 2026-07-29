@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -34,6 +35,24 @@ class FailoverControllerReadinessTests(unittest.TestCase):
         self.unit = self.root / "automix-failover.service"
         self.supervisor = self.root / "automix_failover_supervisor.py"
         self.audit_tool = self.root / "audit_failover_controller.py"
+        self.signing_key = self.root / "readiness-signing-key"
+        generated = subprocess.run(
+            [
+                str(readiness.SSH_KEYGEN),
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-f",
+                str(self.signing_key),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        self.assertEqual(generated.returncode, 0, generated.stderr)
         self.token.write_text("fixture-token\n", encoding="utf-8")
         self.token.chmod(0o600)
         self.config.write_text(
@@ -108,6 +127,7 @@ class FailoverControllerReadinessTests(unittest.TestCase):
             "status_path": self.status,
             "unit_path": self.unit,
             "supervisor_path": self.supervisor,
+            "signing_key_path": self.signing_key,
             "audit_path": self.audit_tool,
             "primary_hostname": "automix-primary.test",
             "controller_hostname": "automix-failover.test",
@@ -126,7 +146,7 @@ class FailoverControllerReadinessTests(unittest.TestCase):
         self.assertTrue(report["ready"])
         self.assertTrue(report["notProductionAcceptance"])
         self.assertEqual(
-            report["summary"], {"passed": 5, "failed": 0, "total": 5}
+            report["summary"], {"passed": 6, "failed": 0, "total": 6}
         )
         self.assertEqual(
             {item["id"] for item in report["checks"]},
@@ -157,6 +177,18 @@ class FailoverControllerReadinessTests(unittest.TestCase):
                 if item["id"] == "controller.separate-failure-domain"
             )["passed"]
         )
+
+        self.signing_key.chmod(0o644)
+        insecure_signer = self.audit()
+        self.assertFalse(insecure_signer["ready"])
+        self.assertFalse(
+            next(
+                item
+                for item in insecure_signer["checks"]
+                if item["id"] == "controller.signing-key"
+            )["passed"]
+        )
+        self.signing_key.chmod(0o600)
 
         status = self.valid_status()
         status["updatedAtMs"] = NOW_MS - 2_001
@@ -260,6 +292,72 @@ class FailoverControllerReadinessTests(unittest.TestCase):
             "--no-pager",
         ])
         self.assertEqual(arguments.count("--property"), len(properties))
+
+    def test_signed_report_is_trusted_and_tampering_is_rejected(self) -> None:
+        report = self.audit()
+        output = self.root / "signed-readiness.json"
+        signature = readiness.write_signed_report(
+            output,
+            report,
+            self.signing_key,
+            replace=False,
+            expected_owner_uid=os.getuid(),
+            expected_owner_gid=os.getgid(),
+        )
+        self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(signature.stat().st_mode), 0o600)
+        public_key = readiness.read_signing_public_key(
+            self.signing_key,
+            os.getuid(),
+            os.getgid(),
+        )
+        trusted = self.root / "trusted-signers"
+        trusted.write_text(
+            f"{readiness.SIGNER_IDENTITY} {public_key}\n",
+            encoding="utf-8",
+        )
+        verified = subprocess.run(
+            [
+                str(readiness.SSH_KEYGEN),
+                "-Y",
+                "verify",
+                "-f",
+                str(trusted),
+                "-I",
+                readiness.SIGNER_IDENTITY,
+                "-n",
+                readiness.SIGNATURE_NAMESPACE,
+                "-s",
+                str(signature),
+            ],
+            input=output.read_bytes(),
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+
+        output.write_bytes(output.read_bytes() + b" ")
+        rejected = subprocess.run(
+            [
+                str(readiness.SSH_KEYGEN),
+                "-Y",
+                "verify",
+                "-f",
+                str(trusted),
+                "-I",
+                readiness.SIGNER_IDENTITY,
+                "-n",
+                readiness.SIGNATURE_NAMESPACE,
+                "-s",
+                str(signature),
+            ],
+            input=output.read_bytes(),
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        self.assertNotEqual(rejected.returncode, 0)
 
 
 if __name__ == "__main__":

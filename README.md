@@ -459,14 +459,15 @@ profile, matching release `build-metadata.json`, and intended recording volume. 
 checks the whole production Mac at once: published source; the signature-sealed
 in-app provenance, release metadata, and exact executable hash; notarization; real
 selected route; fresh preflight; recording capacity; Planning Center Keychain item;
-crash relaunch; a fresh exact-package readiness handoff from the separately powered
-failover controller with relay-confirmed backup; OBS installation and exact-input
-health; plus the remote public-egress observer. The owner-only JSON report cannot be
+crash relaunch; a fresh exact-package readiness handoff signed by the separately
+trusted failover controller with relay-confirmed backup; OBS installation and
+exact-input health; plus the remote public-egress observer. The owner-only JSON
+report cannot be
 mistaken for final acceptance and must return
 `readyForHardwareProofRun=true` before the staged runner begins. Production staged
 runs require `HOST_READINESS_REPORT`, re-run the live audit, and bind its fresh
 hashes to the exact phase/app/release metadata/profile/route/recording volume and
-preserve the controller handoff beside it. See
+preserve the controller report, signature, and trust root beside it. See
 [`docs/PRODUCTION_HOST_READINESS.md`](docs/PRODUCTION_HOST_READINESS.md).
 
 For real hardware, Output Isolation is a blocking check: use a stream encoder,

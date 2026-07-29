@@ -27,9 +27,9 @@ first because speech automation has fewer interacting sources than a worship mix
   segment before it can report success.
 - A fresh production-host readiness report passes and verifies as described in
   `PRODUCTION_HOST_READINESS.md`. Production runs require this report, re-run all
-  twelve host checks, including a fresh exact-package report from the separate
-  failover controller with relay-confirmed backup, and bind it to the exact phase,
-  app, profile, route, duration/reserve, and recording volume.
+  twelve host checks, including a fresh exact-package report signed by the separately
+  trusted failover controller with relay-confirmed backup, and bind it to the exact
+  phase, app, profile, route, duration/reserve, and recording volume.
 
 ## Phase 1 — sermon
 

@@ -12,7 +12,7 @@ hardware proof.
 | Version control and CI | Private repository at `github.com/joshuahuffman02/live-daw`; clean published `main`; `.github/workflows/ci.yml` builds/tests evidence contracts, DSP, replay, JUCE, web, native Debug/Release, monitor smoke, and the external failover package on its native Linux/systemd platform | Source is published. A slice is called green only when every hosted job succeeds for its exact commit; the stable workflow link below is the source of truth. |
 | Behavior-tested speech automixer | `appliance/dsp/Automixer.h`; 96 kHz acquisition, equal-share, silence ducking, handoff, and no-allocation assertions in `appliance/tests/test_dsp.cpp` | Verified in deterministic tests. |
 | Measurement-driven gain staging, activity/noise floor, adaptive gates, level riding, slow loudness normalization | `appliance/src/BrainThread.h`; measurement, loudness, limiter-backoff, FREEZE/SAFE, and shadow tests in `appliance/tests/test_dsp.cpp` | Verified in deterministic control-loop tests and native bridge integration. |
-| Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; stale-aware fail-closed `/health` primary-audio heartbeat; independent lease-based failover supervisor, strict private production config, hardened systemd deployment, fresh controller-to-Mac readiness handoff, and 35-test state-machine/HTTP/relay/config/package/readiness suite; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE and a reproducibly deployable independent controller are verified. Production proof now also fails closed unless the exact separate controller/service package is live and its relay has freshly acknowledged backup. The normally de-energized relay/encoder path must still be built and kill-tested on the venue system. |
+| Curated SAFE and whole-app/Mac fallback | Role-aware raw-input SAFE in `appliance/dsp/Engine.h`; worst-case 64-channel ceiling and speech-priority tests; stale-aware fail-closed `/health` primary-audio heartbeat; independent lease-based failover supervisor, strict private production config, hardened systemd deployment, Ed25519-signed controller-to-Mac readiness handoff, and 36-test state-machine/HTTP/relay/config/package/readiness/signature suite; `docs/EXTERNAL_FAILOVER.md` | In-app SAFE and a reproducibly deployable independent controller are verified. Production proof now fails closed unless the exact separate controller/service package is live, its relay has freshly acknowledged backup, and the handoff verifies against the independently provisioned controller key. The normally de-energized relay/encoder path must still be built and kill-tested on the venue system. |
 | Safe scene transitions, manual overrides, Planning Center driving | Smoothed targets in the DSP/brain; full processing and mix-override bridge tests; fail-closed startup/recovery/proof application plus visible durable live-edit rejection; Planning Center mapping/timed-cue tests; Keychain credential storage | Software verified. Live API/service-plan exercise still needs venue credentials and an actual service plan. |
 | Worship roles and stereo linking | Role profiles for speech, vocals, guitars, bass, drums, keys, percussion, and playback; linked detector/control tests; profile/preflight coverage tests | Verified in deterministic and native simulation tests. |
 | Latency and lip-sync reporting | Fixed limiter latency impulse test; native route estimate and persisted measured A/V path; `docs/LATENCY_AND_LIPSYNC.md` | Calculation/reporting verified. End-to-end camera/encoder measurement and multi-hour drift observation require the real chain. |
@@ -44,23 +44,24 @@ hardware proof.
 - Browser master safety: **3 passed, 0 failed** for sustained overload, isolated
   full-scale transients, post-limiter true-peak ceiling compliance, and transparent
   sub-ceiling operation.
-- Production-host readiness audit: **13 passed, 0 failed** for complete and blocked
+- Production-host readiness audit: **14 passed, 0 failed** for complete and blocked
   fixture hosts, simulated-route relabel rejection, token-bearing URL redaction,
   redirect/compressed-response refusal, loopback/control-character URL rejection,
   atomic owner-only report handling, Developer ID/Hardened Runtime/production-
   entitlement enforcement, signed-app/release-metadata mismatch rejection, and fresh
   hash-bound report re-verification, exact separate-controller software/unit
-  identity, active hardened systemd state, fresh relay-confirmed backup status,
-  and rejection when a production staged run tries to skip the gate.
+  identity, dedicated-key SSH signature/tamper rejection, active hardened systemd
+  state, fresh relay-confirmed backup status, and rejection when a production staged
+  run tries to skip the gate.
   Production staged runs bind it to the exact phase, app, signed release metadata,
   profile, route, duration, reserve, and recording volume. The real-host result is
   deliberately not a production-acceptance substitute.
-- Independent failover supervisor/controller: **35 passed, 0 failed** for fail-closed
+- Independent failover supervisor/controller: **36 passed, 0 failed** for fail-closed
   heartbeat validation, startup/restart defaults, short primary leases, manual-only
   return, relay acknowledgement binding, controller state, private operator
   control/status, strict versioned production configuration, and hardened
-  root-owned/systemd-credential deployment rendering, and the expiring readiness
-  handoff consumed by the production Mac.
+  root-owned/systemd-credential deployment rendering, persistent controller signing
+  identity, and the signed expiring readiness handoff consumed by the production Mac.
 - OBS encoder-health bridge: **26 passed, 0 failed** for authenticated WebSocket v5
   negotiation, advancing encoder counters, exact name/UUID program-input track and
   carrier binding, honest observation age, stale and malformed observations,

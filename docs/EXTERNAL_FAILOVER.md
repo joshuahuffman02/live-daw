@@ -139,13 +139,16 @@ cannot change the selected path.
 
 Immediately before the Mac's production-host audit, run the installed
 `audit_failover_controller.py` on this separate controller and transfer its
-owner-only report to the Mac. The report expires after 15 minutes and binds the
-controller hostname, strict config, exact root-owned supervisor/audit/unit hashes,
-active hardened systemd state with no pending daemon reload, and a status sample no
-more than two seconds old that confirms the physical relay is latched to backup. The
-Mac refuses to begin a
-production proof without this report, and the staged runner preserves it beside
-the main host-readiness report.
+owner-only report and detached signature to the Mac. The installer provisions a
+persistent root-owned Ed25519 key whose public half must be enrolled independently
+in the Mac's dedicated one-key controller trust file. The report expires after 15
+minutes and its signed contents bind the controller hostname, strict config, exact
+root-owned supervisor/audit/unit hashes, active hardened systemd state with no
+pending daemon reload, and a status sample no more than two seconds old that confirms
+the physical relay is latched to backup. The Mac verifies the signature before
+parsing the report and refuses a missing, edited, self-signed, or untrusted handoff.
+The staged runner preserves the report, signature, and trust root beside the main
+host-readiness report.
 
 The endpoint makes the application-side heartbeat concrete. It does not replace the
 normally de-energized relay/encoder failover, primary carrier sensing, backup mix,

@@ -28,12 +28,16 @@ from automix_failover_supervisor import (
 FORMAT_VERSION = 1
 KIND = "automix-failover-controller-readiness"
 SERVICE_NAME = "automix-failover.service"
+SIGNER_IDENTITY = "automix-failover-controller"
+SIGNATURE_NAMESPACE = "live-daw-failover-readiness"
+SSH_KEYGEN = Path("/usr/bin/ssh-keygen")
 MAX_DOCUMENT_BYTES = 64 * 1024
 MAX_STATUS_AGE_MS = 2_000
 REPORT_LIFETIME_MS = 15 * 60 * 1_000
 EXPECTED_CHECK_IDS = {
     "controller.separate-failure-domain",
     "controller.production-config",
+    "controller.signing-key",
     "controller.software-unit-integrity",
     "controller.systemd-service",
     "relay.fresh-backup-latch",
@@ -72,6 +76,55 @@ def hash_file(path: Path) -> str:
                 break
             digest.update(block)
     return digest.hexdigest()
+
+
+def read_signing_public_key(
+    path: Path,
+    expected_owner_uid: int = 0,
+    expected_owner_gid: int = 0,
+) -> str:
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise ValueError("controller signing key is missing") from error
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or path.is_symlink()
+        or info.st_uid != expected_owner_uid
+        or info.st_gid != expected_owner_gid
+        or stat.S_IMODE(info.st_mode) & 0o077
+        or info.st_size <= 0
+        or info.st_size > 16 * 1024
+    ):
+        raise ValueError(
+            "controller signing key must be owner-only, correctly owned, and regular"
+        )
+    try:
+        result = subprocess.run(
+            [str(SSH_KEYGEN), "-y", "-f", str(path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as error:
+        raise ValueError("ssh-keygen could not inspect the signing key") from error
+    public_key_fields = result.stdout.strip().split()
+    public_key = (
+        f"{public_key_fields[0]} {public_key_fields[1]}"
+        if len(public_key_fields) >= 2
+        else ""
+    )
+    if (
+        result.returncode != 0
+        or not public_key.startswith("ssh-ed25519 ")
+        or len(public_key) > 8_192
+        or not safe_text(public_key, 8_192)
+    ):
+        raise ValueError("controller signing key is not a valid Ed25519 key")
+    return public_key
 
 
 def load_private_json(path: Path) -> dict[str, Any]:
@@ -276,6 +329,7 @@ def audit_controller(
     status_path: Path,
     unit_path: Path,
     supervisor_path: Path,
+    signing_key_path: Path,
     audit_path: Optional[Path] = None,
     primary_hostname: str,
     now_ms: Optional[int] = None,
@@ -348,6 +402,31 @@ def audit_controller(
         )
     )
 
+    signing_public_key: Optional[str] = None
+    signing_public_key_sha: Optional[str] = None
+    try:
+        signing_public_key = read_signing_public_key(
+            signing_key_path,
+            expected_package_uid,
+            expected_package_gid,
+        )
+        signing_public_key_sha = hashlib.sha256(
+            signing_public_key.encode("utf-8")
+        ).hexdigest()
+        signing_ready = True
+        signing_summary = "private controller Ed25519 signing identity validated"
+    except (OSError, ValueError) as error:
+        signing_ready = False
+        signing_summary = f"controller signing identity rejected: {error}"
+    checks.append(
+        Check(
+            "controller.signing-key",
+            signing_ready,
+            signing_summary,
+            "Provision the controller's private readiness-signing key with the checked-in installer.",
+        )
+    )
+
     (
         integrity_ready,
         integrity_summary,
@@ -417,6 +496,11 @@ def audit_controller(
         "primaryHostname": primary_hostname,
         "controllerHostname": actual_controller,
         "serviceName": SERVICE_NAME,
+        "signature": {
+            "signerIdentity": SIGNER_IDENTITY,
+            "namespace": SIGNATURE_NAMESPACE,
+            "publicKeySHA256": signing_public_key_sha,
+        },
         "config": {
             "sha256": config_sha,
             "productionContract": (
@@ -495,6 +579,89 @@ def write_report(path: Path, report: dict[str, Any], replace: bool) -> None:
             temporary.unlink()
 
 
+def write_signed_report(
+    path: Path,
+    report: dict[str, Any],
+    signing_key_path: Path,
+    replace: bool,
+    expected_owner_uid: int = 0,
+    expected_owner_gid: int = 0,
+) -> Path:
+    signature_path = path.with_name(f"{path.name}.sig")
+    for target in (path, signature_path):
+        if target.is_symlink():
+            raise ValueError("signed report targets must not be symlinks")
+        if target.exists() and not replace:
+            raise FileExistsError(
+                f"refusing to overwrite {target}; pass --replace"
+            )
+    public_key = read_signing_public_key(
+        signing_key_path,
+        expected_owner_uid,
+        expected_owner_gid,
+    )
+    expected_public_key_sha = hashlib.sha256(
+        public_key.encode("utf-8")
+    ).hexdigest()
+    signature_metadata = report.get("signature")
+    if (
+        not isinstance(signature_metadata, dict)
+        or signature_metadata.get("signerIdentity") != SIGNER_IDENTITY
+        or signature_metadata.get("namespace") != SIGNATURE_NAMESPACE
+        or signature_metadata.get("publicKeySHA256")
+        != expected_public_key_sha
+    ):
+        raise ValueError("report does not bind the supplied controller signing key")
+
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.signed.tmp")
+    temporary_signature = temporary.with_name(f"{temporary.name}.sig")
+    try:
+        write_report(temporary, report, replace=False)
+        try:
+            result = subprocess.run(
+                [
+                    str(SSH_KEYGEN),
+                    "-Y",
+                    "sign",
+                    "-f",
+                    str(signing_key_path),
+                    "-n",
+                    SIGNATURE_NAMESPACE,
+                    str(temporary),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (
+            FileNotFoundError,
+            PermissionError,
+            subprocess.TimeoutExpired,
+        ) as error:
+            raise ValueError("ssh-keygen could not sign the readiness report") from error
+        if (
+            result.returncode != 0
+            or not temporary_signature.is_file()
+            or temporary_signature.is_symlink()
+            or temporary_signature.stat().st_size <= 0
+            or temporary_signature.stat().st_size > MAX_DOCUMENT_BYTES
+        ):
+            raise ValueError("controller readiness signature was not created")
+        os.chmod(temporary_signature, 0o600)
+        os.replace(temporary, path)
+        os.replace(temporary_signature, signature_path)
+        os.chmod(path, 0o600)
+        os.chmod(signature_path, 0o600)
+    finally:
+        for artifact in (temporary, temporary_signature):
+            if artifact.exists() and not artifact.is_symlink():
+                artifact.unlink()
+    return signature_path
+
+
 def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -525,6 +692,13 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
             "automix_failover_supervisor.py"
         ),
     )
+    parser.add_argument(
+        "--signing-key",
+        type=Path,
+        default=Path(
+            "/etc/automix-failover/readiness-signing-key"
+        ),
+    )
     parser.add_argument("--primary-hostname", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--replace", action="store_true")
@@ -538,10 +712,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         status_path=args.status,
         unit_path=args.unit,
         supervisor_path=args.supervisor,
+        signing_key_path=args.signing_key,
         primary_hostname=args.primary_hostname,
     )
     try:
-        write_report(args.output, report, args.replace)
+        signature_path = write_signed_report(
+            args.output,
+            report,
+            args.signing_key,
+            args.replace,
+        )
     except (OSError, ValueError) as error:
         print(f"failover readiness report failed: {error}", file=sys.stderr)
         return 2
@@ -549,7 +729,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(
         f"Failover controller readiness: ready={str(report['ready']).lower()} "
         f"passed={summary['passed']} failed={summary['failed']} "
-        f"report={args.output}"
+        f"report={args.output} signature={signature_path}"
     )
     for check in report["checks"]:
         if not check["passed"]:

@@ -23,6 +23,8 @@ EVIDENCE_ROOT="/Volumes/AutoMix Proof/sermon-readiness"
 PROFILE="$HOME/Library/Application Support/AutoMix Native/VenueProfile.json"
 BUILD_METADATA="/Volumes/AutoMix Proof/Release/build-metadata.json"
 FAILOVER_READINESS="$EVIDENCE_ROOT/failover-controller-readiness.json"
+FAILOVER_SIGNATURE="${FAILOVER_READINESS}.sig"
+FAILOVER_TRUSTED_SIGNERS="/Library/Application Support/AutoMix Native/failover-controller-allowed-signers"
 
 "$APP" --smoke-test --write-device-inventory \
   --input-uid "DANTE_OR_AGGREGATE_INPUT_UID" \
@@ -49,14 +51,35 @@ sudo /usr/bin/python3 \
   --replace
 ```
 
-Copy that file to `$FAILOVER_READINESS` over the isolated management network and
-keep it owner-only (`0600`). One safe pattern is:
+During initial controller provisioning, enroll its public key on the Mac through an
+independently authenticated management session. The file is a dedicated trust root
+containing exactly one controller identity; do not put operator acceptance keys in
+it:
+
+```sh
+CONTROLLER_PUBLIC_KEY="$(ssh FAILOVER-CONTROLLER \
+  sudo /bin/cat /etc/automix-failover/readiness-signing-key.pub)"
+sudo /bin/mkdir -p "/Library/Application Support/AutoMix Native"
+printf 'automix-failover-controller %s\n' "$CONTROLLER_PUBLIC_KEY" \
+  | sudo /usr/bin/tee "$FAILOVER_TRUSTED_SIGNERS" >/dev/null
+sudo /bin/chown root:wheel "$FAILOVER_TRUSTED_SIGNERS"
+sudo /bin/chmod 644 "$FAILOVER_TRUSTED_SIGNERS"
+```
+
+Never transfer `/etc/automix-failover/readiness-signing-key`.
+
+Copy the fresh report and detached signature to `$FAILOVER_READINESS` and
+`$FAILOVER_SIGNATURE` over the isolated management network. Keep both owner-only
+(`0600`). One safe pattern is:
 
 ```sh
 ssh FAILOVER-CONTROLLER \
   sudo /bin/cat /var/lib/automix-failover/controller-readiness.json \
   > "$FAILOVER_READINESS"
-chmod 600 "$FAILOVER_READINESS"
+ssh FAILOVER-CONTROLLER \
+  sudo /bin/cat /var/lib/automix-failover/controller-readiness.json.sig \
+  > "$FAILOVER_SIGNATURE"
+chmod 600 "$FAILOVER_READINESS" "$FAILOVER_SIGNATURE"
 ```
 
 Generate the Mac report within 15 minutes.
@@ -72,6 +95,8 @@ python3 scripts/audit-production-host-readiness.py \
   --preflight "$EVIDENCE_ROOT/automix-core-audio-preflight-YYYYMMDD-HHMMSS.json" \
   --profile "$PROFILE" \
   --failover-readiness "$FAILOVER_READINESS" \
+  --failover-readiness-signature "$FAILOVER_SIGNATURE" \
+  --failover-trusted-signers "$FAILOVER_TRUSTED_SIGNERS" \
   --recording-root "/Volumes/AutoMix Proof" \
   --output "$EVIDENCE_ROOT/automix-production-host-readiness.json"
 ```
@@ -103,11 +128,12 @@ The report requires all twelve checks to pass:
 7. Planning Center credentials exist in the app's macOS Keychain service.
 8. The crash-relaunch LaunchAgent is loaded and points to the same notarized app.
 9. A readiness report generated within the last 15 minutes on a differently named
-   controller proves that the strict config validates, its installed supervisor,
-   audit tool, and systemd unit are root-owned and match the current published
-   repository files, the hardened service is enabled/running with no pending daemon
-   reload, and a status sample no more than two seconds old confirms that the
-   physical relay is latched to backup.
+   controller carries a valid SSH signature from the one dedicated trusted
+   `automix-failover-controller` Ed25519 key. Its signed contents prove that the
+   strict config validates, its installed supervisor, audit tool, and systemd unit
+   are root-owned and match the current published repository files, the hardened
+   service is enabled/running with no pending daemon reload, and a status sample no
+   more than two seconds old confirms that the physical relay is latched to backup.
 10. OBS Studio and its bundled WebSocket plugin are signed and Gatekeeper-accepted.
 11. The loopback OBS observer returns fresh production-eligible health for the exact
    streaming input/track with authenticated, advancing, clean encoder counters.
@@ -135,8 +161,9 @@ observer checks remain failed; it can never produce a ready report.
 
 Ready reports bind the source commit and SHA-256 hashes of the app binary, release
 metadata, signed in-app provenance, inventory, preflight, and venue profile. They
-also bind the transferred failover-controller readiness report. They expire after
-15 minutes when used by the staged runner. Verification rechecks every file binding,
+also bind the transferred failover-controller readiness report, its detached
+signature, and the dedicated controller trust root. They expire after 15 minutes
+when used by the staged runner. Verification rechecks every file binding, SSH
 signature, provenance relationship, controller/package/relay state, route,
 free-space measurement, Keychain/LaunchAgent state, and live observer instead of
 trusting edited booleans:
@@ -158,8 +185,10 @@ HOST_READINESS_REPORT="$EVIDENCE_ROOT/automix-production-host-readiness.json" \
   "$PROFILE" "$EVIDENCE_ROOT"
 ```
 
-The runner copies the verified host and failover-controller readiness reports and
-their SHA-256 values into the phase evidence directory. Short `REHEARSAL_ONLY=1`
-engineering runs may omit them but print an
+The host audit requires that dedicated trust file to remain root-owned and
+non-writable by group/world. The runner copies the verified host report plus the
+failover-controller report,
+signature, trust root, and every SHA-256 into the phase evidence directory. Short
+`REHEARSAL_ONLY=1` engineering runs may omit them but print an
 explicit warning and can never mint production proof. The staged runner and signed
 acceptance verifiers remain the authoritative proof gates.

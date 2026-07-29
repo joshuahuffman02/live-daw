@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import os
@@ -104,6 +105,53 @@ class ProductionHostReadinessTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.failover_readiness = self.root / "failover-readiness.json"
+        self.failover_signature = self.root / "failover-readiness.json.sig"
+        self.failover_signing_key = self.root / "failover-signing-key"
+        generated = subprocess.run(
+            [
+                str(readiness.SSH_KEYGEN),
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-f",
+                str(self.failover_signing_key),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        self.assertEqual(generated.returncode, 0, generated.stderr)
+        public_key = subprocess.run(
+            [
+                str(readiness.SSH_KEYGEN),
+                "-y",
+                "-f",
+                str(self.failover_signing_key),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        self.assertEqual(public_key.returncode, 0, public_key.stderr)
+        public_key_fields = public_key.stdout.strip().split()
+        self.failover_public_key = (
+            f"{public_key_fields[0]} {public_key_fields[1]}"
+        )
+        self.failover_trusted_signers = (
+            self.root / "failover-trusted-signers"
+        )
+        self.failover_trusted_signers.write_text(
+            (
+                f"{readiness.FAILOVER_SIGNER_IDENTITY} "
+                f"{self.failover_public_key}\n"
+            ),
+            encoding="utf-8",
+        )
+        self.failover_trusted_signers.chmod(0o644)
         failover_checks = [
             {
                 "id": check_id,
@@ -125,6 +173,17 @@ class ProductionHostReadinessTests(unittest.TestCase):
                 "primaryHostname": readiness.local_hostname(),
                 "controllerHostname": "failover-controller.test",
                 "serviceName": "automix-failover.service",
+                "signature": {
+                    "signerIdentity": (
+                        readiness.FAILOVER_SIGNER_IDENTITY
+                    ),
+                    "namespace": (
+                        readiness.FAILOVER_SIGNATURE_NAMESPACE
+                    ),
+                    "publicKeySHA256": hashlib.sha256(
+                        self.failover_public_key.encode("utf-8")
+                    ).hexdigest(),
+                },
                 "config": {
                     "sha256": "c" * 64,
                     "productionContract": True,
@@ -172,6 +231,7 @@ class ProductionHostReadinessTests(unittest.TestCase):
             },
         )
         self.failover_readiness.chmod(0o600)
+        self.sign_failover_readiness()
         signature_patcher = mock.patch.object(
             readiness,
             "production_signature_contract",
@@ -306,6 +366,29 @@ class ProductionHostReadinessTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def sign_failover_readiness(self) -> None:
+        if self.failover_signature.exists():
+            self.failover_signature.unlink()
+        signed = subprocess.run(
+            [
+                str(readiness.SSH_KEYGEN),
+                "-Y",
+                "sign",
+                "-f",
+                str(self.failover_signing_key),
+                "-n",
+                readiness.FAILOVER_SIGNATURE_NAMESPACE,
+                str(self.failover_readiness),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+        self.assertEqual(signed.returncode, 0, signed.stderr)
+        self.assertTrue(self.failover_signature.is_file())
+        self.failover_signature.chmod(0o600)
+
     def arguments(self, **overrides: object) -> SimpleNamespace:
         values: dict[str, object] = {
             "phase": "sermon",
@@ -318,6 +401,10 @@ class ProductionHostReadinessTests(unittest.TestCase):
             "preflight": self.preflight,
             "profile": self.profile,
             "failover_readiness": self.failover_readiness,
+            "failover_readiness_signature": self.failover_signature,
+            "failover_trusted_signers": self.failover_trusted_signers,
+            "failover_trust_owner_uid": os.getuid(),
+            "failover_trust_owner_gid": os.getgid(),
             "recording_root": self.recording_root,
             "expected_inputs": 64,
             "sample_rate": 96_000,
@@ -382,11 +469,15 @@ class ProductionHostReadinessTests(unittest.TestCase):
             report = readiness.Auditor(self.arguments(), now=NOW).run()
         self.assertTrue(report["readyForHardwareProofRun"])
         self.assertTrue(report["notProductionAcceptance"])
-        self.assertEqual(report["formatVersion"], 3)
+        self.assertEqual(report["formatVersion"], 4)
         self.assertEqual(report["summary"], {"passed": 12, "failed": 0, "total": 12})
         self.assertEqual(
             report["inputs"]["failoverReadinessSHA256"],
             readiness.hash_file(self.failover_readiness),
+        )
+        self.assertEqual(
+            report["inputs"]["failoverReadinessSignatureSHA256"],
+            readiness.hash_file(self.failover_signature),
         )
         self.assertTrue(all(item["passed"] for item in report["checks"]))
 
@@ -399,6 +490,8 @@ class ProductionHostReadinessTests(unittest.TestCase):
             preflight=None,
             profile=None,
             failover_readiness=None,
+            failover_readiness_signature=None,
+            failover_trusted_signers=None,
             recording_root=None,
             obs_app=self.root / "Missing OBS.app",
             skip_network_probes=True,
@@ -472,6 +565,7 @@ class ProductionHostReadinessTests(unittest.TestCase):
                 changed.update(changes)
                 write_json(self.failover_readiness, changed)
                 self.failover_readiness.chmod(0o600)
+                self.sign_failover_readiness()
                 with (
                     mock.patch.object(
                         readiness, "run_quiet", return_value=True
@@ -511,6 +605,47 @@ class ProductionHostReadinessTests(unittest.TestCase):
                 self.assertFalse(check["passed"])
                 self.assertIn(expected, check["summary"])
         write_json(self.failover_readiness, fixture)
+        self.failover_readiness.chmod(0o600)
+        self.sign_failover_readiness()
+
+    def test_failover_signature_requires_the_trusted_controller_key(
+        self,
+    ) -> None:
+        report = readiness.validate_failover_controller_readiness(
+            self.failover_readiness,
+            self.failover_signature,
+            self.failover_trusted_signers,
+            self.repo,
+            int(NOW.timestamp() * 1_000),
+            expected_trust_owner_uid=os.getuid(),
+            expected_trust_owner_gid=os.getgid(),
+        )
+        self.assertTrue(report["ready"])
+
+        with self.assertRaisesRegex(ValueError, "root-owned"):
+            readiness.validate_failover_controller_readiness(
+                self.failover_readiness,
+                self.failover_signature,
+                self.failover_trusted_signers,
+                self.repo,
+                int(NOW.timestamp() * 1_000),
+                expected_trust_owner_uid=os.getuid() + 1,
+                expected_trust_owner_gid=os.getgid(),
+            )
+
+        original = self.failover_readiness.read_bytes()
+        self.failover_readiness.write_bytes(original + b" ")
+        with self.assertRaisesRegex(ValueError, "signature is invalid"):
+            readiness.validate_failover_controller_readiness(
+                self.failover_readiness,
+                self.failover_signature,
+                self.failover_trusted_signers,
+                self.repo,
+                int(NOW.timestamp() * 1_000),
+                expected_trust_owner_uid=os.getuid(),
+                expected_trust_owner_gid=os.getgid(),
+            )
+        self.failover_readiness.write_bytes(original)
         self.failover_readiness.chmod(0o600)
 
     def test_release_metadata_cannot_be_mixed_with_a_different_signed_app(self) -> None:
@@ -711,7 +846,13 @@ class ProductionHostReadinessTests(unittest.TestCase):
         ):
             report = readiness.Auditor(self.arguments(), now=NOW).run()
             readiness.write_report(output, report, replace=False)
-            verified = readiness.verify_report(output, home=self.home, now=NOW)
+            verified = readiness.verify_report(
+                output,
+                home=self.home,
+                now=NOW,
+                failover_trust_owner_uid=os.getuid(),
+                failover_trust_owner_gid=os.getgid(),
+            )
         self.assertTrue(verified["readyForHardwareProofRun"])
 
         profile = json.loads(self.profile.read_text(encoding="utf-8"))
@@ -721,7 +862,13 @@ class ProductionHostReadinessTests(unittest.TestCase):
             mock.patch.object(readiness, "git_commit", return_value="a" * 40),
             self.assertRaisesRegex(ValueError, "bound readiness input changed"),
         ):
-            readiness.verify_report(output, home=self.home, now=NOW)
+            readiness.verify_report(
+                output,
+                home=self.home,
+                now=NOW,
+                failover_trust_owner_uid=os.getuid(),
+                failover_trust_owner_gid=os.getgid(),
+            )
 
         profile["shadowMode"] = True
         write_json(self.profile, profile)
@@ -734,7 +881,13 @@ class ProductionHostReadinessTests(unittest.TestCase):
             mock.patch.object(readiness, "git_commit", return_value="a" * 40),
             self.assertRaisesRegex(ValueError, "bound readiness input changed"),
         ):
-            readiness.verify_report(output, home=self.home, now=NOW)
+            readiness.verify_report(
+                output,
+                home=self.home,
+                now=NOW,
+                failover_trust_owner_uid=os.getuid(),
+                failover_trust_owner_gid=os.getgid(),
+            )
 
     def test_health_probe_refuses_redirects(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), RedirectHandler)
