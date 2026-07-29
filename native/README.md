@@ -589,9 +589,11 @@ Run this on the actual HD96/Dante rig before trusting it live:
     treat that as a control-thread failure and do not go live until it is understood.
 17. Use `scripts/run-staged-hardware-proof.sh` for acceptance evidence. It refuses
     development/ad-hoc builds and records signature, notarization, Gatekeeper, and
-    executable-hash evidence before the run. Production mode also requires and
-    verifies at least two hours of continuous 64-input-plus-program recording;
-    shorter `REHEARSAL_ONLY=1` runs cannot mint production proof. After reviewing a
+    executable-hash evidence before the run. Production mode also requires a fresh
+    `scripts/audit-production-host-readiness.py` report, rechecks its live state and
+    file hashes, binds it to the requested phase/route/profile/recording volume, and
+    verifies at least two hours of continuous 64-input-plus-program recording.
+    Shorter `REHEARSAL_ONLY=1` runs cannot mint production proof. After reviewing a
     production run, use `scripts/record-proof-acceptance.sh`; the worship gate accepts
     only an approved sermon bundle that passes `scripts/verify-proof-acceptance.sh`
     against the venue's trusted-signer file.

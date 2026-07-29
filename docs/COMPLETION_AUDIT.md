@@ -42,6 +42,14 @@ hardware proof.
 - Browser master safety: **3 passed, 0 failed** for sustained overload, isolated
   full-scale transients, post-limiter true-peak ceiling compliance, and transparent
   sub-ceiling operation.
+- Production-host readiness audit: **9 passed, 0 failed** for complete and blocked
+  fixture hosts, simulated-route relabel rejection, token-bearing URL redaction,
+  redirect/compressed-response refusal, loopback/control-character URL rejection,
+  atomic owner-only report handling, and fresh hash-bound report re-verification,
+  including rejection when a production staged run tries to skip the gate.
+  Production staged runs bind it to the exact phase, app, profile, route, duration,
+  reserve, and recording volume. The real-host result is deliberately not a
+  production-acceptance substitute.
 - Independent failover supervisor: **24 passed, 0 failed** for fail-closed
   heartbeat validation, startup/restart defaults, short primary leases, manual-only
   return, relay acknowledgement binding, controller state, and private operator
@@ -125,7 +133,8 @@ and is intentionally ignored from source control.
 - Dante/DVS, BlackHole, and Loopback applications: not found. BlackHole 2ch requires
   an administrator-approved package installation and a reboot before it can be
   evaluated as the isolated program-output route.
-- Internal filesystem free space: approximately **25 GiB**.
+- Internal filesystem free space: approximately **22 GiB** in the latest automated
+  host-readiness audit.
 - A 64-input + stereo-program 96 kHz float recording consumes about **91.2 GB/hour**,
   before reserve and other proof artifacts.
 

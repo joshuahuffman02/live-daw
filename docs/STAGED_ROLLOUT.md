@@ -24,6 +24,10 @@ first because speech automation has fewer interacting sources than a worship mix
   stability window, refuses to start unless the planned capture plus reserve fits,
   rechecks the reserve while live, and semantically verifies every finalized WAV
   segment before it can report success.
+- A fresh production-host readiness report passes and verifies as described in
+  `PRODUCTION_HOST_READINESS.md`. Production runs require this report, re-run all
+  eleven host checks, and bind it to the exact phase, app, profile, route,
+  duration/reserve, and recording volume.
 
 ## Phase 1 — sermon
 
@@ -36,7 +40,8 @@ first because speech automation has fewer interacting sources than a worship mix
 3. Execute the real hardware proof for at least two hours:
 
 ```sh
-STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
+HOST_READINESS_REPORT="/Volumes/Proof/AutoMix/sermon-readiness/automix-production-host-readiness.json" \
+  STABILITY_SECONDS=7200 RECORDING_RESERVE_GB=20 \
   ./scripts/run-staged-hardware-proof.sh sermon \
   "/Applications/AutoMix Native.app" \
   "DANTE_INPUT_UID" "ENCODER_OUTPUT_UID" \
@@ -130,7 +135,8 @@ Worship cannot run until the sermon manifest verifies as real hardware proof and
 post-review approval signature verifies against the venue trust file:
 
 ```sh
-STABILITY_SECONDS=7200 ./scripts/run-staged-hardware-proof.sh worship \
+HOST_READINESS_REPORT="/Volumes/Proof/AutoMix/worship-readiness/automix-production-host-readiness.json" \
+  STABILITY_SECONDS=7200 ./scripts/run-staged-hardware-proof.sh worship \
   "/Applications/AutoMix Native.app" \
   "DANTE_INPUT_UID" "ENCODER_OUTPUT_UID" \
   "$HOME/Library/Application Support/AutoMix Native/VenueProfile.json" \
@@ -160,8 +166,9 @@ REHEARSAL_ONLY=1 STABILITY_SECONDS=30 \
 ```
 
 The same route, signature, health, and recording checks run, but the result is labeled
-as rehearsal-only. Without `REHEARSAL_ONLY=1`, the script rejects stability windows
-shorter than 7,200 seconds.
+as rehearsal-only. A rehearsal may omit the host-readiness report and receives an
+explicit warning. Without `REHEARSAL_ONLY=1`, the script rejects a missing readiness
+report or a stability window shorter than 7,200 seconds.
 
 ## Production acceptance
 

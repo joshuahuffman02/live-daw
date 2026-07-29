@@ -103,7 +103,9 @@ stability monitor may run while continuous capture is active.
 `scripts/run-staged-hardware-proof.sh` passes `--continuous-recording` to the same
 headless Core Audio stability run used for the two-hour proof. This keeps stability
 measurement and the expected multitrack recording in one process and on one exact
-route.
+route. Production mode first requires the fresh host-readiness report from
+`PRODUCTION_HOST_READINESS.md`; its capacity check must be bound to the same
+filesystem volume that receives the staged evidence.
 
 Before opening the recorder, the command calculates the planned
 `input channels + program L/R` requirement and requires that amount plus

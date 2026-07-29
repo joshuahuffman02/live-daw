@@ -6,6 +6,7 @@ usage() {
   print -u2 "  $0 sermon APP_PATH INPUT_UID OUTPUT_UID PROFILE_PATH EVIDENCE_ROOT"
   print -u2 "  $0 worship APP_PATH INPUT_UID OUTPUT_UID PROFILE_PATH EVIDENCE_ROOT SERMON_MANIFEST SERMON_ACCEPTANCE_DIR TRUSTED_SIGNERS"
   print -u2 ""
+  print -u2 "Production environment: HOST_READINESS_REPORT=/absolute/ready-report.json"
   print -u2 "Optional environment: STABILITY_SECONDS=7200 SOUNDCHECK_SECONDS=30 RECORDING_RESERVE_GB=20"
   print -u2 "Short engineering runs require REHEARSAL_ONLY=1 and never mint production proof."
 }
@@ -28,6 +29,7 @@ stability_seconds="${STABILITY_SECONDS:-7200}"
 soundcheck_seconds="${SOUNDCHECK_SECONDS:-30}"
 recording_reserve_gb="${RECORDING_RESERVE_GB:-20}"
 rehearsal_only="${REHEARSAL_ONLY:-0}"
+host_readiness_report="${HOST_READINESS_REPORT:-}"
 app_binary="${app_path}/Contents/MacOS/AutoMix Native"
 script_directory="${0:A:h}"
 
@@ -69,6 +71,11 @@ if (( ${stability_seconds%.*} < 7200 )) && [[ "${rehearsal_only}" != "1" ]]; the
   print -u2 "Production proof requires at least 7200 seconds. Set REHEARSAL_ONLY=1 for a shorter engineering run."
   exit 2
 fi
+if [[ "${rehearsal_only}" != "1" && -z "${host_readiness_report}" ]]; then
+  print -u2 "Production proof requires HOST_READINESS_REPORT from the fail-closed host audit."
+  print -u2 "See docs/PRODUCTION_HOST_READINESS.md."
+  exit 2
+fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 phase_directory="${evidence_root}/${phase}-${timestamp}"
@@ -95,6 +102,59 @@ if ! /usr/sbin/spctl --assess --type execute --verbose=4 \
   exit 3
 fi
 /usr/bin/shasum -a 256 "${app_binary}" >> "${app_integrity_report}"
+
+if [[ -n "${host_readiness_report}" ]]; then
+  if [[ ! -f "${host_readiness_report}" || -L "${host_readiness_report}" ]]; then
+    print -u2 "HOST_READINESS_REPORT must be a regular, non-symlink file."
+    exit 3
+  fi
+  python_executable="$(command -v python3 2>/dev/null || true)"
+  if [[ -z "${python_executable}" || "${python_executable}" != /* ||
+        ! -x "${python_executable}" ]]; then
+    print -u2 "An absolute executable python3 path is required to verify host readiness."
+    exit 3
+  fi
+  "${python_executable}" -B \
+    "${script_directory}/audit-production-host-readiness.py" \
+    --verify-report "${host_readiness_report}"
+
+  report_phase="$(/usr/bin/plutil -extract phase raw -o - "${host_readiness_report}")"
+  report_app="$(/usr/bin/plutil -extract inputs.appPath raw -o - "${host_readiness_report}")"
+  report_profile="$(/usr/bin/plutil -extract inputs.profilePath raw -o - "${host_readiness_report}")"
+  report_inventory="$(/usr/bin/plutil -extract inputs.inventoryPath raw -o - "${host_readiness_report}")"
+  report_recording_root="$(/usr/bin/plutil -extract inputs.recordingRoot raw -o - "${host_readiness_report}")"
+  report_duration="$(/usr/bin/plutil -extract requirements.durationSeconds raw -o - "${host_readiness_report}")"
+  report_reserve="$(/usr/bin/plutil -extract requirements.recordingReserveGiB raw -o - "${host_readiness_report}")"
+  report_input_uid="$(/usr/bin/plutil -extract selectedInputUID raw -o - "${report_inventory}")"
+  report_output_uid="$(/usr/bin/plutil -extract selectedOutputUID raw -o - "${report_inventory}")"
+
+  if [[ "${report_phase}" != "${phase}" ||
+        "${report_app:A}" != "${app_path:A}" ||
+        "${report_profile:A}" != "${profile_path:A}" ||
+        "${report_input_uid}" != "${input_uid}" ||
+        "${report_output_uid}" != "${output_uid}" ]]; then
+    print -u2 "Host readiness is bound to a different phase, app, profile, or Core Audio route."
+    exit 3
+  fi
+  if (( report_duration < stability_seconds || report_reserve < recording_reserve_gb )); then
+    print -u2 "Host readiness duration/reserve is smaller than this proof request."
+    exit 3
+  fi
+  if [[ ! -d "${report_recording_root}" ||
+        "$(/usr/bin/stat -f %d "${report_recording_root}")" !=
+          "$(/usr/bin/stat -f %d "${phase_directory}")" ]]; then
+    print -u2 "Host readiness recording capacity was measured on a different volume."
+    exit 3
+  fi
+
+  readiness_copy="${phase_directory}/production-host-readiness.json"
+  /bin/cp "${host_readiness_report}" "${readiness_copy}"
+  /bin/chmod 600 "${readiness_copy}"
+  /usr/bin/shasum -a 256 "${readiness_copy}" > "${readiness_copy}.sha256"
+  /bin/chmod 600 "${readiness_copy}.sha256"
+elif [[ "${rehearsal_only}" == "1" ]]; then
+  print -u2 "WARNING: rehearsal is running without a production host-readiness report."
+fi
 
 encoder_health_url="$(/usr/bin/plutil -extract encoderHealthURL raw -o - "${profile_path}" 2>/dev/null || true)"
 egress_health_url="$(/usr/bin/plutil -extract egressHealthURL raw -o - "${profile_path}" 2>/dev/null || true)"
