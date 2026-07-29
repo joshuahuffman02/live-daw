@@ -334,6 +334,87 @@ No actionable P0, P1, or P2 finding remains in this bounded remote-control-loss 
 The remaining evidence gap is a real phone on the venue management Wi-Fi with an
 operator, including background/resume and a deliberate access-point interruption.
 
+## Third operator-safety pass
+
+This pass reviewed the redesigned browser console as a running operator flow rather
+than as a set of static screens. It concentrated on whether the interface tells the
+truth while automation is moving, whether an unavailable service-plan integration
+leaves an operator with a usable recovery path, and whether the broadcast master
+distinguishes input pressure from actual stream-output safety.
+
+### Current evidence
+
+![Actionable Planning Center recovery](ui-ux-audit/third-pass/01-planning-center-recovery.png)
+
+![Scene transition truth state](ui-ux-audit/third-pass/02-scene-settling.png)
+
+![Post-limiter safety and slow loudness trim](ui-ux-audit/third-pass/03-master-safety.png)
+
+![Scene transition held by FREEZE](ui-ux-audit/third-pass/04-scene-held-freeze.png)
+
+### Flow health
+
+1. **Cue a service scene — healthy.** The header and active cue expose
+   `SCENE SETTLING` while scene balance is moving, then clear only after the fader
+   targets converge and the minimum transition window elapses. The activity feed
+   records the scene request and its later settled state as separate events.
+2. **Cue while FREEZE or SAFE is active — healthy.** The selected cue remains visible
+   but changes to `HELD BY FREEZE`, `HELD BY SAFE`, or
+   `HELD BY SAFE + FREEZE`. Scene-side effects and automatic control changes wait
+   behind that hold; releasing it begins the transition instead of revealing an
+   already-moved background mix.
+3. **Recover from Planning Center failure — healthy in the local failure state.**
+   A full-width alert names the failure, gives credential/network-specific guidance,
+   and offers both Retry and Use offline sample. The offline path returns the console
+   to an operable service plan without restarting audio.
+4. **Read master safety — healthy in browser simulation.** `Output true peak` is now
+   measured after the limiter and shown separately from `Limiter input`, the
+   configured ceiling, and limiter gain reduction. The slow, bounded master trim is
+   visible in the signal-chain chips instead of silently changing gain.
+5. **Accessibility — bounded verification.** Transition and connection failures use
+   status/alert semantics; the active cue exposes busy/current state; controls have
+   descriptive accessible names. DOM and keyboard-state inspection passed for these
+   flows. Screenshots cannot prove contrast conformance, announcement quality in a
+   screen reader, touch behavior, or operability with real assistive technology.
+
+### Implemented
+
+- Added an explicit, convergence-bound scene-transition state with held states for
+  FREEZE and SAFE.
+- Replaced the clipped Planning Center error with an actionable recovery alert and
+  offline-plan escape path.
+- Corrected the master meter so `Output true peak` is post-limiter telemetry rather
+  than the limiter-input peak.
+- Added separate ceiling, limiter-input, and limiter-reduction readouts.
+- Added a slow live-mode loudness normalization trim with a 0.25 LU deadband,
+  bounded per-tick movement, and an observable `Trim` chip.
+- Reworked the look-ahead limiter so each delayed sample receives the most
+  conservative gain request from its full look-ahead window.
+- Added deterministic sustained-overload, transient, and sub-ceiling worklet tests.
+
+### Verification
+
+- Browser TypeScript check: passed.
+- Browser production build: passed.
+- Browser/remote safety tests: **9 passed, 0 failed**, including three limiter tests.
+- Sustained 2.5× overload and isolated ±4.0 impulses remained at or below
+  **-0.9 dBTP** in the deterministic worklet harness; sub-ceiling material produced
+  no false gain reduction.
+- Running synthetic Worship scene: the short-term reading converged from
+  **-8.3 LUFS** to a steady **-13.7 to -14.2 LUFS** around the **-14 LUFS** target,
+  with no `OUTPUT OVER` state in the 28-second observation.
+- Running scene timing: settling remained visible at 1.5 seconds and cleared after
+  convergence by approximately 2.15 seconds in the exercised transition.
+- Planning Center missing-credential recovery, offline fallback, normal settling,
+  FREEZE hold, SAFE + FREEZE hold, and resumed settling were inspected in the live
+  accessibility tree.
+- Diff whitespace validation: passed.
+
+No actionable P0 or P1 finding remains in this bounded browser operator flow. The
+remaining P2 concern is the intentionally dense desktop typography, which needs
+operator validation on the real production display before increasing density or
+reducing the master rail further.
+
 ## Remaining product-level work
 
 - Test the native app with HD96/Dante hardware at the real venue and capture a full operator rehearsal on the production display.

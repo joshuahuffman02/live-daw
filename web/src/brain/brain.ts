@@ -131,6 +131,7 @@ export class Brain {
   private prevBypass = false
   private prevMonitor = 'program'
   private prevOscKey = ''
+  private masterTrimDb = 0
 
   constructor(engine: AudioEngine, store: Store) {
     this.engine = engine
@@ -224,6 +225,7 @@ export class Brain {
     const live = st.mixMode === 'live'
     const aggressiveness = live ? 0.5 : 1
     const maxFaderStep = live ? 0.4 : 1.5
+    const sceneFaderStep = st.sceneTransition?.to === st.sceneId ? 2 : maxFaderStep
     const maxEqStep = live ? 0.3 : 1.0
 
     const scope = st.recallScope
@@ -240,18 +242,24 @@ export class Brain {
       this.prevOscKey = oscKey
     }
 
-    // scene change side-effects
-    if (this.prevScene !== st.sceneId) {
+    const frozen = st.frozen
+    const safeActive = st.bypassed
+    const automationHeld = frozen || safeActive
+
+    // A scene selected during FREEZE or SAFE is queued visibly, but none of its
+    // automatic processing reaches even the background program chain until the
+    // operator releases the hold.
+    if (this.prevScene !== st.sceneId && !automationHeld) {
       this.engine.loudness.port.postMessage({ type: 'config', targetLufs: scene.masterTargetLufs, ceilingDb: -1 })
       ramp(this.engine.reverbReturn.gain, dbToGain(scene.reverbReturnDb), ctx, 0.5)
       if (this.prevScene !== null) st.pushLog('scene', `Scene → ${scene.name}: ${scene.blurb}`)
       this.prevScene = st.sceneId
     }
 
-    const frozen = st.frozen
     if (frozen && !this.prevFrozen) st.pushLog('safety', 'FREEZE engaged — AI holding all parameters.')
     if (!frozen && this.prevFrozen) st.pushLog('safety', 'FREEZE released — AI resuming.')
     this.prevFrozen = frozen
+    let sceneSettled = true
 
     // cross-channel masking decisions (uses last tick's per-channel band energies +
     // effective labels, so every channel sees the full picture before it acts)
@@ -259,7 +267,7 @@ export class Brain {
       const b = this.state.get(ch.id)!
       return { id: ch.id, cls: b.effCls, active: b.lastActive, energy: b.bandEnergy }
     })
-    const maskDecisions: Map<number, MaskDecision[]> = frozen
+    const maskDecisions: Map<number, MaskDecision[]> = automationHeld
       ? new Map<number, MaskDecision[]>()
       : computeMasking(maskInputs, scene.speechActive)
 
@@ -309,7 +317,7 @@ export class Brain {
 
       // --- classify (continuous, smoothed) ---
       const f = extractFeatures(b.freqBuf, ctx.sampleRate, ch.preAnalyser.fftSize, b.clsState, active)
-      if (active && !frozen) {
+      if (active && !automationHeld) {
         const { scores } = classify(f)
         for (const k in scores) {
           const key = k as SourceClass
@@ -362,7 +370,7 @@ export class Brain {
       ramp(ch.soloSend.gain, model.soloed ? 1 : 0, ctx, 0.02)
       ramp(ch.mixMinusSend.gain, mixMinusId === ch.id ? 0 : 1, ctx, 0.05)
 
-      if (!frozen) {
+      if (!automationHeld) {
         // --- trim (normalize to ~ -18 dBFS) ---
         if (!model.overrides.trim && scope.levels) {
           const trimTarget = clamp(-18 - b.slowPreDb, -6, 24)
@@ -468,7 +476,11 @@ export class Brain {
             let faderTarget = -3 + sceneOffset
             if (active) faderTarget += clamp((profile.targetRmsDb - postDb) * 0.12, -2.5, 2.5)
             faderTarget = clamp(faderTarget, -60, 6)
-            b.curFader = approach(b.curFader, faderTarget, maxFaderStep)
+            b.curFader = approach(b.curFader, faderTarget, sceneFaderStep)
+            if (st.sceneTransition?.to === st.sceneId &&
+                Math.abs(b.curFader - faderTarget) > 0.5) {
+              sceneSettled = false
+            }
             ramp(ch.fader.gain, dbToGain(b.curFader), ctx, 0.25)
           }
         }
@@ -501,7 +513,9 @@ export class Brain {
       if (b.maskInfo) moves.push(`dip ${b.maskInfo.db.toFixed(1)}@${b.maskInfo.hz} vs ${b.maskInfo.winner ? PROFILES[b.maskInfo.winner].label : 'mix'}`)
       if (ch.isSpeech) moves.push(`automix ${fmt(ch.automixGainDb)}dB`)
       moves.push(`${fmt(b.curFader)}dB`)
-      b.reason = frozen ? 'FROZEN — holding' : moves.join(' · ')
+      b.reason = automationHeld
+        ? safeActive ? 'SAFE — automation held' : 'FROZEN — holding'
+        : moves.join(' · ')
 
       if (doDisplay) {
         display.push({
@@ -534,6 +548,36 @@ export class Brain {
       }
     }
 
+    const transition = st.sceneTransition
+    if (transition?.to === st.sceneId &&
+        !automationHeld &&
+        sceneSettled &&
+        Date.now() - transition.startedAtMs >= 1_750) {
+      st.completeSceneTransition(st.sceneId)
+      st.pushLog('scene', `${scene.name} scene settled — control ramps converged.`)
+    }
+
+    const loudness = this.engine.loudnessTel
+    if (!automationHeld &&
+        loudness.short > -45 &&
+        loudness.momentary > -45) {
+      const loudnessError = clamp(scene.masterTargetLufs - loudness.short, -6, 6)
+      if (Math.abs(loudnessError) > 0.25) {
+        const correction = clamp(
+          loudnessError * (live ? 0.01 : 0.02),
+          live ? -0.02 : -0.05,
+          live ? 0.02 : 0.05,
+        )
+        this.masterTrimDb = clamp(this.masterTrimDb + correction, -12, 6)
+        ramp(
+          this.engine.masterTrim.gain,
+          dbToGain(this.masterTrimDb),
+          ctx,
+          live ? 0.5 : 0.25,
+        )
+      }
+    }
+
     if (doDisplay) {
       st.setChannels(display)
       const t = this.engine.loudnessTel
@@ -541,8 +585,9 @@ export class Brain {
       st.setMaster({
         momentaryLufs: t.momentary, shortLufs: t.short, integratedLufs: t.integrated,
         truePeakDb: t.truePeak, limiterGrDb: t.grDb, targetLufs: scene.masterTargetLufs,
+        limiterInputTruePeakDb: t.inputTruePeak, masterTrimDb: this.masterTrimDb,
         ceilingDb: t.ceiling, glueGrDb: this.engine.glueGrDb(),
-        correlation: corr, clip: t.truePeak > -0.3,
+        correlation: corr, clip: t.truePeak > t.ceiling + 0.1,
       })
       const mx = this.engine.readMatrixLevels()
       st.setMatrixMeter('stream', mx.stream)

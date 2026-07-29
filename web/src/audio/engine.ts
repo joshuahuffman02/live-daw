@@ -63,6 +63,7 @@ export interface MasterTelemetry {
   short: number
   integrated: number
   truePeak: number
+  inputTruePeak: number
   grDb: number
   target: number
   ceiling: number
@@ -77,6 +78,7 @@ export class AudioEngine {
   masterInput!: GainNode
   glue!: DynamicsCompressorNode
   masterEq: BiquadFilterNode[] = []
+  masterTrim!: GainNode
   masterProcessed!: GainNode
   safeBus!: GainNode
   safeMaster!: GainNode
@@ -117,7 +119,7 @@ export class AudioEngine {
 
   loudnessTel: MasterTelemetry = {
     momentary: -100, short: -100, integrated: -100, truePeak: -100,
-    grDb: 0, target: -14, ceiling: -1,
+    inputTruePeak: -100, grDb: 0, target: -14, ceiling: -1,
   }
   bypassed = false
   private speechIds: number[] = []
@@ -172,7 +174,8 @@ export class AudioEngine {
       if (d && d.type === 'loudness') {
         this.loudnessTel = {
           momentary: d.momentary, short: d.short, integrated: d.integrated,
-          truePeak: d.truePeak, grDb: d.grDb, target: d.target, ceiling: d.ceiling,
+          truePeak: d.truePeak, inputTruePeak: d.inputTruePeak,
+          grDb: d.grDb, target: d.target, ceiling: d.ceiling,
         }
       }
     }
@@ -204,10 +207,12 @@ export class AudioEngine {
     const eqPres = ctx.createBiquadFilter(); eqPres.type = 'peaking'; eqPres.frequency.value = 3000; eqPres.Q.value = 0.8; eqPres.gain.value = 0.5
     const eqAir = ctx.createBiquadFilter(); eqAir.type = 'highshelf'; eqAir.frequency.value = 12000; eqAir.gain.value = 1
     this.masterEq = [eqLow, eqPres, eqAir]
+    this.masterTrim = ctx.createGain(); this.masterTrim.gain.value = 1
     this.masterProcessed = ctx.createGain(); this.masterProcessed.gain.value = 1
     this.masterInput.connect(this.glue)
     this.glue.connect(eqLow); eqLow.connect(eqPres); eqPres.connect(eqAir)
-    eqAir.connect(this.masterProcessed)
+    eqAir.connect(this.masterTrim)
+    this.masterTrim.connect(this.masterProcessed)
     this.masterProcessed.connect(this.limiterInput)
 
     // SAFE bypass path

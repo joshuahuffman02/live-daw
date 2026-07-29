@@ -11,6 +11,7 @@ export default function TopBar({ onStop }: { onStop: () => void }) {
   const status = useStore((s) => s.brainStatus)
   const mode = useStore((s) => s.mode)
   const sceneId = useStore((s) => s.sceneId)
+  const sceneTransition = useStore((s) => s.sceneTransition)
   const integ = useStore((s) => s.master.integratedLufs)
   const short = useStore((s) => s.master.shortLufs)
   const tp = useStore((s) => s.master.truePeakDb)
@@ -24,6 +25,15 @@ export default function TopBar({ onStop }: { onStop: () => void }) {
   const showDevices = useStore((s) => s.showDevices)
 
   const statusColor = status === 'ok' ? 'text-emerald-400' : status === 'stalled' ? 'text-amber-400' : 'text-red-400'
+  const transitionHold = sceneTransition
+    ? bypassed && frozen
+      ? 'SAFE + FREEZE'
+      : bypassed
+        ? 'SAFE'
+        : frozen
+          ? 'FREEZE'
+          : null
+    : null
 
   useEffect(() => {
     if (!safeReleaseArmed) return
@@ -72,8 +82,33 @@ export default function TopBar({ onStop }: { onStop: () => void }) {
           <span className="hidden text-[10px] uppercase tracking-widest text-zinc-500 2xl:inline">Broadcast</span>
         </div>
 
-        <div className="min-w-0 truncate rounded-md bg-[#15181f] px-2 py-1 text-[11px] text-zinc-400">
-          {mode === 'mic' ? 'Live Mic' : 'Synthetic Stage'} · {SCENES[sceneId].name}
+        <div
+          role="status"
+          aria-live="polite"
+          className={`flex min-w-0 items-center gap-1.5 truncate rounded-md border px-2 py-1 text-[11px] ${
+            sceneTransition
+              ? transitionHold
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                : 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200'
+              : 'border-transparent bg-[#15181f] text-zinc-400'
+          }`}
+        >
+          {sceneTransition && (
+            <span
+              className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+                transitionHold ? 'bg-amber-400' : 'animate-pulse bg-cyan-400'
+              }`}
+              aria-hidden="true"
+            />
+          )}
+          <span className="truncate">
+            {mode === 'mic' ? 'Live Mic' : 'Synthetic Stage'} · {SCENES[sceneId].name}
+            {sceneTransition && (
+              <span className="font-semibold">
+                {transitionHold ? ` · HELD BY ${transitionHold}` : ' · SCENE SETTLING'}
+              </span>
+            )}
+          </span>
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-2 tnum text-[11px] text-zinc-400 sm:gap-3">

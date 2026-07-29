@@ -16,7 +16,7 @@ export default function MasterPanel() {
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Broadcast Master</span>
         <div className="flex items-center gap-1.5">
-          {m.clip && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">CLIP</span>}
+          {m.clip && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">OUTPUT OVER</span>}
           {bypassed && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">SAFE BYPASS</span>}
         </div>
       </div>
@@ -28,6 +28,8 @@ export default function MasterPanel() {
             <Chip>Glue {m.glueGrDb.toFixed(1)}</Chip>
             <Arrow />
             <Chip>Master EQ</Chip>
+            <Arrow />
+            <Chip warn={Math.abs(m.masterTrimDb) >= 3}>Trim {m.masterTrimDb >= 0 ? '+' : ''}{m.masterTrimDb.toFixed(1)}</Chip>
             <Arrow />
             <Chip warn={m.limiterGrDb < -0.3}>Limiter {m.limiterGrDb.toFixed(1)}</Chip>
           </div>
@@ -41,7 +43,9 @@ export default function MasterPanel() {
             <Row label="Target" value={scene.masterTargetLufs.toFixed(0)} unit="LUFS" accent="text-amber-400" />
             <Row label="Short-term" value={fmt(m.shortLufs)} unit="LUFS" />
             <Row label="Momentary" value={fmt(m.momentaryLufs)} unit="LUFS" />
-            <Row label="True Peak" value={fmt(m.truePeakDb)} unit="dBTP" accent={m.truePeakDb > -1 ? 'text-red-400' : 'text-emerald-400'} />
+            <Row label="Output true peak" value={fmt(m.truePeakDb)} unit="dBTP" accent={m.truePeakDb > m.ceilingDb ? 'text-red-400' : 'text-emerald-400'} />
+            <Row label="Ceiling" value={m.ceilingDb.toFixed(1)} unit="dBTP" accent="text-zinc-400" />
+            <Row label="Limiter input" value={fmt(m.limiterInputTruePeakDb)} unit="dBTP" accent={m.limiterInputTruePeakDb > m.ceilingDb ? 'text-amber-400' : 'text-zinc-400'} />
             <Row label="Limiter GR" value={m.limiterGrDb.toFixed(1)} unit="dB" accent={m.limiterGrDb < -0.3 ? 'text-cyan-400' : 'text-zinc-400'} />
           </div>
 

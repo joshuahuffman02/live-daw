@@ -39,6 +39,9 @@ hardware proof.
 - Remote browser control safety: **6 passed, 0 failed** for forward-only timestamp
   progression, duplicate-frame stall detection, backward-clock reset,
   transport loss/recovery, contract validation, and command-to-snapshot binding.
+- Browser master safety: **3 passed, 0 failed** for sustained overload, isolated
+  full-scale transients, post-limiter true-peak ceiling compliance, and transparent
+  sub-ceiling operation.
 - Independent failover supervisor: **24 passed, 0 failed** for fail-closed
   heartbeat validation, startup/restart defaults, short primary leases, manual-only
   return, relay acknowledgement binding, controller state, and private operator
@@ -55,7 +58,10 @@ hardware proof.
   handling, real FFmpeg silent-carrier decode, baseline/progression/stall/reset
   behavior, playback failure, URL redaction, and no-store HTTP health.
 - Web proof: clean install, typecheck, production build, and `npm audit` passed
-  with **0 known vulnerabilities**.
+  with **0 known vulnerabilities**. The running proof now exposes convergence-bound
+  scene transitions, held FREEZE/SAFE cues, actionable Planning Center recovery,
+  post-limiter output true peak, limiter-input pressure, and bounded autonomous
+  loudness trim.
 - JUCE 9.0.0 portability target: strict Release build and CTest passed.
 - Xcode project regeneration: deterministic with the declared Brew tools.
 - Full CMake graph: Release build and CTest passed.

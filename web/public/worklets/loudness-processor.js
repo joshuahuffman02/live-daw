@@ -4,7 +4,7 @@
 //
 // Reports to the main thread (the supervisory UI):
 //   momentary (400 ms), short-term (3 s), integrated (gated) LUFS,
-//   true-peak dBTP, and the limiter's gain reduction.
+//   post-limiter true-peak dBTP, limiter-input true peak, and gain reduction.
 //
 // port messages:
 //   { type: 'config', ceilingDb, targetLufs }
@@ -64,17 +64,20 @@ class LoudnessProcessor extends AudioWorkletProcessor {
     this.os = this._buildOversampler()
     this.tpHistL = new Float32Array(this.os.taps).fill(0)
     this.tpHistR = new Float32Array(this.os.taps).fill(0)
+    this.outTpHistL = new Float32Array(this.os.taps).fill(0)
+    this.outTpHistR = new Float32Array(this.os.taps).fill(0)
 
     // look-ahead limiter
     this.look = Math.max(8, Math.round(0.0015 * sr)) // ~1.5 ms
     this.dlL = new Float32Array(this.look)
     this.dlR = new Float32Array(this.look)
+    this.gainRequest = new Float32Array(this.look).fill(1)
     this.dlPos = 0
     this.limGain = 1
     this.gRelease = Math.exp(-1 / (0.060 * sr)) // 60 ms release
-    this.gAttack = Math.exp(-1 / (0.0015 * sr)) // ramp down over look-ahead
 
-    this.tpPeakWin = 0      // decaying true-peak hold for metering
+    this.inputTpPeakWin = 0 // decaying limiter-input true-peak hold
+    this.outputTpPeakWin = 0 // decaying post-limiter true-peak hold
     this.tpDecay = Math.exp(-1 / (0.4 * sr))
 
     this._frame = 0
@@ -187,8 +190,13 @@ class LoudnessProcessor extends AudioWorkletProcessor {
       if (c) integ = -0.691 + 10 * LOG(g / c)
     }
 
-    const tpDb = this.tpPeakWin > 0 ? 20 * (Math.log(this.tpPeakWin) / Math.LN10) : -100
-    return { mom, short, integ, tpDb }
+    const inputTpDb = this.inputTpPeakWin > 0
+      ? 20 * (Math.log(this.inputTpPeakWin) / Math.LN10)
+      : -100
+    const outputTpDb = this.outputTpPeakWin > 0
+      ? 20 * (Math.log(this.outputTpPeakWin) / Math.LN10)
+      : -100
+    return { mom, short, integ, inputTpDb, outputTpDb }
   }
 
   process(inputs, outputs) {
@@ -215,21 +223,32 @@ class LoudnessProcessor extends AudioWorkletProcessor {
       const tpL = this._truePeak(this.tpHistL, xL)
       const tpR = this._truePeak(this.tpHistR, xR)
       const tp = Math.max(tpL, tpR)
-      this.tpPeakWin = Math.max(tp, this.tpPeakWin * this.tpDecay)
+      this.inputTpPeakWin = Math.max(tp, this.inputTpPeakWin * this.tpDecay)
 
       // --- look-ahead limiter ---
       // target gain so the (oversampled) peak meets the ceiling
       let gTarget = 1
       if (tp > this.ceilingLin) gTarget = this.ceilingLin / tp
-      const coef = gTarget < this.limGain ? this.gAttack : this.gRelease
-      this.limGain = coef * this.limGain + (1 - coef) * gTarget
 
       // delayed signal out of the look-ahead buffer
       const dL = this.dlL[this.dlPos]
       const dR = this.dlR[this.dlPos]
       this.dlL[this.dlPos] = xL
       this.dlR[this.dlPos] = xR
+      this.gainRequest[this.dlPos] = gTarget
       this.dlPos = (this.dlPos + 1) % this.look
+
+      // The full look-ahead window is known before the delayed sample leaves.
+      // Apply its most conservative true-peak gain request immediately, then
+      // release slowly after the request leaves the window.
+      let lookaheadGain = 1
+      for (let i = 0; i < this.gainRequest.length; i++) {
+        if (this.gainRequest[i] < lookaheadGain) {
+          lookaheadGain = this.gainRequest[i]
+        }
+      }
+      const releasedGain = this.gRelease * this.limGain + (1 - this.gRelease)
+      this.limGain = Math.min(lookaheadGain, releasedGain)
 
       let oL = dL * this.limGain
       let oR = dR * this.limGain
@@ -239,6 +258,14 @@ class LoudnessProcessor extends AudioWorkletProcessor {
       if (oR > c) oR = c; else if (oR < -c) oR = -c
       outL[s] = oL
       if (out[1]) outR[s] = oR
+
+      const outTpL = this._truePeak(this.outTpHistL, oL)
+      const outTpR = this._truePeak(this.outTpHistR, oR)
+      const outTp = Math.max(outTpL, outTpR)
+      this.outputTpPeakWin = Math.max(
+        outTp,
+        this.outputTpPeakWin * this.tpDecay,
+      )
     }
 
     if ((this._frame++ & 3) === 0) {
@@ -248,7 +275,8 @@ class LoudnessProcessor extends AudioWorkletProcessor {
         momentary: r.mom,
         short: r.short,
         integrated: r.integ,
-        truePeak: r.tpDb,
+        truePeak: r.outputTpDb,
+        inputTruePeak: r.inputTpDb,
         grDb: 20 * (Math.log(this.limGain) / Math.LN10),
         target: this.targetLufs,
         ceiling: this.ceilingDb,

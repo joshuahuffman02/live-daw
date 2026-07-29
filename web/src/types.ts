@@ -94,6 +94,8 @@ export interface MasterModel {
   shortLufs: number
   integratedLufs: number
   truePeakDb: number
+  limiterInputTruePeakDb: number
+  masterTrimDb: number
   limiterGrDb: number
   targetLufs: number
   ceilingDb: number

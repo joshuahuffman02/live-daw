@@ -12,6 +12,12 @@ export interface LogEntry {
   text: string
 }
 
+export interface SceneTransition {
+  from: SceneId
+  to: SceneId
+  startedAtMs: number
+}
+
 let logId = 0
 
 // snapshot of operator-controlled state for undo/redo
@@ -28,6 +34,7 @@ export interface MixerState {
   channels: ChannelModel[]
   master: MasterModel
   sceneId: SceneId
+  sceneTransition: SceneTransition | null
   planIndex: number
   mixMode: MixMode
   frozen: boolean
@@ -74,6 +81,7 @@ export interface MixerState {
   patchChannel: (id: number, patch: Partial<ChannelModel>) => void
   setMaster: (m: MasterModel) => void
   setScene: (id: SceneId) => void
+  completeSceneTransition: (id: SceneId) => void
   setPlanIndex: (i: number) => void
   toggleFreeze: () => void
   toggleBypass: () => void
@@ -142,7 +150,8 @@ export interface MixerState {
 
 const emptyMaster: MasterModel = {
   momentaryLufs: -100, shortLufs: -100, integratedLufs: -100, truePeakDb: -100,
-  limiterGrDb: 0, targetLufs: -14, ceilingDb: -1, glueGrDb: 0, correlation: 1, clip: false,
+  limiterInputTruePeakDb: -100, masterTrimDb: 0, limiterGrDb: 0,
+  targetLufs: -14, ceilingDb: -1, glueGrDb: 0, correlation: 1, clip: false,
 }
 
 const initialMatrix: MatrixOut[] = [
@@ -170,12 +179,18 @@ function snap(s: MixerState): UndoSnap {
 const undoStack: UndoSnap[] = []
 const redoStack: UndoSnap[] = []
 
+function transitionTo(from: SceneId, to: SceneId): SceneTransition | null {
+  if (from === to) return null
+  return { from, to, startedAtMs: Date.now() }
+}
+
 export const useStore = create<MixerState>((set, get) => ({
   started: false,
   mode: 'synthetic',
   channels: [],
   master: emptyMaster,
   sceneId: 'preservice',
+  sceneTransition: null,
   planIndex: 0,
   mixMode: 'soundcheck',
   frozen: false,
@@ -215,7 +230,20 @@ export const useStore = create<MixerState>((set, get) => ({
   patchChannel: (id, patch) =>
     set((s) => ({ channels: s.channels.map((ch) => (ch.id === id ? { ...ch, ...patch } : ch)) })),
   setMaster: (m) => set({ master: m }),
-  setScene: (id) => set({ sceneId: id }),
+  setScene: (id) =>
+    set((s) => {
+      if (s.sceneId === id) return {}
+      return {
+        sceneId: id,
+        sceneTransition: transitionTo(s.sceneId, id),
+      }
+    }),
+  completeSceneTransition: (id) =>
+    set((s) => (
+      s.sceneTransition?.to === id
+        ? { sceneTransition: null }
+        : {}
+    )),
   setPlanIndex: (i) => set({ planIndex: i }),
   toggleFreeze: () => set((s) => ({ frozen: !s.frozen })),
   toggleBypass: () => set((s) => ({ bypassed: !s.bypassed })),
@@ -291,18 +319,22 @@ export const useStore = create<MixerState>((set, get) => ({
     const prev = undoStack.pop()
     if (!prev) return
     redoStack.push(snap(get()))
+    const currentScene = get().sceneId
     set({
       channels: prev.channels, sceneId: prev.sceneId, dcaGroups: prev.dcaGroups,
       recallScope: prev.recallScope, undoDepth: undoStack.length, redoDepth: redoStack.length,
+      sceneTransition: transitionTo(currentScene, prev.sceneId),
     })
   },
   redo: () => {
     const next = redoStack.pop()
     if (!next) return
     undoStack.push(snap(get()))
+    const currentScene = get().sceneId
     set({
       channels: next.channels, sceneId: next.sceneId, dcaGroups: next.dcaGroups,
       recallScope: next.recallScope, undoDepth: undoStack.length, redoDepth: redoStack.length,
+      sceneTransition: transitionTo(currentScene, next.sceneId),
     })
   },
 
@@ -339,7 +371,8 @@ export const useStore = create<MixerState>((set, get) => ({
   reset: () => {
     undoStack.length = 0; redoStack.length = 0
     set({
-      started: false, channels: [], master: emptyMaster, log: [], planIndex: 0, sceneId: 'preservice',
+      started: false, channels: [], master: emptyMaster, log: [], planIndex: 0,
+      sceneId: 'preservice', sceneTransition: null,
       monitorSource: 'program', muteGroups: [false, false, false, false], dcaGroups: initialDca,
       matrix: initialMatrix, mixMinusChannelId: null, recording: false, recUrl: null,
       oscillator: { on: false, type: 'tone', dest: 'master', levelDb: -20 }, undoDepth: 0, redoDepth: 0,
