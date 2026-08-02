@@ -8,7 +8,8 @@ path into a macOS `.app`:
   scenes, Keychain-backed Planning Center cue driving, complete manual channel
   processing,
   SAFE, FREEZE, SHADOW, soundcheck recording, and segmented continuous
-  multitrack/program capture.
+  multitrack/program capture, plus a durable Sessions workspace for interrupted
+  recovery, imports, per-file review, safe continuation, and replay preparation.
 - Objective-C++ Core Audio bridge for Dante Virtual Soundcard / Dante hardware exposed
   as Core Audio devices.
 - Existing C++ `bdsp::Engine` and `app::BrainThread` as the mixer core.
@@ -204,6 +205,8 @@ free-space reserve, monitors that reserve every 30 seconds, and can move only cl
 completed expired sessions to Trash. At 64 inputs and 96 kHz this is about
 91.2 GB/hour, so use a proven local SSD and plan retention explicitly. See
 [`../docs/CONTINUOUS_RECORDING.md`](../docs/CONTINUOUS_RECORDING.md).
+The library workflow and its browser/native behavior matrix are documented in
+[`../docs/MULTI_SESSION_RECORDING.md`](../docs/MULTI_SESSION_RECORDING.md).
 
 The headless `--write-service-profile` command writes only an AutoMix Native profile:
 a one-to-one Dante input map plus starter service source roles. It does not change the

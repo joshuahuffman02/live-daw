@@ -75,7 +75,8 @@ jobs:
       - name: Verify production host readiness audit
         run: |
           python3 -W error::ResourceWarning -m unittest -v \
-            scripts/test_production_host_readiness.py
+            scripts/test_production_host_readiness.py \
+            scripts/test_recording_session_replay.py
 
       - name: Verify OBS encoder health bridge
         run: |

@@ -3,9 +3,11 @@ import { useStore } from '../store'
 import { useEngine } from '../state/engine-context'
 import { PROFILES } from '../brain/targets'
 import type { MonitorSource } from '../types'
+import { useRecordingController } from '../recording/context'
 
 export default function ConsoleBar() {
   const engine = useEngine()
+  const recordingController = useRecordingController()
   const dcaGroups = useStore((s) => s.dcaGroups)
   const muteGroups = useStore((s) => s.muteGroups)
   const monitorSource = useStore((s) => s.monitorSource)
@@ -14,7 +16,8 @@ export default function ConsoleBar() {
   const oscillator = useStore((s) => s.oscillator)
   const recording = useStore((s) => s.recording)
   const recElapsed = useStore((s) => s.recElapsed)
-  const recUrl = useStore((s) => s.recUrl)
+  const recordingSessions = useStore((s) => s.recordingSessions)
+  const recordingError = useStore((s) => s.recordingError)
   const undoDepth = useStore((s) => s.undoDepth)
   const redoDepth = useStore((s) => s.redoDepth)
   const channels = useStore((s) => s.channels)
@@ -25,8 +28,8 @@ export default function ConsoleBar() {
   const setMonitor = useStore((s) => s.setMonitor)
   const setRecallScope = useStore((s) => s.setRecallScope)
   const setOscillator = useStore((s) => s.setOscillator)
-  const setRecording = useStore((s) => s.setRecording)
   const setRecElapsed = useStore((s) => s.setRecElapsed)
+  const toggleRecordingSessions = useStore((s) => s.toggleRecordingSessions)
   const setMixMinus = useStore((s) => s.setMixMinusChannel)
   const undo = useStore((s) => s.undo)
   const redo = useStore((s) => s.redo)
@@ -41,8 +44,8 @@ export default function ConsoleBar() {
   }, [recording, setRecElapsed])
 
   async function toggleRec() {
-    if (recording) { const url = await engine.stopRecording(); setRecording(false, url) }
-    else { engine.startRecording(); setRecording(true, null) }
+    if (recording) await recordingController.stop()
+    else await recordingController.start()
   }
 
   const anySolo = channels.some((c) => c.soloed)
@@ -125,12 +128,17 @@ export default function ConsoleBar() {
       {/* recording */}
       <Block title="Record">
         <div className="flex flex-col gap-1">
-          <button onClick={toggleRec}
+          <button onClick={() => { void toggleRec().catch(() => undefined) }}
             aria-pressed={recording}
             className={`rounded px-2 py-1 text-[10px] font-semibold ${recording ? 'bg-red-600 text-white' : 'bg-[#1a1d25] text-red-300 hover:bg-[#222631]'}`}>
-            {recording ? `● REC ${fmtTime(recElapsed)}` : 'Record program'}
+            {recording ? `● REC ${fmtTime(recElapsed)}` : 'New session'}
           </button>
-          {recUrl && !recording && <a href={recUrl} download="automix-program.webm" className="text-center text-[9px] text-cyan-400 hover:underline">download last</a>}
+          <button
+            onClick={() => toggleRecordingSessions(true)}
+            className={`text-center text-[9px] hover:underline ${recordingError ? 'text-amber-300' : 'text-cyan-400'}`}
+          >
+            {recordingError ? 'recording needs attention' : `${recordingSessions.length} saved · open`}
+          </button>
         </div>
       </Block>
 

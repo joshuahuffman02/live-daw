@@ -4,6 +4,7 @@ import type {
   MonitorSource, MatrixOut, RecallScope, OscillatorConfig, DcaGroup, PlanItem,
 } from './types'
 import type { InputMode } from './audio/engine'
+import type { BrowserRecordingSession } from './recording/session-library'
 
 export interface LogEntry {
   id: number
@@ -53,7 +54,12 @@ export interface MixerState {
   oscillator: OscillatorConfig
   recording: boolean
   recElapsed: number
-  recUrl: string | null
+  recordingSessions: BrowserRecordingSession[]
+  activeRecordingSessionId: string | null
+  selectedRecordingSessionId: string | null
+  recordingLibraryStatus: string
+  recordingError: string | null
+  showRecordingSessions: boolean
   clipboard: Partial<ChannelModel> | null
   undoDepth: number
   redoDepth: number
@@ -126,8 +132,12 @@ export interface MixerState {
   pasteChannel: (id: number) => void
 
   // recording
-  setRecording: (on: boolean, url?: string | null) => void
+  setRecording: (on: boolean, sessionId?: string | null) => void
   setRecElapsed: (s: number) => void
+  setRecordingSessions: (sessions: BrowserRecordingSession[]) => void
+  selectRecordingSession: (id: string | null) => void
+  setRecordingLibraryStatus: (status: string, error?: string | null) => void
+  toggleRecordingSessions: (on?: boolean) => void
 
   // patch
   setInputs: (i: MixerState['inputs']) => void
@@ -208,7 +218,12 @@ export const useStore = create<MixerState>((set, get) => ({
   oscillator: { on: false, type: 'tone', dest: 'master', levelDb: -20 },
   recording: false,
   recElapsed: 0,
-  recUrl: null,
+  recordingSessions: [],
+  activeRecordingSessionId: null,
+  selectedRecordingSessionId: null,
+  recordingLibraryStatus: 'Loading sessions…',
+  recordingError: null,
+  showRecordingSessions: false,
   clipboard: null,
   undoDepth: 0,
   redoDepth: 0,
@@ -352,8 +367,22 @@ export const useStore = create<MixerState>((set, get) => ({
       return { channels: s.channels.map((ch) => (ch.id === id ? { ...ch, ...s.clipboard, overrides: { ...s.clipboard!.overrides } } : ch)) }
     }),
 
-  setRecording: (on, url) => set((s) => ({ recording: on, recUrl: url === undefined ? s.recUrl : url, recElapsed: on ? 0 : s.recElapsed })),
+  setRecording: (on, sessionId) => set((s) => ({
+    recording: on,
+    activeRecordingSessionId: sessionId === undefined ? s.activeRecordingSessionId : sessionId,
+    selectedRecordingSessionId: on && sessionId ? sessionId : s.selectedRecordingSessionId,
+    recElapsed: on ? 0 : s.recElapsed,
+  })),
   setRecElapsed: (sec) => set({ recElapsed: sec }),
+  setRecordingSessions: (sessions) => set((s) => ({
+    recordingSessions: sessions,
+    selectedRecordingSessionId: s.selectedRecordingSessionId && sessions.some((session) => session.id === s.selectedRecordingSessionId)
+      ? s.selectedRecordingSessionId
+      : sessions[0]?.id ?? null,
+  })),
+  selectRecordingSession: (id) => set({ selectedRecordingSessionId: id }),
+  setRecordingLibraryStatus: (status, error = null) => set({ recordingLibraryStatus: status, recordingError: error }),
+  toggleRecordingSessions: (on) => set((s) => ({ showRecordingSessions: on === undefined ? !s.showRecordingSessions : on })),
 
   setInputs: (inputs) => set({ inputs }),
   setPatchMap: (patch) => set({ patch }),
@@ -374,7 +403,7 @@ export const useStore = create<MixerState>((set, get) => ({
       started: false, channels: [], master: emptyMaster, log: [], planIndex: 0,
       sceneId: 'preservice', sceneTransition: null,
       monitorSource: 'program', muteGroups: [false, false, false, false], dcaGroups: initialDca,
-      matrix: initialMatrix, mixMinusChannelId: null, recording: false, recUrl: null,
+      matrix: initialMatrix, mixMinusChannelId: null, recording: false, activeRecordingSessionId: null,
       oscillator: { on: false, type: 'tone', dest: 'master', levelDb: -20 }, undoDepth: 0, redoDepth: 0,
       inputs: [], patch: {}, showPatch: false,
       pcoStatus: 'idle', pcoPlanTitle: null, pcoError: null, livePlan: null,

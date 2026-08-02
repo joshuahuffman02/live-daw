@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum AutoMixPalette {
     static let canvas = Color(red: 0.035, green: 0.039, blue: 0.055)
@@ -22,6 +23,7 @@ private enum AutoMixPalette {
 
 private enum ControlWorkspace: String, CaseIterable, Identifiable {
     case live = "Live"
+    case sessions = "Sessions"
     case setup = "Setup"
     case validate = "Validate"
 
@@ -56,6 +58,8 @@ struct ContentView: View {
             if workspace == .live {
                 ServiceSceneStrip(model: model)
                 LiveOperatorConsole(model: model)
+            } else if workspace == .sessions {
+                RecordingSessionsWorkspace(model: model)
             } else {
                 HSplitView {
                     DeviceControlPanel(model: model, workspace: $workspace)
@@ -1243,6 +1247,543 @@ private struct ConsoleCounter: View {
     }
 }
 
+private struct RecordingSessionsWorkspace: View {
+    @ObservedObject var model: AppModel
+    @State private var showImporter = false
+    @State private var showTrashConfirmation = false
+    @State private var editName = ""
+    @State private var editNotes = ""
+
+    var body: some View {
+        HSplitView {
+            sessionSidebar
+                .frame(minWidth: 300, idealWidth: 340, maxWidth: 390)
+            sessionDetail
+                .frame(minWidth: 760)
+        }
+        .background(AutoMixPalette.canvas)
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case let .success(urls):
+                model.importRecordingFiles(urls)
+            case let .failure(error):
+                if (error as? CocoaError)?.code != .userCancelled {
+                    model.recordingFileImporterFailed(error)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Move this session to Trash?",
+            isPresented: $showTrashConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Move Session to Trash", role: .destructive) {
+                if let id = model.selectedRecordingSessionID {
+                    model.moveRecordingSessionToTrash(id)
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("The session folder and every recording inside it move to macOS Trash. An active recording cannot be removed.")
+        }
+        .onAppear {
+            model.refreshRecordingSessions()
+            loadEditFields()
+        }
+        .onChange(of: model.selectedRecordingSessionID) { _, _ in
+            loadEditFields()
+        }
+    }
+
+    private var sessionSidebar: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("RECORDING SESSIONS")
+                            .font(.system(size: 10, weight: .bold))
+                            .tracking(1.3)
+                            .foregroundStyle(AutoMixPalette.secondaryText)
+                        Text(model.recordingSessionLibraryStatus)
+                            .font(.system(size: 10))
+                            .foregroundStyle(libraryStatusColor)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Button {
+                        model.refreshRecordingSessions()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Rescan the recording library")
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    TextField("Session name (optional)", text: $model.nextRecordingSessionName)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Operator note (optional)", text: $model.nextRecordingSessionNotes)
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button {
+                            model.startContinuousRecording()
+                        } label: {
+                            Label("New live session", systemImage: "record.circle.fill")
+                        }
+                        .buttonStyle(
+                            OperatorActionButtonStyle(
+                                foreground: AutoMixPalette.red,
+                                background: AutoMixPalette.control
+                            )
+                        )
+                        .disabled(
+                            !model.isRunning ||
+                                model.continuousRecordingActive ||
+                                model.continuousRecordingRequested ||
+                                model.recordingSessionActionInProgress
+                        )
+
+                        Button {
+                            showImporter = true
+                        } label: {
+                            Label("Import", systemImage: "square.and.arrow.down")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(
+                            model.recordingSessionActionInProgress ||
+                                model.continuousRecordingActive ||
+                                model.continuousRecordingRequested
+                        )
+                    }
+                    if !model.isRunning {
+                        Text("Start the audio engine before beginning a live session. Imported recordings can still be reviewed while idle.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(AutoMixPalette.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(10)
+                .background(AutoMixPalette.panelRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(AutoMixPalette.subtleBorder))
+            }
+            .padding(14)
+
+            Divider().overlay(AutoMixPalette.border)
+
+            if model.recordingSessions.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "waveform.badge.plus")
+                        .font(.system(size: 30))
+                        .foregroundStyle(AutoMixPalette.tertiaryText)
+                    Text("No recorded sessions")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Create a live capture or import existing audio files. Sessions remain available after relaunch.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(AutoMixPalette.secondaryText)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(28)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 6) {
+                        ForEach(model.recordingSessions) { session in
+                            sessionRow(session)
+                        }
+                    }
+                    .padding(10)
+                }
+            }
+        }
+        .background(AutoMixPalette.header)
+    }
+
+    @ViewBuilder
+    private var sessionDetail: some View {
+        if let session = model.selectedRecordingSession {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(alignment: .top, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(statusColor(session.status))
+                                    .frame(width: 8, height: 8)
+                                Text(session.status.label.uppercased())
+                                    .font(.system(size: 9, weight: .bold))
+                                    .tracking(1.1)
+                                    .foregroundStyle(statusColor(session.status))
+                            }
+                            Text(session.name)
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                                .foregroundStyle(AutoMixPalette.primaryText)
+                            Text(sessionSubtitle(session))
+                                .font(.system(size: 11))
+                                .foregroundStyle(AutoMixPalette.secondaryText)
+                        }
+                        Spacer()
+                        if session.status == .recording {
+                            Button(role: .cancel) {
+                                model.stopContinuousRecording()
+                            } label: {
+                                Label("Stop recording", systemImage: "stop.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(AutoMixPalette.red)
+                        }
+                    }
+
+                    if session.status == .recording {
+                        liveCaptureCard
+                    } else if session.status == .interrupted || session.status == .needsAttention {
+                        attentionCard(session)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            model.toggleRecordingPreview(session.id)
+                        } label: {
+                            Label(
+                                model.recordingPreviewSessionID == session.id && model.recordingPreviewPlaying
+                                    ? "Pause preview"
+                                    : "Play program preview",
+                                systemImage: model.recordingPreviewSessionID == session.id && model.recordingPreviewPlaying
+                                    ? "pause.fill"
+                                    : "play.fill"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(
+                            session.status == .recording ||
+                                !session.hasUsableAudio ||
+                                (model.continuousRecordingActive &&
+                                    session.origin == .liveCapture &&
+                                    !session.assets.contains(where: { $0.kind == .programPreview && $0.validationError == nil })) ||
+                                model.recordingSessionActionInProgress
+                        )
+
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting([session.directoryURL])
+                        } label: {
+                            Label("Reveal files", systemImage: "folder")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            model.prepareReplayRequest(session.id)
+                        } label: {
+                            Label("Prepare replay", systemImage: "waveform.path")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(
+                            session.status == .recording ||
+                                !session.assets.contains(where: { $0.kind == .captureSegment && $0.validationError == nil })
+                        )
+
+                        Button {
+                            model.continueRecordingSession(session.id)
+                        } label: {
+                            Label("Continue as new capture", systemImage: "record.circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(
+                            !model.isRunning ||
+                                model.continuousRecordingActive ||
+                                model.continuousRecordingRequested ||
+                                model.recordingSessionActionInProgress
+                        )
+
+                        Spacer()
+
+                        Button(role: .destructive) {
+                            showTrashConfirmation = true
+                        } label: {
+                            Label("Move to Trash", systemImage: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(session.status == .recording || model.recordingSessionActionInProgress)
+                    }
+
+                    GroupBox("Session Details") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            TextField("Name", text: $editName)
+                                .textFieldStyle(.roundedBorder)
+                            TextField("Notes", text: $editNotes, axis: .vertical)
+                                .textFieldStyle(.roundedBorder)
+                                .lineLimit(2...6)
+                            HStack {
+                                Button("Save details") {
+                                    model.updateRecordingSession(
+                                        sessionID: session.id,
+                                        name: editName,
+                                        notes: editNotes
+                                    )
+                                }
+                                .disabled(session.status == .recording || model.recordingSessionActionInProgress)
+                                Spacer()
+                                Text(session.directoryPath)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundStyle(AutoMixPalette.tertiaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    GroupBox("Recorded Files") {
+                        VStack(spacing: 0) {
+                            if session.assets.isEmpty {
+                                Text(session.status == .recording ? "Waiting for the first checkpointed segment…" : "No audio files were found.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(18)
+                            } else {
+                                ForEach(session.assets) { asset in
+                                    assetRow(asset, session: session)
+                                    if asset.id != session.assets.last?.id {
+                                        Divider().overlay(AutoMixPalette.subtleBorder)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    Text("A continuation always starts in a new folder, so recovery can never overwrite a completed segment. Program previews are derived off the realtime audio thread from the recorded program L/R channels. Imported files are copied into this managed library before they are treated as durable.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(AutoMixPalette.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(22)
+            }
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 36))
+                    .foregroundStyle(AutoMixPalette.tertiaryText)
+                Text("Choose a recording session")
+                    .font(.headline)
+                Text("Preview, organize, reveal, or prepare a recorded service for deterministic replay.")
+                    .foregroundStyle(AutoMixPalette.secondaryText)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var liveCaptureCard: some View {
+        HStack(spacing: 22) {
+            sessionMetric("CAPTURED", liveDuration)
+            sessionMetric("SEGMENTS", "\(model.continuousRecordingSegmentCount)")
+            sessionMetric(
+                "DROPPED",
+                "\(model.continuousRecordingDroppedFrameCount)",
+                warning: model.continuousRecordingDroppedFrameCount > 0
+            )
+            sessionMetric("STORAGE", model.recordingStorageStatus)
+            Spacer()
+        }
+        .padding(14)
+        .background(AutoMixPalette.panelRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AutoMixPalette.red.opacity(0.28)))
+    }
+
+    private func attentionCard(_ session: RecordingSession) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: session.status == .interrupted ? "bolt.trianglebadge.exclamationmark.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(AutoMixPalette.amber)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.status == .interrupted ? "Capture was not closed cleanly" : "Review required before replay")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(session.lastError ?? "One or more assets failed validation or the recorder reported dropped frames.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AutoMixPalette.secondaryText)
+                Text("Completed segments remain available. Continue into a new session; never write over the interrupted folder.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AutoMixPalette.tertiaryText)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AutoMixPalette.amber.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(AutoMixPalette.amber.opacity(0.24)))
+    }
+
+    private func sessionRow(_ session: RecordingSession) -> some View {
+        Button {
+            model.selectedRecordingSessionID = session.id
+        } label: {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(statusColor(session.status))
+                    .frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(session.name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AutoMixPalette.primaryText)
+                        .lineLimit(1)
+                    Text(sessionRowSubtitle(session))
+                        .font(.system(size: 9))
+                        .foregroundStyle(AutoMixPalette.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if session.origin == .importedFiles {
+                    Image(systemName: "square.and.arrow.down")
+                        .foregroundStyle(AutoMixPalette.tertiaryText)
+                }
+            }
+            .padding(10)
+            .background(
+                model.selectedRecordingSessionID == session.id
+                    ? AutoMixPalette.cyan.opacity(0.12)
+                    : AutoMixPalette.panel
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(
+                        model.selectedRecordingSessionID == session.id
+                            ? AutoMixPalette.cyan.opacity(0.45)
+                            : AutoMixPalette.subtleBorder
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(session.name), \(session.status.label)")
+    }
+
+    private func assetRow(_ asset: RecordingSessionAsset, session: RecordingSession) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: asset.validationError == nil ? assetIcon(asset.kind) : "exclamationmark.triangle.fill")
+                .foregroundStyle(asset.validationError == nil ? AutoMixPalette.cyan : AutoMixPalette.amber)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(asset.displayName)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                if let error = asset.validationError {
+                    Text(error)
+                        .font(.system(size: 9))
+                        .foregroundStyle(AutoMixPalette.amber)
+                        .lineLimit(2)
+                } else {
+                    Text(assetSummary(asset))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(AutoMixPalette.secondaryText)
+                }
+            }
+            Spacer()
+            Text(asset.kind == .captureSegment ? "MULTITRACK" : asset.kind.rawValue.uppercased())
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.7)
+                .foregroundStyle(AutoMixPalette.tertiaryText)
+            if asset.isPlayable && session.status != .recording {
+                Button {
+                    model.toggleRecordingAssetPreview(sessionID: session.id, assetID: asset.id)
+                } label: {
+                    Image(systemName:
+                        model.recordingPreviewAssetID == asset.id && model.recordingPreviewPlaying
+                            ? "pause.fill"
+                            : "play.fill"
+                    )
+                }
+                .buttonStyle(.borderless)
+                .help("Play \(asset.displayName)")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+    }
+
+    private func sessionMetric(_ label: String, _ value: String, warning: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(AutoMixPalette.tertiaryText)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(warning ? AutoMixPalette.amber : AutoMixPalette.primaryText)
+                .lineLimit(1)
+        }
+    }
+
+    private var liveDuration: String {
+        guard model.detectedSampleRate > 0 else { return "\(model.continuousRecordingFrameCount) frames" }
+        return formatSessionDuration(Double(model.continuousRecordingFrameCount) / model.detectedSampleRate)
+    }
+
+    private func loadEditFields() {
+        editName = model.selectedRecordingSession?.name ?? ""
+        editNotes = model.selectedRecordingSession?.notes ?? ""
+    }
+
+    private var libraryStatusColor: Color {
+        let status = model.recordingSessionLibraryStatus.lowercased()
+        return status.contains("fail") || status.contains("could not")
+            ? AutoMixPalette.amber
+            : AutoMixPalette.tertiaryText
+    }
+
+    private func statusColor(_ status: RecordingSessionStatus) -> Color {
+        switch status {
+        case .recording: return AutoMixPalette.red
+        case .ready: return AutoMixPalette.green
+        case .interrupted, .needsAttention: return AutoMixPalette.amber
+        }
+    }
+
+    private func sessionSubtitle(_ session: RecordingSession) -> String {
+        let source = session.origin == .liveCapture ? "Native multitrack" : "Imported audio"
+        return "\(source) · \(session.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(formatSessionDuration(session.durationSeconds)) · \(ByteCountFormatter.string(fromByteCount: session.totalByteCount, countStyle: .file))"
+    }
+
+    private func sessionRowSubtitle(_ session: RecordingSession) -> String {
+        "\(session.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(session.assets.count) file\(session.assets.count == 1 ? "" : "s") · \(formatSessionDuration(session.durationSeconds))"
+    }
+
+    private func assetSummary(_ asset: RecordingSessionAsset) -> String {
+        let duration = asset.durationSeconds.map(formatSessionDuration) ?? "unknown duration"
+        let format = [
+            asset.channelCount.map { "\($0) ch" },
+            asset.sampleRate.map { "\(Int($0.rounded())) Hz" }
+        ].compactMap { $0 }.joined(separator: " · ")
+        let size = ByteCountFormatter.string(fromByteCount: asset.byteCount, countStyle: .file)
+        return [duration, format, size].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private func assetIcon(_ kind: RecordingSessionAssetKind) -> String {
+        switch kind {
+        case .captureSegment: return "waveform"
+        case .importedAudio: return "music.note"
+        case .programPreview: return "speaker.wave.2"
+        case .replayOutput: return "waveform.badge.checkmark"
+        case .metrics: return "chart.xyaxis.line"
+        case .decisions: return "list.bullet.rectangle"
+        }
+    }
+
+    private func formatSessionDuration(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00" }
+        let total = Int(seconds.rounded())
+        let hours = total / 3_600
+        let minutes = (total % 3_600) / 60
+        let remaining = total % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, remaining)
+            : String(format: "%d:%02d", minutes, remaining)
+    }
+}
+
 private struct DeviceControlPanel: View {
     @ObservedObject var model: AppModel
     @Binding var workspace: ControlWorkspace
@@ -1970,6 +2511,8 @@ private struct DeviceControlPanel: View {
         switch workspace {
         case .live:
             "Service operation, stream health, remote control, and continuous capture."
+        case .sessions:
+            "Recorded-service library, imports, previews, and replay preparation."
         case .setup:
             "Audio routing, HD96 readiness, and Dante expectations."
         case .validate:

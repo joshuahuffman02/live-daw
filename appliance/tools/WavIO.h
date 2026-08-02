@@ -74,9 +74,11 @@ inline WavData readWav(const std::string& path) {
         in.read((char*)chunkHeader, sizeof(chunkHeader));
         if (in.gcount() != (std::streamsize)sizeof(chunkHeader)) break;
         const uint32_t chunkSize = readU32(chunkHeader + 4);
-        if (chunkSize > (1u << 30)) throw std::runtime_error("WAV chunk is unreasonably large");
 
         if (std::memcmp(chunkHeader, "fmt ", 4) == 0) {
+            if (chunkSize > (1u << 20)) {
+                throw std::runtime_error("WAV fmt chunk is unreasonably large");
+            }
             std::vector<uint8_t> fmt(chunkSize);
             in.read((char*)fmt.data(), chunkSize);
             if (!in || fmt.size() < 16) throw std::runtime_error("invalid WAV fmt chunk");
@@ -89,6 +91,12 @@ inline WavData readWav(const std::string& path) {
                 format = readU16(fmt.data() + 24); // extensible sub-format GUID prefix
             }
         } else if (std::memcmp(chunkHeader, "data", 4) == 0) {
+            // A production 66-channel/96 kHz/60-second float segment is about
+            // 1.52 GB. Accept that contract while retaining a bounded allocation
+            // guard for malformed or unsupported larger RIFF payloads.
+            if ((uint64_t)chunkSize > (1ull << 31)) {
+                throw std::runtime_error("WAV data chunk exceeds the 2 GiB replay-segment limit");
+            }
             payload.resize(chunkSize);
             in.read((char*)payload.data(), chunkSize);
             if (!in) throw std::runtime_error("truncated WAV data chunk");

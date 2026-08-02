@@ -23,6 +23,8 @@ export default function TopBar({ onStop }: { onStop: () => void }) {
   const showPatch = useStore((s) => s.showPatch)
   const toggleDevices = useStore((s) => s.toggleDevices)
   const showDevices = useStore((s) => s.showDevices)
+  const toggleRecordingSessions = useStore((s) => s.toggleRecordingSessions)
+  const recording = useStore((s) => s.recording)
 
   const statusColor = status === 'ok' ? 'text-emerald-400' : status === 'stalled' ? 'text-amber-400' : 'text-red-400'
   const transitionHold = sceneTransition
@@ -143,6 +145,14 @@ export default function TopBar({ onStop }: { onStop: () => void }) {
           title="SAFE uses a conservative static sum and stops autonomous changes"
         >
           {safeReleaseArmed ? 'CONFIRM RELEASE' : bypassed ? 'SAFE ACTIVE' : 'SAFE'}
+        </button>
+
+        <button
+          onClick={() => toggleRecordingSessions(true)}
+          className={`h-9 shrink-0 rounded-md px-3 text-xs font-semibold transition ${recording ? 'bg-red-600 text-white' : 'bg-[#15181f] text-cyan-300 hover:bg-[#1b1f28]'}`}
+          title="Open the durable recording session library"
+        >
+          {recording ? '● Sessions' : 'Sessions'}
         </button>
 
         <button

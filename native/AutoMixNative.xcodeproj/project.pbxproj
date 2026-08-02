@@ -22,11 +22,13 @@
 		632FF07078D8EF541B9098D7 /* HTTPRequestParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A13610CBAE47CAD686D057C7 /* HTTPRequestParsingTests.swift */; };
 		68F8085AFC3BBE20249BA28E /* MonitorWireContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2677A2CD6F9E8F155D11B9F0 /* MonitorWireContractTests.swift */; };
 		710EFE185543D0B78259216C /* MonitorBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7450F79496F6DDA9B5B688A4 /* MonitorBridge.swift */; };
+		74562342CF78D568D15A1250 /* RecordingSessionLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C54D3D86AF2A2CE4ADDCA01C /* RecordingSessionLibraryTests.swift */; };
 		74A673986BCF27FBFCCCC92E /* AppModel+Remote.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FF11BF0D5CB8FBD7FE11D46 /* AppModel+Remote.swift */; };
 		74A82654CFE2B49BE53E7FD2 /* HTTPConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16FAB57B4BF9DD1EB19AA646 /* HTTPConnection.swift */; };
 		763E6AA30EB66A6AC9727219 /* RemoteWeb in Resources */ = {isa = PBXBuildFile; fileRef = 3C3EA336EBDA8760C211F609 /* RemoteWeb */; };
 		7913C49F57273D886E7AFCEC /* TelemetryAssemblerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D255311BAB176848DF400583 /* TelemetryAssemblerTests.swift */; };
 		7DB26AEB8F7A5B34D4BA72F7 /* CoreAudioFullCheckManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C519B8722729D5A030D987A /* CoreAudioFullCheckManifest.swift */; };
+		8A33F9B8CE9C30B4AB71C521 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E54D4C396DC509D86A07251 /* RecordingSession.swift */; };
 		91A33AFED0D0F32878ABD77D /* MonitorServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3395DB3F48180B869A8246B6 /* MonitorServer.swift */; };
 		9CD60CB100C0968640691CCD /* PairingStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D5D482D3389E7C047F0DCA2 /* PairingStoreTests.swift */; };
 		A52336E238C48D3F7AE1F8FE /* ChannelRole.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B650A957E81DB727D76A4F8 /* ChannelRole.swift */; };
@@ -77,6 +79,7 @@
 		5469D9C0153AEFB012CBDFC3 /* AutoMixNativeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AutoMixNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5DFA983BCED377F74DB60A99 /* MonitorSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorSmoke.swift; sourceTree = "<group>"; };
 		6B8396F6223BFD984934D499 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		6E54D4C396DC509D86A07251 /* RecordingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSession.swift; sourceTree = "<group>"; };
 		7450F79496F6DDA9B5B688A4 /* MonitorBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorBridge.swift; sourceTree = "<group>"; };
 		82C96F9EDDE6E9249C9B0D19 /* ContinuousRecordingProofReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuousRecordingProofReport.swift; sourceTree = "<group>"; };
 		8E7CC84C52E7301B04085D5B /* AutoMixNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AutoMixNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -90,6 +93,7 @@
 		B5DBEB3E24AA85DDFFB0662D /* MonitorTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorTypes.swift; sourceTree = "<group>"; };
 		C09F36C1EAB68D456963B5B5 /* RemoteCommandRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandRouter.swift; sourceTree = "<group>"; };
 		C1981546740F31F51821490E /* ShadowDecisionJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShadowDecisionJournal.swift; sourceTree = "<group>"; };
+		C54D3D86AF2A2CE4ADDCA01C /* RecordingSessionLibraryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSessionLibraryTests.swift; sourceTree = "<group>"; };
 		CB9C030A40A3E3D363DD8FEF /* RehearsalStartGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RehearsalStartGateTests.swift; sourceTree = "<group>"; };
 		D255311BAB176848DF400583 /* TelemetryAssemblerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryAssemblerTests.swift; sourceTree = "<group>"; };
 		D68D6326441EF2F9C6D0A4DB /* AlertEvaluatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertEvaluatorTests.swift; sourceTree = "<group>"; };
@@ -192,6 +196,7 @@
 				9A8AA569B2AEF23646F90297 /* Info.plist */,
 				2677A2CD6F9E8F155D11B9F0 /* MonitorWireContractTests.swift */,
 				9D5D482D3389E7C047F0DCA2 /* PairingStoreTests.swift */,
+				C54D3D86AF2A2CE4ADDCA01C /* RecordingSessionLibraryTests.swift */,
 				CB9C030A40A3E3D363DD8FEF /* RehearsalStartGateTests.swift */,
 				E8A7BE9CFED91799110E3FD8 /* RemoteCommandRoutingTests.swift */,
 				B2AB56BB4ABCB83AB471AC48 /* SampleRateStateTests.swift */,
@@ -207,6 +212,7 @@
 				3B650A957E81DB727D76A4F8 /* ChannelRole.swift */,
 				82C96F9EDDE6E9249C9B0D19 /* ContinuousRecordingProofReport.swift */,
 				2C519B8722729D5A030D987A /* CoreAudioFullCheckManifest.swift */,
+				6E54D4C396DC509D86A07251 /* RecordingSession.swift */,
 				C1981546740F31F51821490E /* ShadowDecisionJournal.swift */,
 				F1B9F59BF8757A7E53B79C7D /* SoundcheckReport.swift */,
 			);
@@ -333,6 +339,7 @@
 				632FF07078D8EF541B9098D7 /* HTTPRequestParsingTests.swift in Sources */,
 				68F8085AFC3BBE20249BA28E /* MonitorWireContractTests.swift in Sources */,
 				9CD60CB100C0968640691CCD /* PairingStoreTests.swift in Sources */,
+				74562342CF78D568D15A1250 /* RecordingSessionLibraryTests.swift in Sources */,
 				136A49E37B150348AF83C513 /* RehearsalStartGateTests.swift in Sources */,
 				A5D86F217A787BBEB4945250 /* RemoteCommandRoutingTests.swift in Sources */,
 				C674EF20AF698DC9D1795F52 /* SampleRateStateTests.swift in Sources */,
@@ -361,6 +368,7 @@
 				E294D937D88A12E6469134F9 /* MonitorSmoke.swift in Sources */,
 				AF5CA1804900A4C7198B419C /* MonitorTypes.swift in Sources */,
 				3AA3F7DE2922718E07959868 /* PairingStore.swift in Sources */,
+				8A33F9B8CE9C30B4AB71C521 /* RecordingSession.swift in Sources */,
 				1ED1170AC327EE6DD0936DCB /* RemoteCommandRouter.swift in Sources */,
 				5AC382710F07185DD9E6A46E /* RemoteMonitoringPanel.swift in Sources */,
 				FE11DFC05F6319FFF6EF5811 /* ShadowDecisionJournal.swift in Sources */,

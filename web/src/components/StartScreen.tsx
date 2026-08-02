@@ -1,9 +1,10 @@
 import type { InputMode } from '../audio/engine'
 
 export default function StartScreen({
-  onStart, booting, error,
+  onStart, onOpenSessions, booting, error,
 }: {
   onStart: (m: InputMode) => void
+  onOpenSessions: () => void
   booting: boolean
   error: string | null
 }) {
@@ -14,6 +15,7 @@ export default function StartScreen({
           <span className="inline-block h-2 w-2 rounded-full bg-cyan-400" aria-hidden="true" />
           Autonomous broadcast mixer · proof of concept
         </div>
+
         <h1 className="text-3xl font-semibold tracking-tight text-white">AutoMix</h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-zinc-400">
           Keep a livestream intelligible, consistent, and broadcast-safe while an
@@ -55,6 +57,17 @@ export default function StartScreen({
             <div className="mt-3 text-xs font-medium text-cyan-400 group-hover:underline">Grant mic & start →</div>
           </button>
         </div>
+
+        <button
+          onClick={onOpenSessions}
+          className="mt-4 flex w-full items-center justify-between rounded-xl border border-[#232733] bg-[#0f1116] px-5 py-4 text-left transition hover:border-cyan-500/40 hover:bg-[#141720]"
+        >
+          <span>
+            <span className="block text-sm font-medium text-zinc-200">Recording sessions</span>
+            <span className="mt-0.5 block text-xs text-zinc-500">Review, import, play, download, rename, or remove saved browser recordings without starting the mixer.</span>
+          </span>
+          <span className="text-sm text-cyan-400">Open library →</span>
+        </button>
 
         {booting && <div className="mt-6 text-sm text-zinc-400">Booting audio engine & worklets…</div>}
         {error && (

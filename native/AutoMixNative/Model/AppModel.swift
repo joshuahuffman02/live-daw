@@ -833,6 +833,16 @@ final class AppModel: ObservableObject {
     @Published private(set) var recordingStorageStatus = "not checked"
     @Published private(set) var recordingAvailableCapacityBytes: Int64 = 0
     @Published private(set) var recordingEstimatedSessionBytes: Int64 = 0
+    @Published private(set) var recordingSessions: [RecordingSession] = []
+    @Published var selectedRecordingSessionID: UUID?
+    @Published var nextRecordingSessionName = ""
+    @Published var nextRecordingSessionNotes = ""
+    @Published private(set) var recordingSessionLibraryStatus = "loading sessions"
+    @Published private(set) var recordingSessionActionInProgress = false
+    @Published private(set) var recordingPreviewSessionID: UUID?
+    @Published private(set) var recordingPreviewAssetID: UUID?
+    @Published private(set) var recordingPreviewPlaying = false
+    @Published private(set) var lastReplayRequestURL: URL?
     @Published var automaticRecoveryEnabled = true {
         didSet { applyAutomaticRecoveryState() }
     }
@@ -978,6 +988,12 @@ final class AppModel: ObservableObject {
     private var shadowDecisionLastSnapshotMs: Int64 = 0
     private let recordingStorageManager = ContinuousRecordingStorageManager()
     private var recordingStorageTask: Task<Void, Never>?
+    private let recordingSessionLibrary = RecordingSessionLibrary()
+    private var recordingSessionLibraryTask: Task<Void, Never>?
+    private var recordingPreviewPlayer: AVPlayer?
+    private var recordingPreviewEndObserver: NSObjectProtocol?
+    private var activeRecordingSessionID: UUID?
+    private var pendingRecordingContinuationID: UUID?
     private var nextRecordingStorageCheckMs: Int64 = 0
     private var previousContinuousRecordingActive = false
     private var lastRecordingStorageIncidentKey: String?
@@ -1017,6 +1033,7 @@ final class AppModel: ObservableObject {
         startPolling()
         monitorBridge = MonitorBridge(appModel: self)
         remoteMonitoringEnabled = autoStartRemoteMonitoring
+        refreshRecordingSessions()
         resumeAutonomousSessionIfNeeded()
         if planningCenterFollowTimedCues {
             refreshPlanningCenterPlan()
@@ -1613,6 +1630,7 @@ final class AppModel: ObservableObject {
         runningInRehearsal = false
         runningRouteSnapshot = nil
         pollEngine()
+        refreshRecordingSessions()
     }
 
     func startTestRecording(seconds: Double = 10.0) {
@@ -1690,6 +1708,311 @@ final class AppModel: ObservableObject {
             markContinuousRecordingSessionComplete()
         }
         pollEngine()
+        refreshRecordingSessions()
+    }
+
+    var selectedRecordingSession: RecordingSession? {
+        guard let selectedRecordingSessionID else { return nil }
+        return recordingSessions.first { $0.id == selectedRecordingSessionID }
+    }
+
+    func refreshRecordingSessions(selecting sessionID: UUID? = nil) {
+        recordingSessionLibraryTask?.cancel()
+        recordingSessionLibraryTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let root = try continuousRecordingRootDirectory()
+                let activeDirectory = engine.continuousRecording
+                    ? continuousRecordingDirectoryURL
+                    : nil
+                let sessions = try await recordingSessionLibrary.load(
+                    root: root,
+                    activeDirectory: activeDirectory
+                )
+                guard !Task.isCancelled else { return }
+                recordingSessions = sessions
+                if let sessionID, sessions.contains(where: { $0.id == sessionID }) {
+                    selectedRecordingSessionID = sessionID
+                } else if let selectedRecordingSessionID,
+                          sessions.contains(where: { $0.id == selectedRecordingSessionID }) {
+                    self.selectedRecordingSessionID = selectedRecordingSessionID
+                } else {
+                    selectedRecordingSessionID = sessions.first?.id
+                }
+                recordingSessionLibraryStatus = sessions.isEmpty
+                    ? "No sessions yet"
+                    : "\(sessions.count) session\(sessions.count == 1 ? "" : "s")"
+            } catch is CancellationError {
+                return
+            } catch {
+                recordingSessionLibraryStatus = "Session scan failed · \(error.localizedDescription)"
+                lastError = error.localizedDescription
+            }
+            recordingSessionLibraryTask = nil
+        }
+    }
+
+    func importRecordingFiles(_ urls: [URL], name: String? = nil) {
+        guard !urls.isEmpty, !recordingSessionActionInProgress else { return }
+        guard !engine.continuousRecording, !continuousRecordingRequested else {
+            lastError = "Stop the live capture before importing recordings."
+            recordingSessionLibraryStatus = "Import paused while recording"
+            return
+        }
+        let securityScopedURLs = urls.filter { $0.startAccessingSecurityScopedResource() }
+        recordingSessionActionInProgress = true
+        recordingSessionLibraryStatus = "Importing \(urls.count) file\(urls.count == 1 ? "" : "s")…"
+        Task { [weak self] in
+            guard let self else { return }
+            defer {
+                securityScopedURLs.forEach { $0.stopAccessingSecurityScopedResource() }
+                recordingSessionActionInProgress = false
+            }
+            do {
+                let root = try continuousRecordingRootDirectory()
+                let session = try await recordingSessionLibrary.importFiles(
+                    urls,
+                    root: root,
+                    name: name
+                )
+                recordingSessionLibraryStatus = "Imported \(session.assets.count) file\(session.assets.count == 1 ? "" : "s")"
+                refreshRecordingSessions(selecting: session.id)
+            } catch {
+                lastError = error.localizedDescription
+                recordingSessionLibraryStatus = "Import failed · \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func recordingFileImporterFailed(_ error: Error) {
+        lastError = error.localizedDescription
+        recordingSessionLibraryStatus = "Import failed · \(error.localizedDescription)"
+    }
+
+    func updateRecordingSession(sessionID: UUID, name: String, notes: String) {
+        guard !recordingSessionActionInProgress else { return }
+        recordingSessionActionInProgress = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { recordingSessionActionInProgress = false }
+            do {
+                let root = try continuousRecordingRootDirectory()
+                _ = try await recordingSessionLibrary.update(
+                    sessionID: sessionID,
+                    root: root,
+                    activeDirectory: engine.continuousRecording ? continuousRecordingDirectoryURL : nil,
+                    name: name,
+                    notes: notes
+                )
+                recordingSessionLibraryStatus = "Session details saved"
+                refreshRecordingSessions(selecting: sessionID)
+            } catch {
+                lastError = error.localizedDescription
+                recordingSessionLibraryStatus = "Save failed · \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func moveRecordingSessionToTrash(_ sessionID: UUID) {
+        guard !recordingSessionActionInProgress else { return }
+        recordingSessionActionInProgress = true
+        stopRecordingPreview()
+        Task { [weak self] in
+            guard let self else { return }
+            defer { recordingSessionActionInProgress = false }
+            do {
+                let root = try continuousRecordingRootDirectory()
+                try await recordingSessionLibrary.moveToTrash(
+                    sessionID: sessionID,
+                    root: root,
+                    activeDirectory: engine.continuousRecording ? continuousRecordingDirectoryURL : nil
+                )
+                recordingSessionLibraryStatus = "Session moved to Trash"
+                selectedRecordingSessionID = nil
+                refreshRecordingSessions()
+            } catch {
+                lastError = error.localizedDescription
+                recordingSessionLibraryStatus = "Could not move session · \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func toggleRecordingPreview(_ sessionID: UUID) {
+        if recordingPreviewSessionID == sessionID, recordingPreviewPlayer != nil {
+            if recordingPreviewPlaying {
+                recordingPreviewPlayer?.pause()
+                recordingPreviewPlaying = false
+            } else {
+                recordingPreviewPlayer?.play()
+                recordingPreviewPlaying = true
+            }
+            return
+        }
+        guard !recordingSessionActionInProgress,
+              let session = recordingSessions.first(where: { $0.id == sessionID }),
+              session.status != .recording
+        else { return }
+        let requiresDerivedRender = session.origin == .liveCapture &&
+            !session.assets.contains(where: { $0.kind == .programPreview && $0.validationError == nil })
+        guard !continuousRecordingActive || !requiresDerivedRender else {
+            lastError = "Generate this program preview after the active live capture stops."
+            recordingSessionLibraryStatus = "Preview render paused while recording"
+            return
+        }
+        stopRecordingPreview()
+        recordingSessionActionInProgress = true
+        recordingSessionLibraryStatus = "Preparing program preview…"
+        Task { [weak self] in
+            guard let self else { return }
+            defer { recordingSessionActionInProgress = false }
+            do {
+                let url = try await recordingSessionLibrary.renderProgramPreview(session: session)
+                startRecordingPreview(
+                    url: url,
+                    sessionID: sessionID,
+                    assetID: nil,
+                    status: "Playing program preview"
+                )
+                refreshRecordingSessions(selecting: sessionID)
+            } catch {
+                lastError = error.localizedDescription
+                recordingSessionLibraryStatus = "Preview failed · \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func toggleRecordingAssetPreview(sessionID: UUID, assetID: UUID) {
+        if recordingPreviewSessionID == sessionID,
+           recordingPreviewAssetID == assetID,
+           recordingPreviewPlayer != nil {
+            if recordingPreviewPlaying {
+                recordingPreviewPlayer?.pause()
+                recordingPreviewPlaying = false
+            } else {
+                recordingPreviewPlayer?.play()
+                recordingPreviewPlaying = true
+            }
+            return
+        }
+        guard !recordingSessionActionInProgress,
+              let session = recordingSessions.first(where: { $0.id == sessionID }),
+              session.status != .recording,
+              let asset = session.assets.first(where: { $0.id == assetID }),
+              asset.isPlayable
+        else { return }
+        let url = session.directoryURL.appendingPathComponent(asset.relativePath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            lastError = RecordingSessionLibraryError.fileMissing(asset.displayName).localizedDescription
+            return
+        }
+        stopRecordingPreview()
+        startRecordingPreview(
+            url: url,
+            sessionID: sessionID,
+            assetID: assetID,
+            status: "Playing \(asset.displayName)"
+        )
+    }
+
+    private func startRecordingPreview(
+        url: URL,
+        sessionID: UUID,
+        assetID: UUID?,
+        status: String
+    ) {
+        stopRecordingPreview()
+        let player = AVPlayer(url: url)
+        recordingPreviewPlayer = player
+        recordingPreviewSessionID = sessionID
+        recordingPreviewAssetID = assetID
+        recordingPreviewPlaying = true
+        recordingSessionLibraryStatus = status
+        recordingPreviewEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.recordingPreviewPlaying = false
+                self?.recordingPreviewPlayer?.seek(to: .zero)
+            }
+        }
+        player.play()
+    }
+
+    func stopRecordingPreview() {
+        if let recordingPreviewEndObserver {
+            NotificationCenter.default.removeObserver(recordingPreviewEndObserver)
+            self.recordingPreviewEndObserver = nil
+        }
+        recordingPreviewPlayer?.pause()
+        recordingPreviewPlayer = nil
+        recordingPreviewSessionID = nil
+        recordingPreviewAssetID = nil
+        recordingPreviewPlaying = false
+    }
+
+    func continueRecordingSession(_ sessionID: UUID) {
+        guard let session = recordingSessions.first(where: { $0.id == sessionID }) else {
+            lastError = RecordingSessionLibraryError.sessionNotFound.localizedDescription
+            return
+        }
+        guard session.status != .recording else { return }
+        pendingRecordingContinuationID = session.id
+        nextRecordingSessionName = "\(session.name) · continuation"
+        nextRecordingSessionNotes = session.notes
+        startContinuousRecording()
+    }
+
+    func prepareReplayRequest(_ sessionID: UUID) {
+        guard let session = recordingSessions.first(where: { $0.id == sessionID }) else {
+            lastError = RecordingSessionLibraryError.sessionNotFound.localizedDescription
+            return
+        }
+        guard session.status != .recording else {
+            lastError = "Stop and finalize this recording before preparing replay."
+            return
+        }
+        let segments = session.assets
+            .filter { $0.kind == .captureSegment && $0.validationError == nil }
+            .sorted { $0.relativePath < $1.relativePath }
+        guard !segments.isEmpty else {
+            lastError = "Replay rendering requires a native multitrack capture session."
+            return
+        }
+        guard let roles = session.channelRoles,
+              let sourceChannelCount = segments.first?.channelCount,
+              sourceChannelCount == roles.count + 2,
+              let scene = session.scene,
+              !scene.isEmpty
+        else {
+            lastError = "This capture does not contain a trustworthy saved scene/role map matching its multitrack channels. Use the manual replay CLI after verifying the legacy session map."
+            return
+        }
+        do {
+            let derived = session.directoryURL.appendingPathComponent("Derived", isDirectory: true)
+            try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
+            let url = derived.appendingPathComponent("Replay Request.json")
+            let payload: [String: Any] = [
+                "schemaVersion": 1,
+                "sessionID": session.id.uuidString,
+                "sessionName": session.name,
+                "scene": scene,
+                "roles": roles,
+                "stereoPairs": session.stereoPairs ?? [],
+                "inputs": segments.map { session.directoryURL.appendingPathComponent($0.relativePath).path },
+                "outputDirectory": derived.path,
+                "createdAtMs": Int64(Date().timeIntervalSince1970 * 1_000)
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: url, options: .atomic)
+            lastReplayRequestURL = url
+            recordingSessionLibraryStatus = "Replay request prepared"
+            refreshRecordingSessions(selecting: sessionID)
+        } catch {
+            lastError = error.localizedDescription
+            recordingSessionLibraryStatus = "Replay request failed · \(error.localizedDescription)"
+        }
     }
 
     @discardableResult
@@ -2114,6 +2437,7 @@ final class AppModel: ObservableObject {
             )
             nextRecordingStorageCheckMs = nowMs + 60_000
             pollEngine()
+            refreshRecordingSessions()
             return
 
         case .continueRecording:
@@ -2162,8 +2486,30 @@ final class AppModel: ObservableObject {
 
         do {
             let directory = try nextContinuousRecordingDirectory()
-            try engine.startContinuousRecording(atDirectoryURL: directory)
+            let sessionName = defaultRecordingSessionName()
+            let stereoPairs = channelMappings
+                .filter(\.stereoLinkedToNext)
+                .map { "\($0.index + 1)-\($0.index + 2)" }
+            let session = try RecordingSessionLibrary.bootstrapCaptureSession(
+                directory: directory,
+                name: sessionName,
+                notes: nextRecordingSessionNotes,
+                scene: selectedScene.rawValue,
+                channelRoles: channelMappings.map(\.role.rawValue),
+                stereoPairs: stereoPairs,
+                continuedFromSessionID: pendingRecordingContinuationID
+            )
+            do {
+                try engine.startContinuousRecording(atDirectoryURL: directory)
+            } catch {
+                removeUnusedRecordingSessionDirectory(directory)
+                throw error
+            }
             continuousRecordingDirectoryURL = directory
+            activeRecordingSessionID = session.id
+            pendingRecordingContinuationID = nil
+            nextRecordingSessionName = ""
+            nextRecordingSessionNotes = ""
             previousContinuousRecordingActive = true
             recordingStorageStatus = "recording · capacity gate passed"
             lastRecordingStorageIncidentKey = nil
@@ -2181,6 +2527,7 @@ final class AppModel: ObservableObject {
                 ]
             )
             pollEngine()
+            refreshRecordingSessions(selecting: session.id)
         } catch {
             recordingStorageStatus = "start failed · \(error.localizedDescription)"
             recordRecordingStorageIncidentOnce(
@@ -3044,6 +3391,7 @@ final class AppModel: ObservableObject {
                 options: [.prettyPrinted, .sortedKeys]
             )
             try data.write(to: markerURL, options: .atomic)
+            activeRecordingSessionID = nil
         } catch {
             recordRuntimeIncident(
                 kind: "recording-completion-marker-failed",
@@ -3066,6 +3414,30 @@ final class AppModel: ObservableObject {
         )
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         return directory
+    }
+
+    /// A recorder-open failure can happen after the session manifest is written but
+    /// before the audio writer creates its first segment. Remove only that known-empty
+    /// bootstrap directory; any directory containing audio or diagnostics is retained
+    /// and will be recovered by the session library on the next scan.
+    private func removeUnusedRecordingSessionDirectory(_ directory: URL) {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: []
+        ),
+        contents.allSatisfy({ $0.lastPathComponent == RecordingSession.manifestName })
+        else { return }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    private func defaultRecordingSessionName() -> String {
+        let explicit = nextRecordingSessionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicit.isEmpty { return String(explicit.prefix(120)) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMM d, yyyy · h:mm a"
+        return "\(selectedScene.label) · \(formatter.string(from: Date()))"
     }
 
     private func nextStabilityReportURL() throws -> URL {

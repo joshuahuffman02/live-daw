@@ -113,7 +113,7 @@ export class AudioEngine {
   // recording + oscillator
   recDest!: MediaStreamAudioDestinationNode
   private recorder: MediaRecorder | null = null
-  private recChunks: BlobPart[] = []
+  private recordingMimeType = ''
   private osc: OscillatorNode | AudioBufferSourceNode | null = null
   private oscGain!: GainNode
 
@@ -523,22 +523,45 @@ export class AudioEngine {
     else { const ch = this.channels.find((c) => c.id === dest); if (ch) this.oscGain.connect(ch.trim) }
   }
 
-  startRecording() {
-    this.recChunks = []
-    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
-    this.recorder = new MediaRecorder(this.recDest.stream, { mimeType: mime })
-    this.recorder.ondataavailable = (e) => { if (e.data.size) this.recChunks.push(e.data) }
-    this.recorder.start()
+  startRecording(onChunk: (chunk: Blob) => void, onError?: (message: string) => void): string {
+    if (this.recorder) throw new Error('A browser recording is already active.')
+    if (typeof MediaRecorder === 'undefined') {
+      throw new Error('This browser does not support MediaRecorder.')
+    }
+    const mime = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4;codecs=mp4a.40.2',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+    ].find((candidate) => MediaRecorder.isTypeSupported(candidate))
+    this.recorder = mime
+      ? new MediaRecorder(this.recDest.stream, { mimeType: mime })
+      : new MediaRecorder(this.recDest.stream)
+    this.recordingMimeType = this.recorder.mimeType || mime || 'application/octet-stream'
+    this.recorder.ondataavailable = (e) => { if (e.data.size) onChunk(e.data) }
+    this.recorder.onerror = (event) => {
+      const error = (event as Event & { error?: DOMException }).error
+      onError?.(error?.message || 'The browser recorder reported an error.')
+    }
+    // A one-second timeslice keeps already-recorded audio recoverable if the tab,
+    // browser, or machine closes before MediaRecorder emits its final stop event.
+    this.recorder.start(1_000)
+    return this.recordingMimeType
   }
-  stopRecording(): Promise<string> {
+  stopRecording(): Promise<void> {
     return new Promise((resolve) => {
-      if (!this.recorder) return resolve('')
-      this.recorder.onstop = () => {
-        const blob = new Blob(this.recChunks, { type: 'audio/webm' })
-        resolve(URL.createObjectURL(blob))
-      }
-      this.recorder.stop(); this.recorder = null
+      const recorder = this.recorder
+      if (!recorder) return resolve()
+      recorder.onstop = () => resolve()
+      if (recorder.state !== 'inactive') recorder.stop()
+      else resolve()
+      this.recorder = null
     })
+  }
+
+  isRecording(): boolean {
+    return this.recorder?.state === 'recording'
   }
 
   // correlation coefficient of the program L/R (-1..+1), for mono compatibility

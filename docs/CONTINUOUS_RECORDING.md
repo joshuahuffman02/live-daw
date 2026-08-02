@@ -4,6 +4,12 @@ AutoMix Native can continuously capture the physical Core Audio/Dante input orde
 the final stereo stream mix. This is the forensic and replay source for autonomous-mix
 review; it is separate from the bounded 10-second soundcheck proof.
 
+The **Sessions** workspace wraps each capture in a versioned manifest, recovers legacy
+capture folders, supports safe continuation/import/preview/replay preparation, and
+keeps completed services available across app launches. See
+[`MULTI_SESSION_RECORDING.md`](MULTI_SESSION_RECORDING.md) for the operator workflow,
+browser differences, and failure-state behavior.
+
 ## File contract
 
 - Each file is a 32-bit IEEE-float, interleaved WAV.
@@ -94,6 +100,10 @@ network bandwidth with the recorder and encoder.
 4. Stop capture after the service. Wait for the stop action to return before removing
    storage or quitting the app.
 5. Keep the session folder together when using the files for replay evaluation.
+
+The library's **Continue as new capture** action never reopens an old segment. It
+creates a new linked session so a crash-recovered or completed capture cannot be
+overwritten.
 
 Continuous capture and the bounded soundcheck recorder are mutually exclusive. A
 stability monitor may run while continuous capture is active.

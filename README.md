@@ -30,6 +30,10 @@ Five layers live in this repo:
      dual pre/post metering, a live readout of *what the AI is doing and why*, manual
      override on every parameter, a global **FREEZE**, a **hard bypass to a safe mix**,
      and a Planning-Center-style **scene engine** that drives the mix from a service plan.
+   - **Recording sessions** = durable program-only browser captures and imported audio
+     in IndexedDB, with crash recovery, cross-tab ownership, playback, download,
+     annotation, safe continuation, and explicit deletion. This remains distinct from
+     native multitrack capture.
 
 5. **[`failover/`](failover/)** — the independent, fail-closed external
    primary/backup supervisor. It validates the native app's heartbeat, grants only a
@@ -216,7 +220,11 @@ Current native milestone:
   cleanly completed sessions to Trash; the operator UI exposes storage state, captured
   frames, segment count, output folder, and drop telemetry; storage sizing, archival,
   and recovery limits are documented in
-  [`docs/CONTINUOUS_RECORDING.md`](docs/CONTINUOUS_RECORDING.md);
+  [`docs/CONTINUOUS_RECORDING.md`](docs/CONTINUOUS_RECORDING.md); a durable Sessions
+  workspace organizes multiple captures/imports, recovers interrupted work, derives
+  program previews, safely continues into new folders, and prepares recorded services
+  for replay as described in
+  [`docs/MULTI_SESSION_RECORDING.md`](docs/MULTI_SESSION_RECORDING.md);
 - detects route loss and callback stalls, retries the exact configured route with
   verification and bounded backoff, restores continuous-capture intent, and writes
   ordered durable incident JSONL; optional encoder-ingest and public-egress endpoints

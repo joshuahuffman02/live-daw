@@ -16,6 +16,24 @@ clang++ -std=c++17 -O2 \
 /tmp/automix-replay --self-test
 ```
 
+For a segmented session created by AutoMix Native, choose **Prepare replay** in the
+Sessions workspace and run the generated request through the non-destructive session
+runner:
+
+```bash
+scripts/run-recording-session-replay.py \
+  "/path/to/session/Derived/Replay Request.json" \
+  --replay-binary /tmp/automix-replay
+```
+
+Every invocation gets a new output directory and an aggregate index. The runner
+validates that source and destination paths remain inside the session, preserves
+partial diagnostics, and never changes source WAVs. It currently invokes the engine
+independently for each 60-second segment; control state therefore restarts at segment
+boundaries. Use those outputs for segment-level listening/triage, not as evidence of
+continuous cross-boundary control behavior. See
+[`MULTI_SESSION_RECORDING.md`](MULTI_SESSION_RECORDING.md).
+
 ## Input contract
 
 - WAV may be PCM16, PCM24, PCM32, or IEEE float32.
